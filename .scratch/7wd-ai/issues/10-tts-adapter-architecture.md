@@ -17,3 +17,8 @@ Still to settle here:
 - live events vs snapshots;
 - reconciling a manual correction with TTS;
 - joining a game mid-way.
+
+## Context from "Solution structure and Engine testing strategy"
+
+- The Lua scripts for the mod live in a top-level `tts/` folder.
+- The C# side of the Adapter plugs into the `Advisor` project, which serves the Advisor Window as plain HTML/JS.

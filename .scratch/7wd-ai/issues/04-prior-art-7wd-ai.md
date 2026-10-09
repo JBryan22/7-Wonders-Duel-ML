@@ -3,7 +3,7 @@
 Type: research
 Status: resolved
 Blocked by:
-Research: branch `research/prior-art` → `docs/research/prior-art.md`
+Research: `docs/research/prior-art.md` (on main)
 
 ## Question
 
@@ -13,7 +13,7 @@ Deliverable: findings doc in `docs/research/`.
 
 ## Answer
 
-Full findings: `docs/research/prior-art.md` on branch `research/prior-art`.
+Full findings: `docs/research/prior-art.md`.
 
 - **The only strong AI is closed source.** ZeusAI (Paolini et al., CoG 2024, arXiv 2406.00741) uses AlphaZero-style MCTS with a ~92M-parameter Transformer, trained on ~420k self-play games. It won 26 of 38 games against top BGA players. The code is withheld over cheating concerns. Hardware and encoding are unpublished.
 - **No open project has a neural agent with measured strength.** Open AIs:

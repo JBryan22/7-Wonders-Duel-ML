@@ -3,7 +3,7 @@
 Type: research
 Status: resolved
 Blocked by:
-Research: branch `research/rules-reference` → `docs/research/rules-reference.md`
+Research: `docs/research/rules-reference.md` (on main)
 
 ## Question
 
@@ -13,7 +13,7 @@ Deliverable: a rules reference doc in the repo (`docs/research/`) with structure
 
 ## Answer
 
-Full findings: `docs/research/rules-reference.md` on branch `research/rules-reference`.
+Full findings: `docs/research/rules-reference.md`.
 
 - **Sources:** rules wording comes from the official 2015 English rulebook. Card, Wonder and token data come from the BGA implementation and the 7wd-io/engine (Go), diffed by script. All 73 cards and 12 Wonders agree, and they match every number the rulebook prints as text. The publisher's FAQ has no base-game errata; its one note says the Law token counts as a 7th science symbol.
 - **Age layouts:** rows of 2-3-4-5-6 (Age I), 6-5-4-3-2 (Age II) and 2-3-4-2-4-3-2 (Age III). The doc spells out the face-up/face-down pattern and which cards cover which.

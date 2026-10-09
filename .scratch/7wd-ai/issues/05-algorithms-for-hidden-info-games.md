@@ -3,7 +3,7 @@
 Type: research
 Status: resolved
 Blocked by:
-Research: branch `research/algorithms` → `docs/research/algorithms.md`
+Research: `docs/research/algorithms.md` (on main)
 
 ## Question
 
@@ -13,7 +13,7 @@ Deliverable: findings doc in `docs/research/`, written so a newcomer can follow 
 
 ## Answer
 
-Full findings: `docs/research/algorithms.md` on branch `research/algorithms`.
+Full findings: `docs/research/algorithms.md`.
 
 - In the base game neither player knows the face-down cards, the 3 removed cards per age, or the unused progress tokens. The only private information is the Great Library peek, and those tokens are discarded. So 7WD is in practice a **perfect-information game with chance**, like backgammon.
 - Guessing hidden cards (determinization) works well here, as long as each face-down card is sampled at the moment it is revealed (a chance node), using only what the player can see. That avoids strategy fusion, and non-locality hardly applies.

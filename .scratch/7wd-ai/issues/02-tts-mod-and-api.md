@@ -3,7 +3,7 @@
 Type: research
 Status: resolved
 Blocked by:
-Research: branch `research/tts-mod-and-api` → `docs/research/tts-mod-and-api.md`
+Research: `docs/research/tts-mod-and-api.md` (on main)
 
 ## Question
 
@@ -13,7 +13,7 @@ Deliverable: findings doc in `docs/research/`, noting what can only be confirmed
 
 ## Answer
 
-Full findings: `docs/research/tts-mod-and-api.md` on branch `research/tts-mod-and-api`. The mod JSON was downloaded via the Steam Web API and decoded.
+Full findings: `docs/research/tts-mod-and-api.md`. The mod JSON was downloaded via the Steam Web API and decoded.
 
 - The mod (author `z|fn@b`, updated 2024-12-15, derived from Workshop 2115173088) covers base, Pantheon, Agora, solo, Leaders and promos. Its scripts only do **setup and scoring**: no move or turn tracking.
 - Pieces are identified **by name and tags**, not IDs. Cards and wonders use their English name with colour or `wonder` tags. Progress tokens use the `progress token` tag. Coins are named tokens `1/3/6 Gold`, counted per player area. There is one Conflict Pawn. The Global script holds a table of about 110 named zones and pawns with their IDs. Red sits left and White right (still unconfirmed).
