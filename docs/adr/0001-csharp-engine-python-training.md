@@ -9,4 +9,4 @@ Self-play search needs a fast Engine, and nearly all ML training tools are Pytho
 
 ## Consequences
 
-Two languages, with an ONNX model file as the contract between them; the network's input/output encoding must be defined identically on both sides.
+Two languages, with an ONNX model file as the contract between them. The Encoding lives only in C#, and Python reads a generated manifest ([ADR 0003](0003-csharp-sole-encoder.md)); this replaces the earlier "defined identically on both sides" line.

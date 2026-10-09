@@ -31,6 +31,14 @@ _Avoid_: Bot, player, AI (when a specific chooser is meant)
 **Agent Ladder**:
 The ranked series of progressively stronger Agents used both to measure strength and as the learning path.
 
+**Match**:
+A fixed set of games between two Agents, played in seed-paired games with seats swapped so luck cancels out, used to compare their strength.
+_Avoid_: Series, tournament, benchmark
+
+**Encoding**:
+The versioned mapping between an Observation or a Move and the numbers a neural network reads and outputs.
+_Avoid_: Featurization, tensor format
+
 **Self-Play**:
 Games in which Agents play against themselves to generate training data.
 
