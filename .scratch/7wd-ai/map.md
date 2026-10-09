@@ -22,6 +22,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 <!-- one line per closed ticket: [title](issues/NN-slug.md): gist -->
 
 - [Base game rules reference](issues/01-base-game-rules-reference.md): rules from the 2015 rulebook. Card data was cross-checked across two engines (all 73 cards and 12 Wonders agree). Use stable IDs, use the newer start-player-choice rule behind a flag, and model the visible Guild card backs.
+- [Prior art: existing 7 Wonders Duel engines and AIs](issues/04-prior-art-7wd-ai.md): the only strong AI (ZeusAI, AlphaZero-style) is closed source, and no open neural agent exists. Strong agents treat hidden cards as chance. The C++ engine is ~1000× faster than Python. Science wins need seeded training. Card JSON is reusable under MIT.
 - [Reading the game from Tabletop Simulator](issues/02-tts-mod-and-api.md): the mod only does setup and scoring. Read the board by name and tag through the External Editor API, and add our own event-listener object. The snapshot must filter out hidden cards.
 - [Learning algorithms for a hidden-information, chancy two-player game](issues/05-algorithms-for-hidden-info-games.md): base 7WD is in practice a perfect-information game with chance. Ladder: Random → Heuristic → PIMC → chance-node MCTS → AlphaZero (sees only the Observation) → Gumbel AlphaZero.
 
