@@ -25,12 +25,13 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 - [Prior art: existing 7 Wonders Duel engines and AIs](issues/04-prior-art-7wd-ai.md): the only strong AI (ZeusAI, AlphaZero-style) is closed source, and no open neural agent exists. Strong agents treat hidden cards as chance. The C++ engine is ~1000× faster than Python. Science wins need seeded training. Card JSON is reusable under MIT.
 - [Reading the game from Tabletop Simulator](issues/02-tts-mod-and-api.md): the mod only does setup and scoring. Read the board by name and tag through the External Editor API, and add our own event-listener object. The snapshot must filter out hidden cards.
 - [Learning algorithms for a hidden-information, chancy two-player game](issues/05-algorithms-for-hidden-info-games.md): base 7WD is in practice a perfect-information game with chance. Ladder: Random → Heuristic → PIMC → chance-node MCTS → AlphaZero (sees only the Observation) → Gumbel AlphaZero.
+- [Game State, Observation and Move model](issues/06-game-state-and-move-model.md): hidden cards get their identity only when a Chance Source reveals them (ADR 0002). Multi-step choices are Pending Decisions resolved one Move at a time, and payment is always computed automatically. The Observation is the Game State minus the opponent's Great Library draw. The Move Log is plain text with slug IDs, and the state is mutable with cheap copies.
 
 ## Not yet specified
 
 - **Expansion extension points**: where Pantheon (gods, divinities, mythology/offering tokens) and Agora (senators, conspiracies, decrees) hook into the Game State, Move set and network encoding. Sharpens once the Game State model and encoding exist; may need its own rules research then.
 - **Advice presentation**: how a recommendation is shown and how much "why" comes with it (top-N moves with win %, principal line, explanations). Depends on what the chosen Agent can expose and on the Adapter UX.
-- **Handling setup and chance inside Adapters**: how an Adapter learns age-layout reveals, removed cards, and drawn progress tokens it can't see yet — and recovers from mis-entries or desyncs.
+- **Handling setup and chance inside Adapters**: each Adapter is a Chance Source, and undo means truncating and replaying the Move Log (see the Game State ticket). Still open: how a given Adapter prompts for or detects Reveals at the right moment, and how it recovers from desyncs. Likely to be answered inside the manual-entry and TTS Adapter tickets.
 - **Compute budget and stopping rule for training**: how many Self-Play games / GPU-hours, and how we decide the network is "good enough" for v1. Depends on algorithm choice and measured Engine speed.
 - **AI-controlled seat seam**: what the Adapter contract must include now so a later "AI moves the pieces in TTS" mode is additive.
 

@@ -17,7 +17,7 @@ A single legal decision by a player (e.g. take a card and construct it, discard 
 _Avoid_: Action, turn
 
 **Move Log**:
-The ordered sequence of Moves (and revealed chance outcomes) from setup to the present; replaying it reproduces the Game State.
+The ordered sequence of Moves and Reveals from setup to the present; replaying it reproduces the Game State.
 _Avoid_: History, transcript
 
 **Engine**:
@@ -41,3 +41,15 @@ _Avoid_: Assistant, helper
 **Adapter**:
 A plug-in that connects a place where the game is played (manual entry, Tabletop Simulator) to the canonical Game State and Move Log.
 _Avoid_: Bridge, integration, connector
+
+**Reveal**:
+A Move-Log entry recording a chance outcome at the moment it becomes known, such as the identity of a card flipped face up, the progress tokens set out, the Wonders offered in the draft, or who plays first.
+_Avoid_: Draw, deal, flip (when the logged outcome is meant)
+
+**Chance Source**:
+Whatever supplies Reveals: a random generator in Self-Play and search, or the human or table in Advisor mode.
+_Avoid_: Dealer, RNG (when the role is meant)
+
+**Pending Decision**:
+The kind of choice the Game State is waiting on next (for example: take a card, pick a progress token, destroy an opponent's card, choose who starts the next Age); every Move resolves exactly one.
+_Avoid_: Phase, sub-turn, prompt
