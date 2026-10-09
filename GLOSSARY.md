@@ -46,6 +46,10 @@ Games in which Agents play against themselves to generate training data.
 The mode in which an Agent recommends Moves to a human who executes them.
 _Avoid_: Assistant, helper
 
+**Advisor Window**:
+The screen where the owner sees the current game as a clickable board with the Advisor's recommendations, fed by any Adapter and correctable by hand.
+_Avoid_: Dashboard, board (when the screen is meant)
+
 **Adapter**:
 A plug-in that connects a place where the game is played (manual entry, Tabletop Simulator) to the canonical Game State and Move Log.
 _Avoid_: Bridge, integration, connector
