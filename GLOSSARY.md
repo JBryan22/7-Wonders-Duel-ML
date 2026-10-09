@@ -29,7 +29,7 @@ Anything that chooses a Move from an Observation — random, heuristic, search-b
 _Avoid_: Bot, player, AI (when a specific chooser is meant)
 
 **Agent Ladder**:
-The ranked series of progressively stronger Agents used both to measure strength and as the learning path.
+The ranked series of progressively stronger Agents used to measure strength, each rung a baseline for the next.
 
 **Match**:
 A fixed set of games between two Agents, played in seed-paired games with seats swapped so luck cancels out, used to compare their strength.

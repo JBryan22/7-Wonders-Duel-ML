@@ -10,7 +10,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 
 - Domain: board-game AI / reinforcement learning. Vocabulary in `GLOSSARY.md`; decisions in `docs/adr/`.
 - Every grilling session: call the Skill tool for "grilling" and "domain-modeling".
-- The owner is new to ML and wants this as a learning journey: decisions should favor a staged Agent Ladder (random → heuristic → search → neural Self-Play), each stage with a short "why it works" explainer. Explain ML concepts in plain terms when putting questions.
+- The owner writes no code: Claude builds everything. The owner is new to ML and still makes the decisions, so explain ML concepts in plain terms when putting questions. Understanding comes later, from a walkthrough on request, not from a learning track (see "Learning track format").
 - Stack is decided: C# Engine/search/Self-Play/Adapters, Python/PyTorch training only, ONNX hand-off ([ADR 0001](../../docs/adr/0001-csharp-engine-python-training.md)).
 - Machines: Linux laptop = development (no NVIDIA GPU). Windows desktop = NVIDIA training + Tabletop Simulator. All software must run on both. Move work to Windows only when TTS work needs it.
 - Rules: official current English rulebook, no house rules.
@@ -30,6 +30,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 - [Neural network input and output encoding](issues/08-network-encoding.md): a flat ~2,200-number Observation from the mover's view: slot-centric layout, card-centric cities and discard pile, plus derived features shared with the Heuristic. A ~1,140-way masked policy indexed by card and Wonder. A value head plus an auxiliary 7-class outcome head. A residual MLP starting at 256×4. C# is the only encoder; a versioned manifest is the contract with Python (ADR 0003).
 - [Manual-entry Adapter: how it looks and behaves](issues/09-manual-entry-adapter.md): the Board variant won and becomes the Advisor Window. It is a local web page with a clickable pyramid, a picker for naming flipped cards, advice on request (% badges plus a top-3 panel) and undo or rewind by Move Log line. Tabletop Simulator feeds it automatically, and the owner corrects it by clicking. Screen capture was rejected in favour of the TTS API.
 - [Training pipeline and two-machine workflow](issues/11-training-pipeline-and-workflow.md): synchronous Generations (C# Self-Play → Python training → C# Matches), driven by a resumable Python `loop.py`. Game Records are kept forever; encoded `.npy` shards are a cache. No gating, but a promoted "best" network for the Advisor. Learning is watched in TensorBoard plus `generations.csv`, and each run has a frozen config. Windows owns runs; the laptop runs a tiny CPU config, with SSH over Tailscale.
+- [Learning track format](issues/12-learning-track-format.md): no learning track. Claude writes all the code, and the owner gets a walkthrough on request later. Build phases end in validation experiments, not learning milestones. The Agent Ladder and classic AlphaZero debug mode stay for engineering reasons.
 
 ## Not yet specified
 
