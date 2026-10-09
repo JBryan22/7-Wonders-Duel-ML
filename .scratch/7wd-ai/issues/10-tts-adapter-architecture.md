@@ -22,3 +22,9 @@ Still to settle here:
 
 - The Lua scripts for the mod live in a top-level `tts/` folder.
 - The C# side of the Adapter plugs into the `Advisor` project, which serves the Advisor Window as plain HTML/JS.
+
+## Context from "Capture a mid-game TTS save and verify unknowns on Windows"
+
+- **Both transports work:** Lua `WebRequest` reaches a localhost server, and External Editor API pulls work, but send results back through `sendExternalMessage` as JSON strings (no Execute Lua return value without `returnID`, and nested tables are dropped).
+- **Placement:** the board layout (pyramid grid with covering shown by height, city columns, Wonder rows with face-down tucked cards, the discard deck on a tile, the removed-card decks) is recorded in that ticket's answer, with the save `docs/research/tts-mod/ml-practice.json` and `probe.ps1` available for testing.
+- **Autosaves** every 5 minutes are too slow to serve as a live feed.

@@ -44,8 +44,8 @@ Caveats (from the same page):
 - If no external editor is listening on 39998, TTS falls back to its in-game editor.
 
 What this gives us:
-- **Pull:** Execute Lua with guid `"-1"` and a script like `return JSON.encode(snapshot())`. The answer arrives as message ID 5. (`JSON` is TTS's built-in helper.)
-- **Push:** our Lua calls `sendExternalMessage({...})`, and we receive message ID 4.
+- **Pull:** Execute Lua with guid `"-1"` and a script like `return JSON.encode(snapshot())`. The answer arrives as message ID 5. (`JSON` is TTS's built-in helper.) **Live test (2026-10-09): no ID 5 came back when the message had no `returnID` field; whether adding `returnID` fixes it is untested. Proven fallback: `sendExternalMessage` with a JSON-string payload (see "Capture a mid-game TTS save and verify unknowns on Windows").**
+- **Push:** our Lua calls `sendExternalMessage({...})`, and we receive message ID 4. **Live test: nested tables in the message are silently dropped; send flat values or `JSON.encode(...)` strings.**
 - **Commands:** we send ID 2 custom messages and our Lua handles them in `onExternalMessage`.
 
 ### 1.2 Lua scripting inside the mod
@@ -77,7 +77,7 @@ Source: [WebRequest](https://api.tabletopsimulator.com/webrequest/manager/).
 - The functions are `WebRequest.get/post/put/delete/head/custom(...)`. They are callback-based (asynchronous). The callback gets an instance with `is_error`, `error`, `text`, `response_code` and `getResponseHeader()`.
 - Requests go out "from the **game host's** computer only". That's fine, because the owner hosts.
 - `post` sends form-urlencoded data. `put` sends UTF-8 data as `application/octet-stream`. `custom(url, method, download=true, data, headers, cb)` allows `application/json`.
-- **Unverified:** whether `http://127.0.0.1:<port>` / `http://localhost` works. The docs say nothing. One community thread reports "Cannot resolve destination host" / "Invalid URI" errors against localhost ([thread](https://steamcommunity.com/workshop/filedetails/discussion/2973518625/3826415117583524358)), but the cause there is unclear. **Needs a 5-minute smoke test on Windows** before we design around it. The External Editor API needs no such test, because it is localhost by design.
+- **Unverified:** whether `http://127.0.0.1:<port>` / `http://localhost` works. The docs say nothing. One community thread reports "Cannot resolve destination host" / "Invalid URI" errors against localhost ([thread](https://steamcommunity.com/workshop/filedetails/discussion/2973518625/3826415117583524358)), but the cause there is unclear. **Needs a 5-minute smoke test on Windows** before we design around it. The External Editor API needs no such test, because it is localhost by design. **Live test (2026-10-09): it works.** GET and POST to both `localhost` and `127.0.0.1` returned 200 from a local server.
 
 ### 1.4 Showing info to the player (UI/XML)
 

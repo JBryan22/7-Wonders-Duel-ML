@@ -1,0 +1,14 @@
+﻿{
+    "when":  "2026-10-09T15:24:33",
+    "httpHits":  [
+                     "GET /get-ip HTTP/1.1",
+                     "POST /post-ip HTTP/1.1",
+                     "GET /get-localhost HTTP/1.1"
+                 ],
+    "ttsMessages":  [
+                        "{\r\n  \"customMessage\": {\r\n    \"probe\": \"state\",\r\n    \"state\": \"{\\\"hands\\\":{\\\"Red\\\":{\\\"x\\\":-23.5633182525635,\\\"z\\\":-60},\\\"White\\\":{\\\"x\\\":23.6303939819336,\\\"z\\\":-60}},\\\"pawn\\\":{\\\"x\\\":6.57920837402344,\\\"y\\\":1.42584443092346,\\\"z\\\":19.3191108703613},\\\"players\\\":[{\\\"color\\\":\\\"White\\\",\\\"host\\\":true}],\\\"track\\\":{\\\"cx\\\":-0.187837600708008,\\\"cz\\\":20.1675777435303,\\\"sx\\\":44.6835708618164,\\\"sz\\\":12.7261848449707}}\"\r\n  },\r\n  \"messageID\": 4\r\n}",
+                        "{\r\n  \"customMessage\": {\r\n    \"probe\": \"get 127.0.0.1\",\r\n    \"is_error\": false,\r\n    \"code\": 200.0,\r\n    \"text\": \"ok\"\r\n  },\r\n  \"messageID\": 4\r\n}",
+                        "{\r\n  \"customMessage\": {\r\n    \"probe\": \"post 127.0.0.1\",\r\n    \"is_error\": false,\r\n    \"code\": 200.0,\r\n    \"text\": \"ok\"\r\n  },\r\n  \"messageID\": 4\r\n}",
+                        "{\r\n  \"customMessage\": {\r\n    \"probe\": \"get localhost\",\r\n    \"is_error\": false,\r\n    \"code\": 200.0,\r\n    \"text\": \"ok\"\r\n  },\r\n  \"messageID\": 4\r\n}"
+                    ]
+}

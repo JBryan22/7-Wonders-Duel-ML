@@ -4,7 +4,7 @@ Label: wayfinder:map
 
 ## Destination
 
-A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) AI: a C# Engine, an Agent Ladder culminating in a self-play-trained neural Agent, and Advisor-mode Adapters for manual entry and Tabletop Simulator — with named extension points for Pantheon/Agora and for an AI-controlled seat.
+A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel AI (base game, plus the optional promo Wonders Statue of Liberty and The Messe): a C# Engine, an Agent Ladder culminating in a self-play-trained neural Agent, and Advisor-mode Adapters for manual entry and Tabletop Simulator — with named extension points for Pantheon/Agora and for an AI-controlled seat.
 
 ## Notes
 
@@ -13,7 +13,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 - The owner writes no code: Claude builds everything. The owner is new to ML and still makes the decisions, so explain ML concepts in plain terms when putting questions. Understanding comes later, from a walkthrough on request, not from a learning track (see "Learning track format").
 - Stack is decided: C# Engine/search/Self-Play/Adapters, Python/PyTorch training only, ONNX hand-off ([ADR 0001](../../docs/adr/0001-csharp-engine-python-training.md)).
 - Machines: Linux laptop = development (no NVIDIA GPU). Windows desktop = NVIDIA training + Tabletop Simulator. All software must run on both. Move work to Windows only when TTS work needs it.
-- Rules: official current English rulebook, no house rules.
+- Rules: official current English rulebook, no house rules. The promo Wonders Statue of Liberty and The Messe are in scope as an optional setup choice; when they are in the pool, the Agent must treat them as live options (owner, 2026-10-09).
 - TTS mod: "7 Wonders Duel [ULTIMATE ed.]" — https://steamcommunity.com/sharedfiles/filedetails/?id=3368311210
 - Real-play honesty: the Agent decides only from an Observation, never hidden Game State. Advisor use is for practice/friendly games, not online competitive play.
 
@@ -32,6 +32,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 - [Training pipeline and two-machine workflow](issues/11-training-pipeline-and-workflow.md): synchronous Generations (C# Self-Play → Python training → C# Matches), driven by a resumable Python `loop.py`. Game Records are kept forever; encoded `.npy` shards are a cache. No gating, but a promoted "best" network for the Advisor. Learning is watched in TensorBoard plus `generations.csv`, and each run has a frozen config. Windows owns runs; the laptop runs a tiny CPU config, with SSH over Tailscale.
 - [Learning track format](issues/12-learning-track-format.md): no learning track. Claude writes all the code, and the owner gets a walkthrough on request later. Build phases end in validation experiments, not learning milestones. The Agent Ladder and classic AlphaZero debug mode stay for engineering reasons.
 - [Solution structure and Engine testing strategy](issues/13-solution-structure-and-testing.md): the repo has `engine/` (.NET 10: Engine, Agents, Cli, an Advisor serving plain HTML/JS, and tests), `training/` (uv, CPU or CUDA PyTorch chosen by platform), `data/` (card JSON plus the committed Encoding manifest) and `docs/`. The Engine is proven by rule tests, independently scored scripted games, random-play invariants, data tests and an opt-in cross-check against indjev99's C++ engine. Seeds give identical games on both operating systems. CI runs on Linux and Windows, plus a tiny-loop smoke test. `7wd bench` targets 10k random games/s.
+- [Capture a mid-game TTS save and verify unknowns on Windows](issues/03-export-tts-mod-save.md): the owner sits White, on the right. Lua `WebRequest` reaches localhost (GET and POST). Execute Lua returned no value, and nested tables in `sendExternalMessage` are dropped, so send JSON strings. The pyramid is a fixed grid where covering shows as height. Discards form one face-down deck on a tile. Removed cards and the unused Wonders sit face down in decks that must be filtered out. Autosave runs every 5 minutes.
 
 ## Not yet specified
 
