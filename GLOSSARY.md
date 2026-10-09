@@ -42,6 +42,14 @@ _Avoid_: Featurization, tensor format
 **Self-Play**:
 Games in which Agents play against themselves to generate training data.
 
+**Generation**:
+One trip around the training loop: the current network plays a batch of Self-Play games, a new network is trained on recent games, and it is measured in Matches.
+_Avoid_: Iteration, epoch, round
+
+**Game Record**:
+The permanent record of one Self-Play game: its Move Log, the search's preferred Moves at each searched decision, and the result.
+_Avoid_: Replay, episode, sample
+
 **Advisor**:
 The mode in which an Agent recommends Moves to a human who executes them.
 _Avoid_: Assistant, helper
