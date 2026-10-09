@@ -21,6 +21,9 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel (base game) A
 
 <!-- one line per closed ticket: [title](issues/NN-slug.md): gist -->
 
+- [Reading the game from Tabletop Simulator](issues/02-tts-mod-and-api.md): the mod only does setup and scoring. Read the board by name and tag through the External Editor API, and add our own event-listener object. The snapshot must filter out hidden cards.
+- [Learning algorithms for a hidden-information, chancy two-player game](issues/05-algorithms-for-hidden-info-games.md): base 7WD is in practice a perfect-information game with chance. Ladder: Random → Heuristic → PIMC → chance-node MCTS → AlphaZero (sees only the Observation) → Gumbel AlphaZero.
+
 ## Not yet specified
 
 - **Expansion extension points**: where Pantheon (gods, divinities, mythology/offering tokens) and Agora (senators, conspiracies, decrees) hook into the Game State, Move set and network encoding. Sharpens once the Game State model and encoding exist; may need its own rules research then.
