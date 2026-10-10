@@ -134,9 +134,18 @@ public sealed record SlotReveal(int Age, bool Opening, (int Slot, int Card)[] Ca
 /// The Great Library's draw ("reveal P1 library law strategy theology"): 3 of the 5 Progress tokens left in the
 /// box at setup. Private: only <see cref="Player"/> sees it (spec A4), so <see cref="GameState.Observe"/> hides it
 /// from the opponent.
+/// <para>
+/// A <see cref="Redacted"/> draw ("reveal P2 library ? ? ?", no tokens) is how a log kept by someone outside the
+/// audience records it, e.g. the Advisor logging the opponent's draw: it sets <see cref="GameState.LibraryDrawHidden"/>
+/// and the tokens stay unknown forever.
+/// </para>
 /// </summary>
 public sealed record LibraryReveal(int Player, int[] Tokens) : Reveal
 {
+    /// <summary>The draw as logged by someone who did not see it.</summary>
+    public static LibraryReveal Hidden(int player) => new(player, []);
+
+    public bool Redacted => Tokens.Length == 0;
     public override int Audience => Player;
     public override string ToString() => MoveLog.Format(this);
 }

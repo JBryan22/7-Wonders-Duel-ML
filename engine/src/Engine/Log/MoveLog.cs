@@ -31,7 +31,14 @@ namespace SevenWondersDuel.Engine;
 /// reveal age3 0.0 palace 0.1 senate ...
 /// </code>
 /// Slots are "row.position", both counted from 0 at the top row. Blank lines and lines starting with '#' are ignored.
-/// Ticket 09 finishes the grammar (slot-named Moves, redacted private Reveals).
+/// <para>
+/// Two more forms are accepted but never written by the base game (spec A4, A10):
+/// a <b>slot-named Move</b>, where a take-card Move names the slot instead of the card ("P1 build 4.2",
+/// "P2 wonder 3.1 sphinx"; resolved to the face-up card in that slot, and logged by card name from then on), and a
+/// <b>redacted private Reveal</b>, "reveal P2 library ? ? ?", for a Great Library draw the log's keeper did not see.
+/// </para>
+/// The rules header follows <see cref="Ruleset"/>; a log with an expansion is rejected with a
+/// <see cref="NotSupportedException"/>.
 /// </summary>
 public static class MoveLog
 {
@@ -54,6 +61,7 @@ public static class MoveLog
         DraftReveal d => "reveal draft " + string.Join(' ', d.Wonders.Select(WonderSlug)),
         SlotReveal r => FormatSlotReveal(r),
         GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
+        LibraryReveal { Redacted: true } l => $"reveal {PlayerName(l.Player)} library ? ? ?",
         LibraryReveal l => $"reveal {PlayerName(l.Player)} library " + string.Join(' ', l.Tokens.Select(TokenSlug)),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
     };
@@ -107,6 +115,10 @@ public static class MoveLog
                 else if (game is null) game = new Game(Ruleset.Parse(line));
                 else game.Apply(ParseEntry(line, game.State));
             }
+            catch (NotSupportedException e)
+            {
+                throw new NotSupportedException($"Move Log line {i + 1} ('{line}'): {e.Message}", e);
+            }
             catch (Exception e) when (e is FormatException or InvalidOperationException or KeyNotFoundException or ArgumentException)
             {
                 throw new FormatException($"Move Log line {i + 1} ('{line}'): {e.Message}", e);
@@ -126,7 +138,12 @@ public static class MoveLog
             if (t.Length > 1 && t[1] == "draft") return new DraftReveal(t.Skip(2).Select(GameData.WonderIndex).ToArray());
             // "reveal 1.0 library" names the green card Library in a slot; the Great Library's draw names a player.
             if (t.Length > 2 && t[1] is "P1" or "P2" && t[2] == "library")
-                return new LibraryReveal(ParsePlayer(t[1]), t.Skip(3).Select(GameData.TokenIndex).ToArray());
+            {
+                var drawn = t.Skip(3).ToArray();
+                if (drawn.Length == GameState.LibraryDrawSize && drawn.All(x => x == "?")) return LibraryReveal.Hidden(ParsePlayer(t[1]));
+                if (drawn.Contains("?")) throw new FormatException("A redacted Great Library draw hides all 3 tokens: '? ? ?'");
+                return new LibraryReveal(ParsePlayer(t[1]), drawn.Select(GameData.TokenIndex).ToArray());
+            }
             if (t.Length > 1 && t[1] == "guilds")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
@@ -155,15 +172,15 @@ public static class MoveLog
         if (t.Length >= 2 && t[1] == "wonder")
         {
             if (t.Length != 4) throw new FormatException("Expected 'P<n> wonder <card> <wonder>'");
-            return new MoveEntry(ParsePlayer(t[0]), Move.BuildWonder(GameData.CardIndex(t[2]), GameData.WonderIndex(t[3])));
+            return new MoveEntry(ParsePlayer(t[0]), Move.BuildWonder(ParseTakenCard(t[2], state),GameData.WonderIndex(t[3])));
         }
         if (t.Length != 3) throw new FormatException("Expected 'P<n> <move> <argument>'");
         var player = ParsePlayer(t[0]);
         var move = t[1] switch
         {
             "draft" => Move.Draft(GameData.WonderIndex(t[2])),
-            "build" => Move.Build(GameData.CardIndex(t[2])),
-            "discard" => Move.Discard(GameData.CardIndex(t[2])),
+            "build" => Move.Build(ParseTakenCard(t[2], state)),
+            "discard" => Move.Discard(ParseTakenCard(t[2], state)),
             "start" => t[2] switch
             {
                 "me" => Move.StartMe,
@@ -177,6 +194,23 @@ public static class MoveLog
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);
+    }
+
+    /// <summary>
+    /// The card a take-card Move names: a card slug, or a slot of the current Age ("4.2", a slot-named Move) holding
+    /// a face-up card. A face-down or empty slot is an error: the base game has no Move on an unknown card.
+    /// </summary>
+    static int ParseTakenCard(string text, GameState state)
+    {
+        if (text.Length == 0 || !char.IsAsciiDigit(text[0])) return GameData.CardIndex(text);
+        if (state.Age < 1) throw new FormatException($"Slot '{text}' named before any Age has started");
+        var slot = ParseSlot(state.Layout, text);
+        return state.SlotCard(slot) switch
+        {
+            GameState.Empty => throw new FormatException($"Slot {text} of Age {state.Age} is empty"),
+            < 0 => throw new FormatException($"Slot {text} of Age {state.Age} holds a face-down card; name a face-up card"),
+            var card => card,
+        };
     }
 
     static int ParsePlayer(string text) => text switch

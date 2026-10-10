@@ -83,6 +83,9 @@ public sealed class GameState
     /// <summary>A new game before any Reveal: the first Reveal names the first player.</summary>
     public static GameState New(Ruleset rules)
     {
+        // The promo= grammar parses (ticket 09); the promo Wonders' rules arrive with tickets 12-13.
+        if (rules.Promos != Promos.None)
+            throw new NotSupportedException($"Promo Wonders ({rules}) are not supported by the Engine yet");
         var s = new GameState(rules) { FirstPlayer = -1 };
         s._coins[0] = s._coins[1] = StartingCoins;
         s._militaryTokens = (1 << MilitaryTokenCount) - 1;
@@ -730,6 +733,12 @@ public sealed class GameState
         if (SlotsToReveal != 0) throw new InvalidOperationException("Newly accessible cards are revealed before the Great Library draw");
         if (l.Player != _queue[0].Player)
             throw new InvalidOperationException($"The Great Library draw is P{_queue[0].Player + 1}'s, not P{l.Player + 1}'s");
+        if (l.Redacted)
+        {
+            // Logged by someone outside the audience (spec A4): the draw happened and stays unknown forever.
+            _libraryDrawHidden = true;
+            return;
+        }
         if (l.Tokens.Length != LibraryDrawSize || l.Tokens.Distinct().Count() != LibraryDrawSize)
             throw new InvalidOperationException($"The Great Library draws {LibraryDrawSize} different tokens");
         ushort mask = 0;
