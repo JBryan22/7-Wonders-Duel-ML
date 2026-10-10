@@ -71,19 +71,23 @@ The condition in which a Table Snapshot cannot be explained from the Move Log; i
 _Avoid_: Conflict, mismatch, error (when this condition is meant)
 
 **Reveal**:
-A Move-Log entry recording a chance outcome at the moment it becomes known, such as the identity of a card flipped face up, the progress tokens set out, the Wonders offered in the draft, or who plays first.
+A Move-Log entry recording a chance outcome at the moment it becomes known, such as the identity of a card flipped face up, the progress tokens set out, the Wonders offered in the draft, or who plays first. Each Reveal has an audience: both players, or only one (a private Reveal, such as a Great Library draw).
 _Avoid_: Draw, deal, flip (when the logged outcome is meant)
 
 **Chance Source**:
 Whatever supplies Reveals: a random generator in Self-Play and search, or the human or table in Advisor mode.
 _Avoid_: Dealer, RNG (when the role is meant)
 
+**Determinizer**:
+What search uses to turn an Observation into one sampled Game State it cannot rule out, filling every unknown (face-down cards, the opponent's private Reveals) with a consistent guess.
+_Avoid_: Sampler (alone), guesser
+
 **Pending Decision**:
 The kind of choice the Game State is waiting on next (for example: take a card, pick a progress token, destroy an opponent's card, choose who starts the next Age); every Move resolves exactly one. Each belongs to the player who must make it, usually but not always the player whose turn it is.
 _Avoid_: Phase, sub-turn, prompt
 
 **Ruleset**:
-The rule options a game is played under, such as the start-player rule and which promo Wonders are in the Wonder pool; fixed at setup and recorded at the head of the Move Log.
+The rule options a game is played under, such as the start-player rule, which promo Wonders are in the Wonder pool and which expansions are on; fixed at setup and recorded at the head of the Move Log.
 _Avoid_: Variant, mode, settings
 
 **Wonder pool**:
