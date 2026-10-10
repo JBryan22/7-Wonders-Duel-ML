@@ -1,6 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-  </PropertyGroup>
+  <ItemGroup>
+    <!-- Card data is embedded so the Engine needs no path lookup on either OS (spec A3). -->
+    <EmbeddedResource Include="..\..\..\data\base\*.json" LogicalName="data.base.%(Filename)%(Extension)" />
+  </ItemGroup>
 
 </Project>

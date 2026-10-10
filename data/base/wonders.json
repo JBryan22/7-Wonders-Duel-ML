@@ -1,0 +1,24 @@
+{
+  "about": "7 Wonders Duel Wonders: the 12 base Wonders (docs/research/rules-reference.md section 7) and the 2 promo Wonders (docs/research/promo-wonders.md). Card game facts (c) Repos Production.",
+  "format": {
+    "cost": "same letters as cards.json",
+    "effect": "a Wonder power that asks for a choice, implemented in the Engine: destroy-brown, destroy-grey, library, mausoleum, messe, liberty",
+    "promo": "true when the Wonder joins the Wonder pool only if its Ruleset switch is on"
+  },
+  "wonders": [
+    { "id": "appian-way",        "name": "The Appian Way",        "cost": "P C C S S", "vp": 3, "coins": 3, "opponentLoses": 3, "playAgain": true },
+    { "id": "circus-maximus",    "name": "Circus Maximus",        "cost": "G W S S",   "vp": 3, "shields": 1, "effect": "destroy-grey" },
+    { "id": "colossus",          "name": "The Colossus",          "cost": "G C C C",   "vp": 3, "shields": 2 },
+    { "id": "great-library",     "name": "The Great Library",     "aliases": ["Sagrada Familia"], "cost": "P G W W W", "vp": 4, "effect": "library" },
+    { "id": "great-lighthouse",  "name": "The Great Lighthouse",  "cost": "P P S W",   "vp": 4, "produceChoice": "WCS" },
+    { "id": "hanging-gardens",   "name": "The Hanging Gardens",   "cost": "P G W W",   "vp": 3, "coins": 6, "playAgain": true },
+    { "id": "mausoleum",         "name": "The Mausoleum",         "cost": "P G G C C", "vp": 2, "effect": "mausoleum" },
+    { "id": "piraeus",           "name": "Piraeus",               "cost": "C S W W",   "vp": 2, "produceChoice": "GP", "playAgain": true },
+    { "id": "pyramids",          "name": "The Pyramids",          "aliases": ["Stonehenge"], "cost": "P S S S", "vp": 9 },
+    { "id": "sphinx",            "name": "The Sphinx",            "cost": "G G C S",   "vp": 6, "playAgain": true },
+    { "id": "statue-of-zeus",    "name": "The Statue of Zeus",    "cost": "P P C W S", "vp": 3, "shields": 1, "effect": "destroy-brown" },
+    { "id": "temple-of-artemis", "name": "The Temple of Artemis", "cost": "P G S W",   "vp": 0, "coins": 12, "playAgain": true },
+    { "id": "messe",             "name": "The Messe",             "cost": "G P W C C", "vp": 2, "effect": "messe", "promo": true },
+    { "id": "statue-of-liberty", "name": "Statue of Liberty",     "cost": "G P C S W", "vp": 5, "effect": "liberty", "promo": true }
+  ]
+}

@@ -1,3 +1,3 @@
-using SevenWondersDuel.Engine;
+using SevenWondersDuel.Engine.Data;
 
-Console.WriteLine($"{EngineInfo.Name}: no commands yet");
+Console.WriteLine($"7wd: {GameData.Cards.Length} cards loaded; no commands yet");
