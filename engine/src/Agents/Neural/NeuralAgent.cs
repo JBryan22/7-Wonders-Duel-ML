@@ -3,20 +3,36 @@ using SevenWondersDuel.Engine;
 
 namespace SevenWondersDuel.Agents;
 
-/// <summary>The neural search's root modes (spec A5). Gumbel arrives with ticket 21; classic is debug scaffolding.</summary>
-public enum NeuralMode { Classic }
+/// <summary>
+/// The neural search's root modes (spec A5): <see cref="Gumbel"/> (all real training, and the default) and
+/// <see cref="Classic"/> AlphaZero, kept as debug scaffolding to tell a search bug apart from "the network isn't learning".
+/// </summary>
+public enum NeuralMode { Gumbel, Classic }
 
 /// <summary>
 /// The neural Agent's settings: the <see cref="Model"/> (an ONNX file, or the built-in references <c>uniform</c> and
 /// <c>playout</c>), <see cref="Simulations"/> per searched decision (spec: 800 in Matches and the Advisor, 64 in
-/// training), and classic mode's PUCT constant <see cref="Cpuct"/>, root Dirichlet noise (weight <see cref="Noise"/>,
-/// concentration <see cref="Alpha"/>) and move-choice <see cref="Temperature"/>. Noise and temperature default to 0, as
-/// a Match wants; Self-Play in classic mode switches them on. A network runs on <see cref="Device"/> (default the CPU:
-/// at the batch sizes a Match makes, up to one position per game in progress, the CPU answers faster than a CUDA call;
-/// ticket 20 measurements) with <see cref="Threads"/> ONNX Runtime CPU threads (default 4; more fight the game threads).
+/// training) and the root <see cref="Mode"/>.
+/// <para>
+/// Gumbel mode (Danihelka et al. 2022, as in DeepMind's <c>mctx</c>): at most <see cref="Considered"/> root Moves are
+/// sampled without replacement with Gumbel noise (scaled by <see cref="GumbelScale"/>; 0 = none) and narrowed by
+/// Sequential Halving; Q-values enter as σ(q) = (<see cref="CVisit"/> + max visits) · <see cref="CScale"/> · q, with q
+/// min-max normalised to 0..1. These are mctx's published defaults: 16, 50, 0.1 and scale 1.
+/// </para>
+/// <para>
+/// Classic mode: PUCT constant <see cref="Cpuct"/>, root Dirichlet noise (weight <see cref="Noise"/>, concentration
+/// <see cref="Alpha"/>) and move-choice <see cref="Temperature"/>. Noise and temperature default to 0, as a Match
+/// wants, and are refused in Gumbel mode, whose Gumbel noise supplies the exploration (spec A7).
+/// </para>
+/// <para>
+/// A network runs on <see cref="Device"/> (default the CPU: at the batch sizes a Match makes, up to one position per
+/// game in progress, the CPU answers faster than a CUDA call; ticket 20 measurements) with <see cref="Threads"/> ONNX
+/// Runtime CPU threads (default 4; more fight the game threads).
+/// </para>
 /// </summary>
 public sealed record NeuralSettings(string Model, int Simulations = 800, double Cpuct = 1.25, double Noise = 0,
-    double Alpha = 0.3, double Temperature = 0, InferenceDevice Device = InferenceDevice.Cpu, int Threads = 4, NeuralMode Mode = NeuralMode.Classic)
+    double Alpha = 0.3, double Temperature = 0, InferenceDevice Device = InferenceDevice.Cpu, int Threads = 4,
+    NeuralMode Mode = NeuralMode.Gumbel, int Considered = 16, double CVisit = 50, double CScale = 0.1, double GumbelScale = 1)
 {
     /// <summary>The built-in reference evaluator with a uniform policy and value 0.</summary>
     public const string Uniform = "uniform";
@@ -26,8 +42,9 @@ public sealed record NeuralSettings(string Model, int Simulations = 800, double 
 
     /// <summary>
     /// Parses the argument of a <c>neural</c> Agent spec: the model, optionally with settings, all comma-separated in
-    /// any order, e.g. <c>runs/a/gen-3.onnx,sims=200,c=1.5,noise=0.25,alpha=0.3,temp=1,device=cpu,threads=4,mode=classic</c>.
-    /// A part is a setting when it starts with a known setting name and '='; the rest is the model path.
+    /// any order, e.g. <c>runs/a/gen-3.onnx,sims=64,m=16,cvisit=50,cscale=0.1,gumbel=1,device=cpu,threads=4</c> or
+    /// <c>x.onnx,mode=classic,sims=200,c=1.5,noise=0.25,alpha=0.3,temp=1</c>. A part is a setting when it starts with a
+    /// known setting name and '='; the rest is the model path.
     /// </summary>
     public static NeuralSettings Parse(string? argument)
     {
@@ -48,22 +65,28 @@ public sealed record NeuralSettings(string Model, int Simulations = 800, double 
                 case "mode":
                     settings = settings with { Mode = value.ToLowerInvariant() switch
                     {
+                        "gumbel" => NeuralMode.Gumbel,
                         "classic" => NeuralMode.Classic,
-                        "gumbel" => throw new FormatException("Gumbel mode is not built yet (ticket 21); use mode=classic"),
-                        _ => throw Bad(part, "classic"),
+                        _ => throw Bad(part, "gumbel or classic"),
                     } };
                     break;
                 case "threads":
                     settings = settings with { Threads = int.TryParse(value, out var t) && t >= 0 && t <= 1024 ? t : throw Bad(part, "a CPU thread count, 0 = ONNX Runtime's default") };
                     break;
-                case "sims" or "simulations" or "c" or "cpuct" or "noise" or "alpha" or "temp" or "temperature":
+                case "sims" or "simulations" or "c" or "cpuct" or "noise" or "alpha" or "temp" or "temperature"
+                    or "m" or "considered" or "cvisit" or "cscale" or "gumbel":
                     if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || v < 0 || double.IsNaN(v) || double.IsInfinity(v))
                         throw Bad(part, "a number ≥ 0");
                     settings = name switch
                     {
                         "sims" or "simulations" => v >= 1 && v == Math.Floor(v) && v <= 10_000_000
                             ? settings with { Simulations = (int)v } : throw Bad(part, "a positive whole number"),
+                        "m" or "considered" => v >= 1 && v == Math.Floor(v) && v <= GameState.MaxMoves
+                            ? settings with { Considered = (int)v } : throw Bad(part, "a positive whole number"),
                         "c" or "cpuct" => settings with { Cpuct = v },
+                        "cvisit" => settings with { CVisit = v },
+                        "cscale" => settings with { CScale = v },
+                        "gumbel" => settings with { GumbelScale = v },
                         "noise" => v <= 1 ? settings with { Noise = v } : throw Bad(part, "a weight in 0..1"),
                         "alpha" => v > 0 ? settings with { Alpha = v } : throw Bad(part, "a positive number"),
                         _ => settings with { Temperature = v },
@@ -76,6 +99,8 @@ public sealed record NeuralSettings(string Model, int Simulations = 800, double 
         }
         if (model.Count == 0 || model.All(string.IsNullOrWhiteSpace))
             throw new FormatException($"The neural Agent needs a model: neural:<onnx file>[,sims=800,...], not 'neural:{argument}'");
+        if (settings.Mode == NeuralMode.Gumbel && (settings.Noise > 0 || settings.Temperature > 0))
+            throw new FormatException("Dirichlet noise and temperature belong to classic mode (add mode=classic); Gumbel mode explores with its Gumbel noise");
         return settings with { Model = string.Join(',', model) };
     }
 
@@ -88,15 +113,28 @@ public readonly record struct NeuralMoveStat(Move Move, int Visits, double Visit
 /// <summary>
 /// What one neural search found: per-Move statistics in legal-Move order, the Move chosen, the principal line, the
 /// network's own view of the root (value as a win probability, outcome-class probabilities in
-/// <see cref="NetworkEncoding.OutcomeClasses"/> order) and the training policy target (classic mode: the root's visit
-/// shares, indexed like <see cref="Moves"/>).
+/// <see cref="NetworkEncoding.OutcomeClasses"/> order) and the training policy target, indexed like <see cref="Moves"/>
+/// (Gumbel mode: the improved policy softmax(logits + σ(completed Q)); classic mode: the root's visit shares).
 /// </summary>
 public sealed record NeuralResult(IReadOnlyList<NeuralMoveStat> Moves, Move Best, IReadOnlyList<LineStep> Line, int Simulations,
     double RootValue, IReadOnlyList<double> Outcome, IReadOnlyList<double> PolicyTarget);
 
 /// <summary>
-/// The neural search (spec A5, "one neural search, two root modes"), here in its classic AlphaZero root mode: PUCT
-/// guided by a policy/value evaluator, Dirichlet noise at the root and a temperature for the move choice.
+/// The neural search (spec A5, "one neural search, two root modes"), guided by a policy/value evaluator.
+/// <para>
+/// <b>Gumbel mode</b> (Danihelka, Guez, Schrittwieser and Silver, "Policy improvement by planning with Gumbel", ICLR
+/// 2022; follows DeepMind's <c>mctx</c> <c>gumbel_muzero_policy</c>). At the root, each legal Move gets Gumbel noise
+/// g; the simulations go to the top <c>m</c> Moves by g + logit, then Sequential Halving repeatedly keeps the better
+/// half by g + logit + σ(q̂), visiting the survivors evenly (the visit schedule is <see cref="SequentialHalving"/>).
+/// The Move played is the survivor with the best g + logit + σ(q̂). Below the root the selection is deterministic:
+/// the Move whose share of visits most lags the improved policy π' = softmax(logit + σ(q̂)). Here q̂ is the completed
+/// Q: a visited Move's mean value, an unvisited one's the mixed value estimate (the network value blended with the
+/// prior-weighted mean of the visited Moves' values); σ(q̂) = (c_visit + max visits) · c_scale · q̂ with q̂ min-max
+/// normalised over the Moves. The training target is the root's π', which provably improves on the prior.
+/// </para>
+/// <para>
+/// <b>Classic mode</b> (debug scaffolding): PUCT, Dirichlet noise at the root and a temperature for the move choice.
+/// </para>
 /// <para>
 /// Like chance-node MCTS (<see cref="MctsAgent"/>) it searches from the Observation only: each simulation samples a
 /// world with the <see cref="Determinizer"/> and walks one shared, open-loop tree of Moves, drawing every Reveal on the
@@ -105,8 +143,8 @@ public sealed record NeuralResult(IReadOnlyList<NeuralMoveStat> Moves, Move Best
 /// precedes it, so the network sees the revealed card), and backs the value up. Each evaluated node keeps the
 /// network's logits for every policy index; its priors are the softmax over the Moves legal in the current world, so
 /// a Move that only some Reveals make legal still gets the network's prior. Values are kept per edge from its mover's
-/// point of view ("me" is the player to decide, as in the Encoding). An unvisited Move's value is its parent's mean
-/// value (first-play urgency).
+/// point of view ("me" is the player to decide, as in the Encoding). Selection at a node only weighs the Moves legal
+/// in the current world. In classic mode an unvisited Move's value is its parent's mean value (first-play urgency).
 /// </para>
 /// <para>
 /// Deterministic for a fixed seed and Observation, given that the network's output for a position does not depend on
@@ -126,6 +164,8 @@ public sealed class NeuralAgent : IAgent
         public int Reveals;        // simulations in which a Reveal came between the parent's decision and this Move
         public double ValueSum;    // Player's values (−1..1); at the root, the deciding player's
         public double ValueSq;
+        public float RawValue;     // the network's value when evaluated, for RawMover (Gumbel's mixed value)
+        public int RawMover;
     }
 
     static readonly int PolicySize = NetworkEncoding.PolicySize;
@@ -138,6 +178,11 @@ public sealed class NeuralAgent : IAgent
     readonly Move[] _moves = new Move[GameState.MaxMoves];
     readonly double[] _priors = new double[GameState.MaxMoves];
     readonly int[] _children = new int[GameState.MaxMoves];
+    readonly double[] _sigma = new double[GameState.MaxMoves];     // Gumbel: σ(completed Q) per Move
+    readonly double[] _logPrior = new double[GameState.MaxMoves];  // Gumbel: normalised logits per Move
+    readonly double[] _rootGumbel = new double[NetworkEncoding.PolicySize];
+    int[] _halving = [];
+    int _simulation;
     readonly float[] _outcome = new float[NetworkEncoding.OutcomeClasses.Length];
     readonly int[] _path = new int[512];
     readonly bool[] _pathReveal = new bool[512];
@@ -201,7 +246,16 @@ public sealed class NeuralAgent : IAgent
         var rootLogits = _logits.AsSpan(_nodes[0].Logits, PolicySize);
         var prior = new double[rootCount];
         PriorsOver(rootLogits, _rootMoves.AsSpan(0, rootCount), prior);
-        if (Settings.Noise > 0)
+        var gumbel = Settings.Mode == NeuralMode.Gumbel;
+        if (gumbel)
+        {
+            // One Gumbel(0, 1) sample per root Move, drawn in legal-Move order from the Agent's own stream.
+            for (var m = 0; m < rootCount; m++)
+                _rootGumbel[NetworkEncoding.PolicyIndex(_rootMoves[m])] =
+                    Settings.GumbelScale * -Math.Log(-Math.Log(Math.Max(NextDouble(), 1e-300)));
+            _halving = SequentialHalving(Math.Min(Settings.Considered, rootCount), Settings.Simulations);
+        }
+        else if (Settings.Noise > 0)
         {
             // Dirichlet noise mixed into the root priors, written back as logits so the root needs no special case.
             var noise = Dirichlet(rootCount, Settings.Alpha);
@@ -215,6 +269,7 @@ public sealed class NeuralAgent : IAgent
 
         for (var sim = 0; sim < Settings.Simulations; sim++)
         {
+            _simulation = sim;
             var seed = _rng.NextUInt64();
             _determinizer.Reseed(seed);
             _determinizer.Sample(observation, _world);
@@ -238,7 +293,30 @@ public sealed class NeuralAgent : IAgent
                     WinProbability(Mean(_nodes[c])), StdErr(_nodes[c]));
         }
 
-        var best = ChooseRootMove(stats);
+        int best;
+        if (gumbel)
+        {
+            // The improved policy over the root's Moves, and the played Move: among the Moves Sequential Halving
+            // kept to the end (the most visited), the best by g + logit + σ(q̂).
+            _rootMoves.AsSpan(0, rootCount).CopyTo(_moves);
+            prior.CopyTo(_priors, 0);
+            for (var m = 0; m < rootCount; m++) _children[m] = nodes[m];
+            Sigma(0, me, rootCount);
+            var maxVisits = stats.Max(s => s.Visits);
+            best = -1;
+            var bestScore = double.NegativeInfinity;
+            for (var m = 0; m < rootCount; m++)
+            {
+                if (stats[m].Visits != maxVisits) continue;
+                var score = _rootGumbel[NetworkEncoding.PolicyIndex(_rootMoves[m])] + _logPrior[m] + _sigma[m];
+                if (best < 0 || score > bestScore) (best, bestScore) = (m, score);
+            }
+            var improved = new double[rootCount];
+            for (var m = 0; m < rootCount; m++) improved[m] = _logPrior[m] + _sigma[m];
+            SoftmaxInPlace(improved);
+            target = improved;
+        }
+        else best = ChooseRootMove(stats);
         return new NeuralResult(stats, _rootMoves[best], PrincipalLine(nodes[best]), Settings.Simulations,
             WinProbability(rootValue), rootOutcome, target);
     }
@@ -305,20 +383,9 @@ public sealed class NeuralAgent : IAgent
                 var c = _children[i] = FindChild(node, _moves[i]);
                 if (c >= 0) parentVisits += _nodes[c].Visits;
             }
-            ref var here = ref _nodes[node];
-            var parentMean = Mean(here);
-            var fpu = node == 0 || here.Player == mover ? parentMean : -parentMean;
-            var sqrt = Math.Sqrt(Math.Max(1, parentVisits));
-            var pick = 0;
-            var bestScore = double.NegativeInfinity;
-            for (var i = 0; i < n; i++)
-            {
-                var c = _children[i];
-                var visits = c < 0 ? 0 : _nodes[c].Visits;
-                var q = visits == 0 ? fpu : Mean(_nodes[c]);
-                var score = q + Settings.Cpuct * _priors[i] * sqrt / (1 + visits);
-                if (score > bestScore) (bestScore, pick) = (score, i);
-            }
+            var pick = Settings.Mode == NeuralMode.Gumbel
+                ? node == 0 ? GumbelRootPick(n) : GumbelInteriorPick(node, mover, n, parentVisits)
+                : PuctPick(node, mover, n, parentVisits);
             var next = _children[pick];
             if (next < 0)
             {
@@ -351,7 +418,140 @@ public sealed class NeuralAgent : IAgent
         }
     }
 
+    /// <summary>Classic: PUCT, Q + c·P·√N/(1+n), an unvisited Move valued at its parent's mean.</summary>
+    int PuctPick(int node, int mover, int n, int parentVisits)
+    {
+        ref var here = ref _nodes[node];
+        var parentMean = Mean(here);
+        var fpu = node == 0 || here.Player == mover ? parentMean : -parentMean;
+        var sqrt = Math.Sqrt(Math.Max(1, parentVisits));
+        var pick = 0;
+        var bestScore = double.NegativeInfinity;
+        for (var i = 0; i < n; i++)
+        {
+            var c = _children[i];
+            var visits = c < 0 ? 0 : _nodes[c].Visits;
+            var q = visits == 0 ? fpu : Mean(_nodes[c]);
+            var score = q + Settings.Cpuct * _priors[i] * sqrt / (1 + visits);
+            if (score > bestScore) (bestScore, pick) = (score, i);
+        }
+        return pick;
+    }
 
+    /// <summary>
+    /// Gumbel at the root: Sequential Halving's schedule says how many visits a Move must have to be considered now;
+    /// of those, the best by g + logit + σ(q̂). Moves outside the top <c>m</c>, or halved away, never have that count.
+    /// </summary>
+    int GumbelRootPick(int n)
+    {
+        Sigma(0, _rootPlayer, n);
+        var considered = _halving[Math.Min(_simulation, _halving.Length - 1)];
+        int pick = -1, fallback = 0;
+        double bestScore = double.NegativeInfinity, fallbackScore = double.NegativeInfinity;
+        for (var i = 0; i < n; i++)
+        {
+            var visits = _children[i] < 0 ? 0 : _nodes[_children[i]].Visits;
+            var score = _rootGumbel[NetworkEncoding.PolicyIndex(_moves[i])] + _logPrior[i] + _sigma[i];
+            if (visits == considered && (pick < 0 || score > bestScore)) (pick, bestScore) = (i, score);
+            if (score > fallbackScore) (fallback, fallbackScore) = (i, score);
+        }
+        return pick >= 0 ? pick : fallback;
+    }
+
+    /// <summary>Gumbel below the root (deterministic): the Move maximising π'(a) − n(a)/(1 + N), π' = softmax(logit + σ(q̂)).</summary>
+    int GumbelInteriorPick(int node, int mover, int n, int parentVisits)
+    {
+        Sigma(node, mover, n);
+        Span<double> improved = stackalloc double[n];
+        for (var i = 0; i < n; i++) improved[i] = _logPrior[i] + _sigma[i];
+        SoftmaxInPlace(improved);
+        var pick = 0;
+        var bestScore = double.NegativeInfinity;
+        for (var i = 0; i < n; i++)
+        {
+            var visits = _children[i] < 0 ? 0 : _nodes[_children[i]].Visits;
+            var score = improved[i] - (double)visits / (1 + parentVisits);
+            if (score > bestScore) (bestScore, pick) = (score, i);
+        }
+        return pick;
+    }
+
+    /// <summary>
+    /// Fills <c>_logPrior</c> (the masked log-policy) and <c>_sigma</c> = σ(completed Q) for the <paramref name="n"/>
+    /// Moves in <c>_moves</c>, with their children in <c>_children</c> and priors in <c>_priors</c>, at a node where
+    /// <paramref name="mover"/> decides (mctx's <c>qtransform_completed_by_mix_value</c>).
+    /// </summary>
+    void Sigma(int node, int mover, int n)
+    {
+        ref var here = ref _nodes[node];
+        var raw = here.RawMover == mover ? here.RawValue : -here.RawValue;
+        int sumVisits = 0, maxVisits = 0;
+        double visitedPrior = 0, weightedQ = 0;
+        for (var i = 0; i < n; i++)
+        {
+            var p = Math.Max(_priors[i], 1e-30);
+            _logPrior[i] = Math.Log(p);
+            var c = _children[i];
+            var visits = c < 0 ? 0 : _nodes[c].Visits;
+            if (visits == 0) continue;
+            sumVisits += visits;
+            maxVisits = Math.Max(maxVisits, visits);
+            visitedPrior += p;
+            weightedQ += p * Mean(_nodes[c]);
+        }
+        // The mixed value: the network's value blended with the prior-weighted mean value of the visited Moves.
+        var mixed = sumVisits == 0 ? raw : (raw + sumVisits * (weightedQ / visitedPrior)) / (1 + sumVisits);
+        double min = double.PositiveInfinity, max = double.NegativeInfinity;
+        for (var i = 0; i < n; i++)
+        {
+            var c = _children[i];
+            var q = c < 0 || _nodes[c].Visits == 0 ? mixed : Mean(_nodes[c]);
+            _sigma[i] = q;
+            min = Math.Min(min, q);
+            max = Math.Max(max, q);
+        }
+        var scale = (Settings.CVisit + maxVisits) * Settings.CScale / Math.Max(max - min, 1e-8);
+        for (var i = 0; i < n; i++) _sigma[i] = (_sigma[i] - min) * scale;
+    }
+
+    /// <summary>
+    /// The root visit counts Sequential Halving asks for, simulation by simulation (mctx's
+    /// <c>get_sequence_of_considered_visits</c>): with <paramref name="considered"/> Moves, element k is the visit
+    /// count a Move must have to receive simulation k. Each of the ⌈log2 m⌉ phases spends about an equal share of the
+    /// budget visiting every surviving Move evenly, then the survivors are halved (down to 2).
+    /// </summary>
+    public static int[] SequentialHalving(int considered, int simulations)
+    {
+        var sequence = new List<int>(simulations);
+        if (considered <= 1)
+        {
+            for (var k = 0; k < simulations; k++) sequence.Add(k);
+            return [.. sequence];
+        }
+        var log2 = (int)Math.Ceiling(Math.Log2(considered));
+        var visits = new int[considered];
+        var survivors = considered;
+        while (sequence.Count < simulations)
+        {
+            var extra = Math.Max(1, simulations / (log2 * survivors));
+            for (var e = 0; e < extra; e++)
+            {
+                for (var i = 0; i < survivors; i++) sequence.Add(visits[i]);
+                for (var i = 0; i < survivors; i++) visits[i]++;
+            }
+            survivors = Math.Max(2, survivors / 2);
+        }
+        return [.. sequence.Take(simulations)];
+    }
+
+    static void SoftmaxInPlace(Span<double> x)
+    {
+        var max = double.NegativeInfinity;
+        foreach (var v in x) max = Math.Max(max, v);
+        var sum = 0.0;
+        for (var i = 0; i < x.Length; i++) sum += x[i] = Math.Exp(x[i] - max);
+        for (var i = 0; i < x.Length; i++) x[i] /= sum;
+    }
 
     /// <summary>Evaluates <paramref name="s"/> for <paramref name="mover"/> into <paramref name="node"/>'s logits; returns the value.</summary>
     float Evaluate(int node, GameState s, int mover)
@@ -361,6 +561,8 @@ public sealed class NeuralAgent : IAgent
         _logitCount += PolicySize;
         var value = _evaluator.Evaluate(s, mover, _logits.AsSpan(offset, PolicySize), _outcome);
         _nodes[node].Logits = offset;
+        _nodes[node].RawValue = value;
+        _nodes[node].RawMover = mover;
         if (node == 0)
         {
             ref var root = ref _nodes[0];

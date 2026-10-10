@@ -5,7 +5,7 @@ namespace SevenWondersDuel.Agents.Tests;
 
 /// <summary>
 /// Running the network from C# (spec P6; ticket 20): ONNX inference and its Encoding-version handshake, batching, and
-/// the neural search in classic mode. The models are tiny fixtures from training/sevenwd/test_models.py.
+/// the neural search in both root modes (Gumbel: ticket 21). The models are tiny fixtures from training/sevenwd/test_models.py.
 /// </summary>
 public class NeuralTests
 {
@@ -151,8 +151,11 @@ public class NeuralTests
     public void Specs_name_the_model_and_settings_in_any_order()
     {
         Assert.Equal(new NeuralSettings(Tiny), ((NeuralAgent)AgentSpecs.Create($"neural:{Tiny}", 1)).Settings);
-        Assert.Equal(new NeuralSettings(Tiny, Simulations: 64, Cpuct: 2, Noise: 0.25, Alpha: 0.5, Temperature: 1, Threads: 2),
+        Assert.Equal(new NeuralSettings(Tiny, Simulations: 64, Cpuct: 2, Noise: 0.25, Alpha: 0.5, Temperature: 1, Threads: 2, Mode: NeuralMode.Classic),
             NeuralSettings.Parse($"sims=64,{Tiny},c=2,noise=0.25,alpha=0.5,temp=1,threads=2,mode=classic"));
+        Assert.Equal(NeuralMode.Gumbel, NeuralSettings.Parse("x.onnx").Mode);
+        Assert.Equal(new NeuralSettings(Tiny, Simulations: 64, Considered: 8, CVisit: 40, CScale: 1, GumbelScale: 0),
+            NeuralSettings.Parse($"{Tiny},m=8,sims=64,cvisit=40,cscale=1,gumbel=0,mode=gumbel"));
         Assert.Equal(800, NeuralSettings.Parse("x.onnx").Simulations);
         Assert.Equal(InferenceDevice.Cpu, NeuralSettings.Parse("x.onnx").Device);
         Assert.Equal(InferenceDevice.Cuda, NeuralSettings.Parse("x.onnx,device=CUDA").Device);
@@ -161,7 +164,8 @@ public class NeuralTests
         Assert.IsType<NeuralAgent>(AgentSpecs.Create("neural:playout,sims=10", 1));
         foreach (var bad in new[] { "neural", "neural:", "neural:sims=5", "neural:x.onnx,sims=0", "neural:x.onnx,sims=1.5",
                      "neural:x.onnx,noise=2", "neural:x.onnx,alpha=0", "neural:x.onnx,c=-1", "neural:x.onnx,device=tpu",
-                     "neural:x.onnx,mode=gumbel", "neural:x.onnx,threads=-1" })
+                     "neural:x.onnx,mode=puct", "neural:x.onnx,threads=-1", "neural:x.onnx,noise=0.25", "neural:x.onnx,temp=1",
+                     "neural:x.onnx,mode=gumbel,temp=1", "neural:x.onnx,m=0", "neural:x.onnx,m=2.5", "neural:x.onnx,cscale=-1" })
             Assert.Throws<FormatException>(() => NeuralSettings.Parse(bad.Length > 7 ? bad[7..] : null));
         Assert.Null(Ladder.Elo($"neural:{Tiny}"));
     }
@@ -187,17 +191,145 @@ public class NeuralTests
     public void A_zero_network_searches_exactly_like_the_uniform_reference()
     {
         var batcher = LoadedNetworks.Get(Zero, InferenceDevice.Cpu);
-        var settings = new NeuralSettings(Zero, Simulations: 120);
-        foreach (var observation in Positions(2, 4, every: 9))
+        foreach (var mode in new[] { NeuralMode.Classic, NeuralMode.Gumbel })
         {
-            var viaOnnx = new NeuralAgent(settings, new NetworkEvaluator(batcher), 5).Search(observation);
-            var reference = new NeuralAgent(settings, new UniformEvaluator(), 5).Search(observation);
-            Assert.Equal(reference.Moves, viaOnnx.Moves);
-            Assert.Equal(reference.Line, viaOnnx.Line);
-            Assert.Equal(reference.Best, viaOnnx.Best);
-            Assert.Equal(0.5, viaOnnx.RootValue);
-            Assert.All(viaOnnx.Outcome, p => Assert.Equal(1.0 / 7, p, 9));
+            var settings = new NeuralSettings(Zero, Simulations: 120, Mode: mode);
+            foreach (var observation in Positions(2, 4, every: 9))
+            {
+                var viaOnnx = new NeuralAgent(settings, new NetworkEvaluator(batcher), 5).Search(observation);
+                var reference = new NeuralAgent(settings, new UniformEvaluator(), 5).Search(observation);
+                Assert.Equal(reference.Moves, viaOnnx.Moves);
+                Assert.Equal(reference.Line, viaOnnx.Line);
+                Assert.Equal(reference.Best, viaOnnx.Best);
+                Assert.Equal(reference.PolicyTarget, viaOnnx.PolicyTarget);
+                Assert.Equal(0.5, viaOnnx.RootValue);
+                Assert.All(viaOnnx.Outcome, p => Assert.Equal(1.0 / 7, p, 9));
+            }
         }
+    }
+
+    // ---- Gumbel mode (ticket 21) -------------------------------------------------------------------------------
+
+    /// <summary>Sequential Halving's root visit schedule, checked against mctx's get_sequence_of_considered_visits.</summary>
+    [Fact]
+    public void Sequential_halving_schedules_the_root_visits_like_mctx()
+    {
+        Assert.Equal([0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5], NeuralAgent.SequentialHalving(4, 16));
+        Assert.Equal([0, 1, 2, 3, 4], NeuralAgent.SequentialHalving(1, 5));
+        Assert.Equal([0, 0, 1, 1, 2, 2, 3], NeuralAgent.SequentialHalving(2, 7));
+        Assert.Equal([0, 0, 0], NeuralAgent.SequentialHalving(16, 3));
+        var sixtyFour = NeuralAgent.SequentialHalving(16, 64);
+        Assert.Equal(64, sixtyFour.Length);
+        Assert.Equal(Enumerable.Repeat(0, 16).Concat(Enumerable.Repeat(1, 8)).Concat(Enumerable.Repeat(2, 8))
+            .Concat(new[] { 3, 4, 5, 6 }.SelectMany(v => Enumerable.Repeat(v, 4)))
+            .Concat(Enumerable.Range(7, 8).SelectMany(v => Enumerable.Repeat(v, 2))), sixtyFour);
+    }
+
+    /// <summary>
+    /// The improved policy (spec A6 policy target) is a probability distribution over the legal Moves equal to
+    /// softmax(log prior + σ(completed Q)), recomputed here independently from the reported statistics; the visits
+    /// follow Sequential Halving (only the top m Moves are ever visited, and the played Move is among the most visited).
+    /// </summary>
+    [Fact]
+    public void Gumbel_search_returns_a_valid_improved_policy()
+    {
+        var agent = (NeuralAgent)AgentSpecs.Create($"neural:{Tiny},sims=64", 13);
+        var settings = agent.Settings;
+        var searches = 0;
+        foreach (var observation in Positions(7, 3, every: 2))
+        {
+            var move = agent.ChooseMove(observation);
+            var result = agent.LastSearch!;
+            searches++;
+            Assert.Equal(move, result.Best);
+            var n = result.Moves.Count;
+            Assert.Equal(observation.LegalMoves(), result.Moves.Select(m => m.Move));
+            Assert.Equal(64, result.Moves.Sum(m => m.Visits));
+            Assert.Equal(Math.Min(16, n), result.Moves.Count(m => m.Visits > 0));
+            Assert.Equal(result.Moves.Max(m => m.Visits), result.Moves.First(m => m.Move == move).Visits);
+            Assert.Equal(n, result.PolicyTarget.Count);
+            Assert.All(result.PolicyTarget, p => Assert.InRange(p, 0, 1));
+            Assert.Equal(1, result.PolicyTarget.Sum(), 9);
+
+            // σ(completed Q) from the statistics, as mctx's qtransform_completed_by_mix_value computes it.
+            var raw = 2 * result.RootValue - 1;
+            var visited = result.Moves.Where(m => m.Visits > 0).ToList();
+            var sumVisits = visited.Sum(m => m.Visits);
+            var weighted = visited.Sum(m => Math.Max(m.Prior, 1e-30) * (2 * m.Value - 1)) / visited.Sum(m => Math.Max(m.Prior, 1e-30));
+            var mixed = (raw + sumVisits * weighted) / (1 + sumVisits);
+            var q = result.Moves.Select(m => m.Visits > 0 ? 2 * m.Value - 1 : mixed).ToArray();
+            var (min, max) = (q.Min(), q.Max());
+            var scale = (settings.CVisit + result.Moves.Max(m => m.Visits)) * settings.CScale / Math.Max(max - min, 1e-8);
+            var logits = result.Moves.Select((m, i) => Math.Log(Math.Max(m.Prior, 1e-30)) + (q[i] - min) * scale).ToArray();
+            var top = logits.Max();
+            var expected = logits.Select(l => Math.Exp(l - top)).ToArray();
+            var total = expected.Sum();
+            for (var i = 0; i < n; i++) Assert.Equal(expected[i] / total, result.PolicyTarget[i], 6);
+        }
+        Assert.True(searches > 10);
+    }
+
+    /// <summary>
+    /// Policy improvement: with no knowledge (uniform policy, value 0), wherever a Move wins on the spot and Gumbel
+    /// considers it (all Moves are considered when there are at most m), the search plays a winning Move and the
+    /// improved policy puts most of its mass on winning Moves, far above their uniform prior.
+    /// </summary>
+    [Fact]
+    public void Gumbel_search_finds_immediate_wins_and_its_policy_target_prefers_them()
+    {
+        var found = 0;
+        foreach (var observation in Positions(4, 300, every: 1))
+        {
+            var me = observation.Player;
+            var legal = observation.LegalMoves();
+            var winning = legal.Where(m =>
+            {
+                var s = observation.State.Clone();
+                s.Apply(m);
+                return s.IsOver && s.Result!.Winner == me;
+            }).ToHashSet();
+            if (winning.Count == 0 || winning.Count == legal.Count || legal.Count > 16) continue;
+            found++;
+            var result = new NeuralAgent(new NeuralSettings(NeuralSettings.Uniform, Simulations: 64), new UniformEvaluator(), (ulong)found).Search(observation);
+            Assert.Contains(result.Best, winning);
+            var winningMass = result.Moves.Select((m, i) => winning.Contains(m.Move) ? result.PolicyTarget[i] : 0).Sum();
+            Assert.True(winningMass > 0.9, $"{winningMass} on {winning.Count} of {legal.Count} Moves");
+            if (found == 12) break;
+        }
+        Assert.True(found >= 12, $"only {found} positions with an immediate win");
+    }
+
+    /// <summary>Same seed, same choice: Gumbel's noise comes from the Agent's own seeded stream.</summary>
+    [Fact]
+    public void Gumbel_choices_depend_only_on_the_seed_and_the_Observation()
+    {
+        string Log(ulong seed, string spec) => GameRunner.Play(new Ruleset(Promos: BothPromos), new RandomChanceSource(3),
+            AgentSpecs.Create(spec, seed), new HeuristicAgent(HeuristicWeights.Balanced, 4)).WriteLog();
+        var spec = $"neural:{Tiny},sims=32";
+        Assert.Equal(Log(7, spec), Log(7, spec));
+        Assert.NotEqual(Log(7, spec), Log(8, spec));
+
+        foreach (var observation in Positions(5, 2, every: 7))
+        {
+            var first = ((NeuralAgent)AgentSpecs.Create(spec, 11)).Search(observation);
+            var second = ((NeuralAgent)AgentSpecs.Create(spec, 11)).Search(observation);
+            Assert.Equal(first.Best, second.Best);
+            Assert.Equal(first.Moves, second.Moves);
+            Assert.Equal(first.PolicyTarget, second.PolicyTarget);
+            Assert.Equal(first.Line, second.Line);
+        }
+    }
+
+    /// <summary>
+    /// Given plain MCTS's own estimate (uniform policy, one random playout per leaf), Gumbel search at the training
+    /// budget beats Random clearly. (It is weaker than chance-node MCTS at an equal count, ~25 %: Gumbel trusts its
+    /// values and a uniform prior, and one playout is a very noisy value; see the ticket 21 notes.)
+    /// </summary>
+    [Fact]
+    public void Gumbel_search_with_random_playouts_beats_Random()
+    {
+        var vsRandom = Match.Run(new MatchSettings("neural:playout,sims=64", "random", Pairs: 10));
+        Assert.True(vsRandom.WinRate.Score >= 0.9, vsRandom.ToString());
     }
 
     /// <summary>
@@ -211,7 +343,7 @@ public class NeuralTests
         // Opening positions: no game can end within reach, so visits spread evenly.
         foreach (var observation in Positions(3, 6, every: 4).Where(o => o.State.Age == 1).Take(12))
         {
-            var result = new NeuralAgent(new NeuralSettings(NeuralSettings.Uniform, Simulations: 150), new UniformEvaluator(), 9).Search(observation);
+            var result = new NeuralAgent(new NeuralSettings(NeuralSettings.Uniform, Simulations: 150, Mode: NeuralMode.Classic), new UniformEvaluator(), 9).Search(observation);
             Assert.Equal(150, result.Moves.Sum(m => m.Visits));
             Assert.InRange(result.Moves.Max(m => m.Visits) - result.Moves.Min(m => m.Visits), 0, 1);
             Assert.All(result.Moves, m => Assert.Equal(0.5, m.Value, 9));
@@ -231,7 +363,7 @@ public class NeuralTests
             }).ToHashSet();
             if (winning.Count == 0 || winning.Count == observation.LegalMoves().Count) continue;
             found++;
-            var neural = new NeuralAgent(new NeuralSettings(NeuralSettings.Uniform, Simulations: 200), new UniformEvaluator(), 1).Search(observation);
+            var neural = new NeuralAgent(new NeuralSettings(NeuralSettings.Uniform, Simulations: 200, Mode: NeuralMode.Classic), new UniformEvaluator(), 1).Search(observation);
             // Margin 0: the Anchor's VP-margin bonus can prefer a big civilian win later to a military win now.
             var mcts = new MctsAgent(new MctsSettings(Simulations: 200, Margin: 0), 1).Search(observation);
             // MCTS finds a sure win too: this one, or another Move whose every playout wins.
@@ -250,9 +382,9 @@ public class NeuralTests
     [Fact]
     public void With_random_playouts_as_the_value_it_plays_about_as_well_as_MCTS()
     {
-        var report = Match.Run(new MatchSettings("neural:playout,sims=300", "mcts:sims=300,margin=0", Pairs: 40));
+        var report = Match.Run(new MatchSettings("neural:playout,sims=300,mode=classic", "mcts:sims=300,margin=0", Pairs: 40));
         Assert.InRange(report.WinRate.Score, 0.35, 0.65);
-        var vsRandom = Match.Run(new MatchSettings("neural:playout,sims=100", "random", Pairs: 10));
+        var vsRandom = Match.Run(new MatchSettings("neural:playout,sims=100,mode=classic", "random", Pairs: 10));
         Assert.True(vsRandom.WinRate.Score >= 0.9, vsRandom.ToString());
     }
 
@@ -263,7 +395,7 @@ public class NeuralTests
             AgentSpecs.Create(spec, seed), new HeuristicAgent(HeuristicWeights.Balanced, 4)).WriteLog();
         var spec = $"neural:{Tiny},sims=40";
         Assert.Equal(Log(7, spec), Log(7, spec));
-        var noisy = $"neural:{Tiny},sims=40,noise=0.25,temp=1";
+        var noisy = $"neural:{Tiny},sims=40,mode=classic,noise=0.25,temp=1";
         Assert.Equal(Log(7, noisy), Log(7, noisy));
         Assert.NotEqual(Log(7, noisy), Log(8, noisy));
 
@@ -318,7 +450,7 @@ public class NeuralTests
     [Fact]
     public void It_reports_visits_priors_values_outcome_and_the_principal_line()
     {
-        var agent = (NeuralAgent)AgentSpecs.Create($"neural:{Tiny},sims=100,noise=0.25,temp=1", 3);
+        var agent = (NeuralAgent)AgentSpecs.Create($"neural:{Tiny},sims=100,mode=classic,noise=0.25,temp=1", 3);
         var searches = 0;
         foreach (var observation in Positions(6, 3, every: 2))
         {

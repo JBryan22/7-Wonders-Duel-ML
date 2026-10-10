@@ -19,8 +19,9 @@ const string Usage = """
                                        finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
                                        Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
                                        pimc[:samples=50,playouts=1,margin=0.02], mcts[:sims=1000,c=0.7,margin=0.02]
-                                       (the Anchor), neural:<onnx>[,sims=800,c=1.25,noise=0,alpha=0.3,temp=0,device=cpu,threads=4]
-                                       (classic PUCT search; neural:uniform and neural:playout are built-in references).
+                                       (the Anchor), neural:<onnx>[,sims=800,m=16,cvisit=50,cscale=0.1,gumbel=1,device=cpu,threads=4]
+                                       (Gumbel search; mode=classic gives PUCT with c=1.25,noise=0,alpha=0.3,temp=0;
+                                       neural:uniform and neural:playout are built-in references).
                                        The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
       netbench <onnx> [--device auto|cpu|cuda] [--threads N] [--seconds S]
                                        network inference speed per batch size (N: CPU threads, default all cores)
