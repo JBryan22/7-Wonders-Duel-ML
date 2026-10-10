@@ -20,6 +20,8 @@ const string Usage = """
                                        Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
                                        pimc[:samples=50,playouts=1,margin=0.02], mcts[:sims=1000,c=0.7,margin=0.02]
                                        (the Anchor). The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
+      manifest [--out PATH]            print the Encoding manifest (spec A6), or write it to PATH; the committed copy is
+                                       data/encoding/v1.json (regenerate it with --out after an Encoding change)
     """;
 
 try
@@ -32,6 +34,8 @@ try
         ["bench", "--seconds", var secs] when double.TryParse(secs, out var d) && d > 0 => RunBench(d),
         ["soak", .. var options] => RunSoak(options),
         ["crosscheck", .. var options] => RunCrossCheck(options),
+        ["manifest"] => Manifest(null),
+        ["manifest", "--out", var path] => Manifest(path),
         ["match", var a, var b, .. var options] when !a.StartsWith("--") && !b.StartsWith("--") => RunMatch(a, b, options),
         _ => Fail(Usage),
     };
@@ -39,6 +43,19 @@ try
 catch (Exception e) when (e is FormatException or NotSupportedException or IOException or UnauthorizedAccessException)
 {
     return Fail(e.Message);
+}
+
+static int Manifest(string? path)
+{
+    var text = EncodingManifest.Generate();
+    if (path is null) Console.Out.Write(text);
+    else
+    {
+        if (Path.GetDirectoryName(Path.GetFullPath(path)) is { } dir) Directory.CreateDirectory(dir);
+        File.WriteAllText(path, text);
+        Console.WriteLine($"wrote Encoding v{NetworkEncoding.Version} manifest to {path}: {NetworkEncoding.InputSize} inputs, {NetworkEncoding.PolicySize} policy logits");
+    }
+    return 0;
 }
 
 static int Replay(string path)

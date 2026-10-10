@@ -17,6 +17,8 @@
   <ItemGroup>
     <!-- Move Logs cross-checked against the C++ engine (ticket 11). -->
     <None Include="FrozenGames\*.log" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The committed Encoding manifest (ticket 18), compared with the generated one. -->
+    <None Include="..\..\..\data\encoding\*.json" Link="encoding\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

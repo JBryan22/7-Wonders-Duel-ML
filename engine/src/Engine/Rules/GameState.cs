@@ -293,6 +293,11 @@ public sealed class GameState
     public CardSet LibertyOffer => _libertyOffer;
     /// <summary>The card the Statue's owner chose to keep, while liberty-give is pending; otherwise -1.</summary>
     public int LibertyKept => _libertyKept;
+    /// <summary>
+    /// The card the Statue's owner gave to the opponent, from liberty-give until it is built (once the owner's card has
+    /// resolved fully, its token pick included); otherwise -1. Public, like the whole Statue sequence.
+    /// </summary>
+    public int LibertyGiven => _libertyGiven;
     /// <summary>True when the Statue of Liberty was just built and its 3 returned cards must be revealed (after any flips).</summary>
     public bool AwaitingReturnedCards =>
         _queueCount > 0 && _queue[0].Kind == DecisionKind.LibertyKeep && _libertyOffer.IsEmpty;
