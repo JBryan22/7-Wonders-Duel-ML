@@ -75,6 +75,24 @@ public static class Scoring
     public static ScoreSheet Score(GameState s, int player)
     {
         var points = new int[ScoreSheet.CategoryCount];
+        Fill(s, player, points);
+        return new ScoreSheet(points);
+    }
+
+    /// <summary>One player's total VP as if the game ended now, without allocating (the derived features use it).</summary>
+    public static int Total(GameState s, int player)
+    {
+        Span<int> points = stackalloc int[ScoreSheet.CategoryCount];
+        Fill(s, player, points);
+        var total = 0;
+        foreach (var p in points) total += p;
+        return total;
+    }
+
+    /// <summary>Writes one player's VP per <see cref="ScoreCategory"/> into <paramref name="points"/> (cleared first).</summary>
+    static void Fill(GameState s, int player, Span<int> points)
+    {
+        points.Clear();
         foreach (var card in s.City(player).Cards())
         {
             var def = GameData.Cards[card];
@@ -91,7 +109,6 @@ public static class Scoring
         points[(int)ScoreCategory.Progress] = ProgressPoints(s, player);
         points[(int)ScoreCategory.Coins] = s.Coins(player) / 3;
         points[(int)ScoreCategory.Military] = MilitaryPoints(s.MilitaryLead(player));
-        return new ScoreSheet(points);
     }
 
     /// <summary>

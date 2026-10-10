@@ -1,7 +1,7 @@
 namespace SevenWondersDuel.Agents;
 
 /// <summary>
-/// Turns an Agent spec from the command line (<c>random</c>, later <c>heuristic:balanced</c>, <c>mcts</c>,
+/// Turns an Agent spec from the command line (<c>random</c>, <c>heuristic:balanced</c>, later <c>pimc</c>, <c>mcts</c>,
 /// <c>neural:&lt;onnx&gt;</c>) into a fresh Agent with its own seed. A spec is a name, optionally followed by
 /// <c>:argument</c>. Each game gets new Agents, so an Agent never carries state from one game into the next and games can
 /// run on any thread. Later rungs of the Agent Ladder add themselves to <see cref="Factories"/>.
@@ -16,6 +16,8 @@ public static class AgentSpecs
         ["random"] = (argument, seed) => argument is null
             ? new RandomAgent(seed)
             : throw new FormatException("The random Agent takes no argument"),
+        ["heuristic"] = (argument, seed) =>
+            new HeuristicAgent(HeuristicWeights.Parse(argument), seed),
     };
 
     public static IEnumerable<string> Names => Factories.Keys.Order();
