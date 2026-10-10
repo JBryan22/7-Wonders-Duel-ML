@@ -16,3 +16,17 @@ The owner sometimes plays with the promo Wonders (Statue of Liberty, The Messe),
 
 - "Neural network input and output encoding" sized the policy at about 1,140 moves for 12 Wonders.
 - "Capture a mid-game TTS save and verify unknowns on Windows": in the mod, both promo Wonders sit set aside at x ≈ −76.7 when they are not used.
+
+## Context from "Promo Wonder rules: Statue of Liberty and The Messe"
+
+- **Rules:** see `docs/research/promo-wonders.md`.
+- **Proposed Moves:**
+  - `messe <card>` (2 to 6 options);
+  - `liberty <keep> <give>` (6 options).
+- **Proposed Reveal:** `reveal returned age<N> a b c`, a new chance event.
+- **Game State changes:**
+  - the player who must decide can differ from the player whose turn it is;
+  - Pending Decisions are queued and can belong to either player;
+  - the non-active player can win immediately.
+- **Ruleset:** one flag per promo is recommended. The Go engine uses one switch for both.
+- **TTS:** the mod's Statue button cannot be trusted. The Adapter must see the 3 revealed cards some other way, or have them named in the picker.
