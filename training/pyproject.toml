@@ -3,10 +3,37 @@ name = "sevenwd"
 version = "0.1.0"
 description = "Training side of the 7 Wonders Duel AI: trains the network and exports ONNX."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2",
+    "torch>=2.9",
+    "onnx>=1.17",
+    "onnxscript>=0.3",
+]
+
+[project.scripts]
+sevenwd-train = "sevenwd.train:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "onnxruntime>=1.20"]
+
+# PyTorch wheels: CPU-only on Linux (the laptop has no NVIDIA GPU, and CI), CUDA 13.0 on Windows (the desktop's
+# training GPU; the CUDA build still runs on CPU when no GPU is present, e.g. on the CI runner). Other platforms
+# fall back to PyPI.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cu130", marker = "sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]
