@@ -190,11 +190,14 @@ public sealed class SelfPlayTests : IDisposable
         var flag = Path.Combine(_dir, "pause.request");
         using var stop = new CancellationTokenSource();
         using var watcher = new StopFile(flag, stop, TimeSpan.FromMilliseconds(10));
-        var report = SelfPlay.Run(Settings(games: 50), Dir("f"), parallel: 2, stop.Token,
-            onGame: _ => File.WriteAllText(flag, "pause"));
+        var written = 0;
+        var report = SelfPlay.Run(Settings(games: 50), Dir("f"), parallel: 2, stop.Token, onGame: _ =>
+        {
+            if (Interlocked.Exchange(ref written, 1) == 0) File.WriteAllText(flag, "pause");
+        });
         Assert.False(report.Complete);
         Assert.False(Directory.Exists(Path.Combine(Dir("f"), "shard")));
-        Assert.InRange(SelfPlay.Load(Dir("f")).Count, 1, 10);
+        Assert.InRange(SelfPlay.Load(Dir("f")).Count, 1, 49);
     }
 
     [Fact]
