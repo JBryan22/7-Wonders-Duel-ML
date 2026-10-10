@@ -2,6 +2,7 @@
 
 Type: research
 Status: open
+Assignee: Jesse Bryan
 Blocked by:
 
 ## Question
