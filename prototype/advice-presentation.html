@@ -1,0 +1,453 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway. Ticket: "Advice presentation: reasons and the principal line".
+  Four variants of how the Advisor Window shows advice, on a rebuilt Board host,
+  switchable with ?variant=A|B|C|D (bottom bar or ← →). Scenario tabs at the top
+  switch between kinds of Pending Decision. All numbers are made up.
+  Open by double-clicking this file.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advice Presentation Prototype</title>
+<style>
+  :root {
+    --bg:#f4f1ea; --panel:#fffdf8; --ink:#222; --muted:#6b665c; --line:#d8d2c4;
+    --mil:#c0392b; --sci:#27864a; --civ:#2b5fb4; --draw:#999; --gold:#d4a017;
+    --brown:#8b5a2b; --grey:#8a8a8a; --yellow:#e0b400; --red:#c0392b; --green:#27864a; --blue:#2b5fb4; --purple:#7d3c98;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:10px 16px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  .tabs button { border:1px solid var(--line); background:#fff; padding:4px 10px; border-radius:14px; cursor:pointer; margin:2px; }
+  .tabs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  main { display:grid; grid-template-columns: minmax(0,1fr) 380px; gap:16px; padding:16px; padding-bottom:80px; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 8px; }
+
+  /* board */
+  .pyr { display:flex; flex-direction:column; align-items:center; gap:4px; margin:8px 0 16px; }
+  .row { display:flex; gap:6px; }
+  .card { position:relative; width:74px; height:52px; border-radius:5px; border:2px solid transparent; font-size:11px; padding:3px 4px; color:#fff; font-weight:600; display:flex; align-items:flex-end; cursor:default; transition: transform .1s, opacity .1s; }
+  .card.down { background:repeating-linear-gradient(45deg,#5a4a3a,#5a4a3a 6px,#6b5a48 6px,#6b5a48 12px); }
+  .card.gone { background:transparent; border:1px dashed var(--line); }
+  .card.acc { border-color:#111; box-shadow:0 0 0 2px #fff, 0 0 0 4px #111; cursor:pointer; }
+  .card.dim { opacity:.35; }
+  .card .badge { position:absolute; top:-10px; right:-8px; background:#fff; color:#111; border:1px solid #111; border-radius:10px; padding:0 5px; font-size:11px; }
+  .card .badge.top { background:var(--gold); }
+  .card .step { position:absolute; top:-10px; left:-8px; background:#111; color:#fff; border-radius:50%; width:20px; height:20px; display:flex; align-items:center; justify-content:center; font-size:11px; }
+  .card .step.opp { background:#fff; color:#111; border:2px solid #111; }
+  .c-brown{background:var(--brown)} .c-grey{background:var(--grey)} .c-yellow{background:var(--yellow);color:#222} .c-red{background:var(--red)} .c-green{background:var(--green)} .c-blue{background:var(--blue)} .c-purple{background:var(--purple)}
+  .cities { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .city { border:1px solid var(--line); border-radius:6px; padding:8px; font-size:12px; background:#fff; }
+  .city b { font-size:13px; }
+  .track { display:flex; gap:2px; margin:10px 0; justify-content:center; }
+  .track span { width:18px; height:14px; background:#eee; border-radius:2px; font-size:9px; text-align:center; }
+  .track span.pawn { background:var(--mil); color:#fff; }
+  .track span.cap { background:#ccc; }
+
+  /* decision tray (non-card Pending Decisions) */
+  .tray { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 14px; }
+  .opt { position:relative; border:2px solid #111; border-radius:6px; padding:6px 8px; background:#fff; min-width:110px; font-size:12px; cursor:pointer; }
+  .opt .badge { position:absolute; top:-10px; right:-8px; background:#fff; border:1px solid #111; border-radius:10px; padding:0 5px; font-size:11px; }
+  .opt .badge.top { background:var(--gold); }
+  .prompt { font-weight:600; margin-bottom:4px; }
+
+  /* shared bits */
+  .muted { color:var(--muted); }
+  .btn { border:1px solid #111; background:#111; color:#fff; border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:600; }
+  .btn.ghost { background:#fff; color:#111; }
+  .chip { display:inline-block; border-radius:10px; padding:0 7px; font-size:11px; margin:1px 2px 1px 0; background:#eee; }
+  .chip.mil{background:#f6d5d1} .chip.sci{background:#d3eedb} .chip.civ{background:#d6e2f6} .chip.coin{background:#f6ecc8} .chip.neg{background:#eee;color:#555}
+  .ob { display:flex; height:10px; border-radius:3px; overflow:hidden; border:1px solid var(--line); }
+  .ob i { display:block; height:100%; }
+  .log { font-family:ui-monospace,monospace; font-size:11px; max-height:120px; overflow:auto; background:#faf8f2; border:1px solid var(--line); padding:6px; border-radius:4px; }
+  .note { font-size:12px; background:#fff7d6; border:1px solid #ecd98a; padding:6px 8px; border-radius:6px; margin-top:10px; }
+
+  /* A */
+  .a-row { border-top:1px solid var(--line); padding:8px 0; }
+  .a-row:first-of-type { border-top:none; }
+  .a-head { display:flex; justify-content:space-between; font-weight:600; }
+  .a-tie { border-left:4px solid var(--gold); padding-left:8px; margin:6px 0; }
+  .a-tie-label { font-size:11px; color:#8a6d00; font-weight:700; text-transform:uppercase; }
+  details summary { cursor:pointer; color:var(--muted); font-size:12px; }
+  .line { margin:4px 0 0 0; padding:0; list-style:none; font-size:12px; }
+  .line li { padding:1px 0; }
+  .who { display:inline-block; width:34px; font-weight:700; font-size:10px; }
+  .who.me{color:#111} .who.opp{color:#888} .who.chance{color:#a07a00}
+
+  /* B */
+  .b-head { font-size:20px; font-weight:700; line-height:1.25; }
+  .b-sub { margin:6px 0 12px; }
+  .b-story { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:8px 0; }
+  .b-step { border-radius:14px; padding:3px 9px; font-size:12px; border:1px solid #111; background:#fff; }
+  .b-step.opp { border-style:dashed; color:#555; }
+  .b-step.chance { border-color:#a07a00; color:#a07a00; background:#fff7d6; }
+  .b-alt { border-top:1px solid var(--line); padding-top:8px; margin-top:8px; }
+  .verdict { display:inline-block; font-size:11px; font-weight:700; padding:1px 8px; border-radius:10px; color:#fff; }
+  .v-clear{background:#27864a} .v-edge{background:#7a9c3a} .v-flip{background:#d4a017;color:#222}
+
+  /* C */
+  table.c { border-collapse:collapse; width:100%; font-size:12px; }
+  table.c th { text-align:left; font-size:10px; color:var(--muted); text-transform:uppercase; padding:4px; border-bottom:1px solid var(--line); }
+  table.c td { padding:5px 4px; border-bottom:1px solid #eee; vertical-align:middle; }
+  table.c tr:hover td { background:#fff4cc; cursor:pointer; }
+  table.c tr.sel td { background:#ffe9a3; }
+  .whisk { position:relative; height:14px; width:110px; background:#f1eee6; border-radius:2px; }
+  .whisk .bar { position:absolute; left:0; top:3px; height:8px; background:#555; border-radius:2px; }
+  .whisk .err { position:absolute; top:1px; height:12px; border-left:1px solid #111; border-right:1px solid #111; }
+  .whisk .err::after { content:''; position:absolute; top:6px; left:0; right:0; border-top:1px solid #111; }
+  .whisk .fifty { position:absolute; left:50%; top:0; bottom:0; border-left:1px dotted #999; }
+  main.wide { grid-template-columns: minmax(0,1fr) 560px; }
+
+  /* D */
+  .tier { border-radius:6px; padding:8px; margin-bottom:8px; }
+  .tier h3 { margin:0 0 4px; font-size:13px; }
+  .t-best { background:#dff3e4; border:1px solid #9fd3ae; }
+  .t-fine { background:#f3f1e0; border:1px solid #d9d3a2; }
+  .t-bad { background:#f6e0dd; border:1px solid #e0aaa3; }
+  .card.tb { box-shadow:0 0 0 3px #fff, 0 0 0 7px #27864a; }
+  .card.tf { box-shadow:0 0 0 3px #fff, 0 0 0 7px #c9b84a; }
+  .card.tx { box-shadow:0 0 0 3px #fff, 0 0 0 7px #c0392b; }
+  .opt.tb { border-color:#27864a; border-width:4px; } .opt.tf { border-color:#c9b84a; border-width:4px; } .opt.tx { border-color:#c0392b; border-width:4px; }
+  .pop { position:fixed; z-index:50; width:300px; background:#fff; border:1px solid #111; border-radius:8px; padding:10px; box-shadow:0 6px 24px rgba(0,0,0,.2); font-size:12px; }
+
+  /* prototype switcher bar: not part of the design */
+  #switcher { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:#ff2fa0; color:#fff; border-radius:24px; padding:6px 10px; display:flex; gap:10px; align-items:center; box-shadow:0 4px 14px rgba(0,0,0,.3); font-weight:700; z-index:100; font-family:system-ui; }
+  #switcher button { background:rgba(255,255,255,.2); color:#fff; border:none; border-radius:50%; width:30px; height:30px; cursor:pointer; font-size:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Advisor Window</h1>
+  <div class="tabs" id="tabs"></div>
+</header>
+<main id="main">
+  <section class="panel" id="boardPanel"></section>
+  <aside class="panel" id="side"></aside>
+</main>
+<div id="switcher">
+  <button id="prev" title="previous variant (←)">‹</button>
+  <span id="vlabel"></span>
+  <button id="next" title="next variant (→)">›</button>
+</div>
+
+<script>
+// ---------- made-up data ----------
+const OC = [ // 7 outcome classes, mover's view
+  {k:'mMil', label:'You win: military', col:'#c0392b'},
+  {k:'mSci', label:'You win: science', col:'#27864a'},
+  {k:'mCiv', label:'You win: civilian', col:'#2b5fb4'},
+  {k:'draw', label:'Draw', col:'#bbb'},
+  {k:'oCiv', label:'They win: civilian', col:'#9bb3dc'},
+  {k:'oSci', label:'They win: science', col:'#98c9a7'},
+  {k:'oMil', label:'They win: military', col:'#e3a39b'},
+];
+const oc = (a,b,c,d,e,f,g) => [a,b,c,d,e,f,g];
+
+// Age II layout, rows top→bottom 6,5,4,3,2
+const LAYOUT = [
+  [['Sawmill','brown'],['Caravansery','yellow'],['Forum','yellow'],['Horse Breeders','red'],['Laboratory','green'],['Courthouse','blue']],
+  [null,null,null,null,null].map(()=>'down'),
+  [['Archery Range','red',1],['Library','green',1],['School','green'],['Walls','red']],
+  ['gone','gone',['Brewery','yellow',1]],
+  ['gone','gone'],
+];
+
+const LINE_LIB = [
+  {who:'me', t:'Build Library', card:'Library'},
+  {who:'me', t:'Take Law token'},
+  {who:'opp', t:'Build Archery Range', card:'Archery Range'},
+  {who:'chance', t:'Face-down card revealed (any of 11)'},
+  {who:'me', t:'Build Brewery', card:'Brewery'},
+];
+const LINE_PYR = [
+  {who:'me', t:'Wonder: The Pyramids (with Archery Range)', card:'Archery Range'},
+  {who:'opp', t:'Build Library', card:'Library'},
+  {who:'chance', t:'Face-down card revealed'},
+  {who:'me', t:'Build Brewery', card:'Brewery'},
+];
+const LINE_AR = [
+  {who:'me', t:'Build Archery Range', card:'Archery Range'},
+  {who:'chance', t:'Face-down card revealed'},
+  {who:'opp', t:'Build Library', card:'Library'},
+  {who:'me', t:'Build Brewery', card:'Brewery'},
+];
+
+const SCEN = {
+  card: {
+    tab:'Take a card', kind:'card', prompt:'Your turn: take an accessible card',
+    opts: [
+      {id:'lib', move:'Build Library', card:'Library', share:.52, win:.61, se:.012, oc:oc(.08,.21,.34,.01,.17,.05,.14),
+        feats:[['sci','completes your ✒ pair: you pick a Progress token'],['coin','free via Scriptorium chain'],['civ','+2 VP']], line:LINE_LIB},
+      {id:'pyr', move:'Wonder: The Pyramids', card:'Archery Range', share:.21, win:.55, se:.016, oc:oc(.07,.08,.39,.01,.22,.09,.14),
+        feats:[['civ','+9 VP'],['mil','denies them Archery Range (2 shields)'],['neg','−5 coins']], line:LINE_PYR},
+      {id:'ar', move:'Build Archery Range', card:'Archery Range', share:.14, win:.52, se:.018, oc:oc(.16,.06,.29,.01,.25,.10,.13),
+        feats:[['mil','+2 shields: pawn moves to 3'],['neg','leaves Library: they block your ✒ pair']], line:LINE_AR},
+      {id:'brew', move:'Build Brewery', card:'Brewery', share:.06, win:.46, se:.025, oc:oc(.06,.08,.31,.01,.28,.12,.14),
+        feats:[['coin','+6 coins'],['neg','uncovers School for them (their ⚙ pair)']], line:[]},
+      {id:'dlib', move:'Discard Library', card:'Library', share:.04, win:.44, se:.03, oc:oc(.07,.04,.32,.01,.30,.10,.16),
+        feats:[['coin','+3 coins'],['neg','gives up your ✒ pair']], line:[]},
+      {id:'dbrew', move:'Discard Brewery', card:'Brewery', share:.03, win:.40, se:.035, oc:oc(.05,.05,.29,.01,.32,.13,.15),
+        feats:[['coin','+3 coins']], line:[]},
+    ]
+  },
+  close: {
+    tab:'Close call', kind:'card', prompt:'Your turn: take an accessible card',
+    opts: [
+      {id:'lib', move:'Build Library', card:'Library', share:.36, win:.512, se:.014, oc:oc(.06,.18,.26,.01,.24,.08,.17),
+        feats:[['sci','completes your ✒ pair: you pick a Progress token'],['civ','+2 VP']], line:LINE_LIB},
+      {id:'pyr', move:'Wonder: The Pyramids', card:'Archery Range', share:.33, win:.505, se:.015, oc:oc(.07,.05,.36,.01,.26,.07,.18),
+        feats:[['civ','+9 VP'],['mil','denies them Archery Range']], line:LINE_PYR},
+      {id:'ar', move:'Build Archery Range', card:'Archery Range', share:.22, win:.488, se:.017, oc:oc(.17,.04,.25,.01,.26,.09,.18),
+        feats:[['mil','+2 shields: pawn moves to 3']], line:LINE_AR},
+      {id:'brew', move:'Build Brewery', card:'Brewery', share:.06, win:.43, se:.03, oc:oc(.05,.06,.29,.01,.30,.12,.17),
+        feats:[['coin','+6 coins']], line:[]},
+      {id:'dlib', move:'Discard Library', card:'Library', share:.03, win:.41, se:.03, oc:oc(.05,.03,.30,.01,.32,.10,.19),
+        feats:[['coin','+3 coins']], line:[]},
+    ]
+  },
+  token: {
+    tab:'Progress token', kind:'tray', prompt:'You completed a science pair: choose a Progress token',
+    opts: [
+      {id:'law', move:'Law', share:.41, win:.64, se:.012, oc:oc(.07,.27,.31,.01,.16,.05,.13), feats:[['sci','+1 science symbol: 4 of 6 kinds'],['sci','science win becomes realistic']], line:[{who:'me',t:'Take Law'},{who:'opp',t:'Build Archery Range',card:'Archery Range'},{who:'chance',t:'Face-down card revealed'},{who:'me',t:'Build Brewery',card:'Brewery'}]},
+      {id:'strat', move:'Strategy', share:.24, win:.61, se:.014, oc:oc(.15,.12,.31,.01,.18,.06,.17), feats:[['mil','+1 extra shield per military card'],['mil','they have 4 shields, you have 2']], line:[]},
+      {id:'econ', move:'Economy', share:.18, win:.60, se:.015, oc:oc(.07,.14,.35,.01,.20,.06,.17), feats:[['coin','their trading coins go to you'],['coin','they buy ~3 resources a turn']], line:[]},
+      {id:'mas', move:'Masonry', share:.11, win:.58, se:.017, oc:oc(.06,.13,.36,.01,.21,.07,.16), feats:[['coin','blue cards cost 2 fewer resources'],['civ','2 blue cards still in this Age']], line:[]},
+      {id:'theo', move:'Theology', share:.06, win:.56, se:.02, oc:oc(.06,.12,.35,.01,.22,.07,.17), feats:[['civ','your 2 unbuilt Wonders give a replay']], line:[]},
+    ]
+  },
+  draft: {
+    tab:'Wonder draft', kind:'tray', prompt:'Wonder draft, round 1: choose 1 of 4 (they take 2, you take the last)',
+    opts: [
+      {id:'pyrw', move:'The Pyramids', share:.18, win:.51, se:.01, oc:oc(.10,.10,.33,.01,.25,.09,.12), feats:[['civ','+9 VP'],['neg','no effect beyond points']], line:[]},
+      {id:'col', move:'The Colossus', share:.15, win:.50, se:.01, oc:oc(.15,.09,.27,.01,.25,.09,.14), feats:[['mil','+2 shields'],['civ','+3 VP']], line:[]},
+      {id:'gl', move:'The Great Library', share:.31, win:.535, se:.01, oc:oc(.09,.17,.29,.01,.24,.08,.12), feats:[['sci','pick 1 of 3 removed Progress tokens'],['civ','+4 VP']], line:[]},
+      {id:'art', move:'Temple of Artemis', share:.36, win:.54, se:.01, oc:oc(.09,.12,.33,.01,.24,.09,.12), feats:[['coin','+12 coins'],['civ','play again']], line:[]},
+    ],
+    note:'Search depth here is a whole game away, so the line is omitted and the values are mostly the network\'s gut feel.'
+  },
+  statue: {
+    tab:'Statue keep/give', kind:'tray', prompt:'Statue of Liberty: the 3 removed Age II cards are Parade Ground, Glassblower, Courthouse. Choose one to build and one to give (the third is discarded).',
+    opts: [
+      {id:'s1', move:'Keep Parade Ground · give Glassblower', share:.44, win:.58, se:.013, oc:oc(.18,.08,.27,.01,.22,.08,.16), feats:[['mil','+2 shields for you'],['coin','Glassblower is useless to them (they make glass)'],['neg','Courthouse discarded']], line:[]},
+      {id:'s2', move:'Keep Courthouse · give Glassblower', share:.28, win:.56, se:.014, oc:oc(.10,.08,.35,.01,.22,.08,.16), feats:[['civ','+5 VP'],['coin','Glassblower is useless to them']], line:[]},
+      {id:'s3', move:'Keep Parade Ground · give Courthouse', share:.12, win:.53, se:.018, oc:oc(.17,.08,.25,.01,.25,.08,.16), feats:[['mil','+2 shields'],['neg','they get +5 VP']], line:[]},
+      {id:'s4', move:'Keep Courthouse · give Parade Ground', share:.08, win:.50, se:.02, oc:oc(.08,.08,.33,.01,.22,.08,.20), feats:[['civ','+5 VP'],['neg','they get +2 shields: pawn to your 2']], line:[]},
+      {id:'s5', move:'Keep Glassblower · give Courthouse', share:.05, win:.46, se:.025, oc:oc(.08,.07,.29,.01,.29,.08,.18), feats:[['neg','they get +5 VP']], line:[]},
+      {id:'s6', move:'Keep Glassblower · give Parade Ground', share:.03, win:.44, se:.03, oc:oc(.07,.07,.28,.01,.26,.08,.23), feats:[['neg','they get +2 shields']], line:[]},
+    ],
+    note:'Each option is a pair, because the Engine asks "keep" then "give" as two Pending Decisions. The pair\'s share is the product of the two steps.'
+  },
+  destroy: {
+    tab:'Destroy', kind:'tray', prompt:'Circus Maximus: destroy one of their grey cards',
+    opts: [
+      {id:'gw', move:'Glassworks', share:.62, win:.60, se:.013, oc:oc(.09,.12,.33,.01,.22,.08,.15), feats:[['coin','their only glass: they now pay 4 per glass'],['coin','they still need 2 glass for The Sphinx']], line:[]},
+      {id:'pr', move:'Press', share:.26, win:.57, se:.016, oc:oc(.09,.11,.32,.01,.23,.08,.16), feats:[['coin','they keep Drying Room for papyrus']], line:[]},
+      {id:'dr', move:'Drying Room', share:.12, win:.555, se:.018, oc:oc(.09,.11,.31,.01,.24,.08,.16), feats:[['coin','they keep Press for papyrus']], line:[]},
+    ]
+  },
+};
+const LOG = ['AGE I … (24 lines)','AGE II','reveal L2.0 archery-range','reveal L2.1 library','W build caravansery?','B build walls?','… ','W build parade-ground','B build barracks','reveal L3.2 brewery'];
+
+// ---------- helpers ----------
+const pct = x => Math.round(x*100)+'%';
+const pct1 = x => (x*100).toFixed(1)+'%';
+const $ = s => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+let variant = params.get('variant') || 'A';
+let scen = params.get('scen') || 'card';
+let asked = true;           // advice is shown on request; starts asked so variants are visible
+let hl = null;              // option whose line is highlighted on the board (C)
+const VARIANTS = {A:'Badges + reason chips', B:'Coach sentence', C:'Compare table', D:'Tiers, no numbers'};
+
+function setParam(k,v){ params.set(k,v); history.replaceState(null,'','?'+params.toString()); }
+function sorted(){ return [...SCEN[scen].opts].sort((a,b)=>b.win-a.win); }
+function noise(a,b){ return 2*Math.sqrt(a.se*a.se + b.se*b.se); }
+function tier(o, best){ const d = best.win - o.win; if (o===best || d < noise(o,best)) return 'best'; if (d < .05) return 'fine'; return 'bad'; }
+function expectedType(o){ const m = o.oc.slice(0,3); const i = m.indexOf(Math.max(...m)); return ['military','science','civilian'][i]; }
+function obar(o){ return `<div class="ob" title="${OC.map((c,i)=>c.label+' '+pct(o.oc[i])).join('\n')}">${OC.map((c,i)=>`<i style="width:${o.oc[i]*100}%;background:${c.col}"></i>`).join('')}</div>`; }
+function chips(o,n=9){ return o.feats.slice(0,n).map(([k,t])=>`<span class="chip ${k}">${t}</span>`).join(''); }
+function lineList(l){ return `<ol class="line">${l.map(s=>`<li><span class="who ${s.who}">${s.who==='me'?'YOU':s.who==='opp'?'THEM':'??'}</span>${s.t}</li>`).join('')}</ol>`; }
+function verdict(gap, nz){ if (gap < nz) return ['flip','coin flip']; if (gap < .05) return ['edge','slight edge']; return ['clear','clear best']; }
+
+// ---------- board (host page, shared by all variants) ----------
+function cardOpts(name){ return SCEN[scen].opts.filter(o=>o.card===name); }
+function renderBoard(decorate){
+  const S = SCEN[scen];
+  let h = `<h2>Age II · Your turn · You are White</h2>`;
+  if (S.kind==='tray') {
+    h += `<div class="prompt">${S.prompt}</div><div class="tray">${S.opts.map(o=>decorate.tray(o)).join('')}</div>`;
+  } else {
+    h += `<div class="prompt">${S.prompt}</div>`;
+  }
+  h += `<div class="pyr">`;
+  LAYOUT.forEach((row,r)=>{
+    h += `<div class="row">`;
+    row.forEach((c,i)=>{
+      if (c==='down') h += `<div class="card down"></div>`;
+      else if (c==='gone') h += `<div class="card gone"></div>`;
+      else {
+        const [name,col,acc] = c;
+        const extra = (S.kind==='card' && acc) ? decorate.card(name) : {cls:'',html:''};
+        h += `<div class="card c-${col} ${acc&&S.kind==='card'?'acc':''} ${S.kind==='tray'?'dim':''} ${extra.cls}" data-card="${name}">${name}${extra.html}</div>`;
+      }
+    });
+    h += `</div>`;
+  });
+  h += `</div>`;
+  h += `<div class="track">${Array.from({length:19},(_,i)=>`<span class="${i===0||i===18?'cap':''} ${i===7?'pawn':''}">${i===7?'▲':''}</span>`).join('')}</div>`;
+  h += `<div class="cities">
+    <div class="city"><b>You (White)</b> · 7 coins · 14 VP<br>Wood ×2, Stone, Clay · Glass<br>Science: ✒ (Scriptorium), ⚖ (Pharmacist)<br>Wonders: The Pyramids, Statue of Liberty (unbuilt) · Circus Maximus ✔</div>
+    <div class="city"><b>Them (Black)</b> · 9 coins · 17 VP<br>Clay ×2, Stone · Glassworks, Press, Drying Room<br>Science: ⚙ (Apothecary)<br>Wonders: The Sphinx, Zeus (unbuilt) · Appian Way ✔</div>
+  </div>`;
+  $('#boardPanel').innerHTML = h;
+}
+function sideCommon(){
+  return `<div style="margin-top:12px"><h2>Move Log</h2><div class="log">${LOG.join('<br>')}</div></div>`;
+}
+function askBtn(){ return `<button class="btn" id="ask">${asked?'Hide advice':'Ask the Advisor'}</button> <span class="muted">800 simulations · 1.4 s</span>`; }
+
+// ---------- Variant A: badges + reason chips, ties bracketed, line on expand ----------
+function A(){
+  const o = sorted(), best = o[0];
+  const top = o.filter(x=>tier(x,best)==='best');
+  renderBoard({
+    card: n => { const os = cardOpts(n); if(!asked||!os.length) return {cls:'',html:''}; const s = os.reduce((a,b)=>a+b.share,0); return {cls:'', html:`<span class="badge ${os.includes(best)?'top':''}">${pct(s)}</span>`}; },
+    tray: x => `<div class="opt">${x.move}${asked?`<span class="badge ${x===best?'top':''}">${pct(x.share)}</span>`:''}</div>`,
+  });
+  let h = `<h2>Advice</h2>${askBtn()}`;
+  if (asked) {
+    h += `<div style="margin:10px 0"><span style="font-size:26px;font-weight:700">${pct(best.win)}</span> <span class="muted">to win · most likely by ${expectedType(best)}</span>${obar(best)}</div>`;
+    const row = (x,i) => `<div class="a-row"><div class="a-head"><span>${i+1}. ${x.move}</span><span>${pct(x.win)} <span class="muted" style="font-weight:400">±${Math.round(x.se*200)}</span></span></div>
+      <div>${chips(x,2)}</div>
+      ${x.line.length?`<details><summary>expected line (${x.line.length} steps)</summary>${lineList(x.line)}</details>`:''}</div>`;
+    const first3 = o.slice(0,3);
+    if (top.length>1) {
+      h += `<div class="a-tie"><div class="a-tie-label">Too close to call</div>${first3.filter(x=>top.includes(x)).map(row).join('')}</div>`;
+      h += first3.filter(x=>!top.includes(x)).map((x)=>row(x,o.indexOf(x))).join('');
+    } else h += first3.map(row).join('');
+    if (SCEN[scen].note) h += `<div class="note">${SCEN[scen].note}</div>`;
+  }
+  $('#side').innerHTML = h + sideCommon();
+}
+
+// ---------- Variant B: one coach sentence, line inline as a story ----------
+function sentence(x){
+  const t = expectedType(x);
+  const [k,v] = x.feats[0];
+  return `${x.move}: ${v}.`;
+}
+function B(){
+  const o = sorted(), best = o[0], second = o[1];
+  const gap = best.win-second.win, [vc,vt] = verdict(gap, noise(best,second));
+  renderBoard({
+    card: n => { if(!asked) return {cls:'',html:''}; const os = cardOpts(n); if (os.includes(best)) return {cls:'',html:`<span class="badge top">★</span>`}; return {cls:'',html:''}; },
+    tray: x => `<div class="opt">${x.move}${asked&&x===best?`<span class="badge top">★</span>`:''}</div>`,
+  });
+  let h = `<h2>Advice</h2>${askBtn()}`;
+  if (asked) {
+    const verb = SCEN[scen].kind==='card' ? '' : 'Choose ';
+    h += `<div style="margin-top:12px"><span class="verdict v-${vc}">${vt}</span></div>
+      <div class="b-head">${verb}${best.move}.</div>
+      <div class="b-sub">${best.feats.map(f=>f[1]).join('; ')}. You're at <b>${pct(best.win)}</b>, and the game is heading for a <b>${expectedType(best)}</b> finish.</div>`;
+    if (best.line.length) h += `<div class="muted" style="font-size:12px">What probably happens next</div><div class="b-story">${best.line.map(s=>`<span class="b-step ${s.who}">${s.who==='opp'?'they ':s.who==='chance'?'🎲 ':''}${s.t}</span>`).join('→')}</div>`;
+    h += `<div class="b-alt"><b>Also good:</b> ${sentence(second)} <span class="muted">(${gap<noise(best,second)?'just as good, within noise':pct(gap)+' worse'})</span></div>`;
+    const worst = o[o.length-1];
+    if (worst.feats.some(f=>f[0]==='neg')) h += `<div class="b-alt"><b>Avoid:</b> ${worst.move}: ${worst.feats.find(f=>f[0]==='neg')[1]}.</div>`;
+    if (SCEN[scen].note) h += `<div class="note">${SCEN[scen].note}</div>`;
+  }
+  $('#side').innerHTML = h + sideCommon();
+}
+
+// ---------- Variant C: compare table, hover a row → line drawn on board ----------
+function C(){
+  $('#main').classList.add('wide');
+  const o = sorted(), best = o[0];
+  const sel = o.find(x=>x.id===hl) || best;
+  renderBoard({
+    card: n => {
+      if(!asked) return {cls:'',html:''};
+      const steps = sel.line.map((s,i)=>({...s,i})).filter(s=>s.card===n);
+      const os = cardOpts(n); const s = os.reduce((a,b)=>a+b.share,0);
+      return {cls:'', html: (os.length?`<span class="badge ${os.includes(best)?'top':''}">${pct(s)}</span>`:'') + steps.map(st=>`<span class="step ${st.who==='opp'?'opp':''}">${st.i+1}</span>`).join('')};
+    },
+    tray: x => `<div class="opt" style="${x===sel?'background:#ffe9a3':''}">${x.move}${asked?`<span class="badge ${x===best?'top':''}">${pct(x.share)}</span>`:''}</div>`,
+  });
+  let h = `<h2>Advice</h2>${askBtn()}`;
+  if (asked) {
+    h += `<table class="c"><tr><th>Move</th><th>Win % (±noise)</th><th>vs best</th><th>How the game ends</th><th>Why</th></tr>`;
+    o.slice(0,5).forEach(x=>{
+      const nz = noise(x,best), d = best.win-x.win;
+      h += `<tr data-id="${x.id}" class="${x===sel?'sel':''}"><td><b>${x.move}</b><br><span class="muted">${pct(x.share)} of search</span></td>
+        <td><div class="whisk"><div class="fifty"></div><div class="bar" style="width:${x.win*100}%"></div><div class="err" style="left:${(x.win-2*x.se)*100}%;width:${4*x.se*100}%"></div></div>${pct1(x.win)}</td>
+        <td>${x===best?'—':(d<nz?'≈ same':'−'+pct1(d))}</td>
+        <td style="width:90px">${obar(x)}</td>
+        <td>${chips(x)}</td></tr>`;
+    });
+    h += `</table>`;
+    if (sel.line.length) h += `<div style="margin-top:8px"><b>Line for ${sel.move}</b> <span class="muted">(numbers on the board; hover or click another row)</span>${lineList(sel.line)}</div>`;
+    else h += `<div class="muted" style="margin-top:8px">No line for this Move: the search didn't look past it far enough to be worth showing.</div>`;
+    h += `<div class="muted" style="font-size:11px;margin-top:6px">Bar colours: ${OC.map(c=>`<span style="color:${c.col}">■</span> ${c.label}`).join(' · ')}</div>`;
+    if (SCEN[scen].note) h += `<div class="note">${SCEN[scen].note}</div>`;
+  }
+  $('#side').innerHTML = h + sideCommon();
+  document.querySelectorAll('table.c tr[data-id]').forEach(tr=>{
+    tr.onmouseenter = tr.onclick = () => { if (hl!==tr.dataset.id){ hl = tr.dataset.id; render(); } };
+  });
+}
+
+// ---------- Variant D: tiers, no numbers by default; click for why ----------
+function D(){
+  const o = sorted(), best = o[0];
+  const T = x => ({best:'tb',fine:'tf',bad:'tx'})[tier(x,best)];
+  renderBoard({
+    card: n => { if(!asked) return {cls:'',html:''}; const os = cardOpts(n); if(!os.length) return {cls:'',html:''};
+      const t = os.map(x=>tier(x,best)); const cls = t.includes('best')?'tb':t.includes('fine')?'tf':'tx'; return {cls, html:''}; },
+    tray: x => `<div class="opt ${asked?T(x):''}" data-id="${x.id}">${x.move}</div>`,
+  });
+  let h = `<h2>Advice</h2>${askBtn()}`;
+  if (asked) {
+    const groups = {best:[],fine:[],bad:[]}; o.forEach(x=>groups[tier(x,best)].push(x));
+    const label = {best: groups.best.length>1?`Best (${groups.best.length} moves the search can't separate)`:'Best', fine:'Fine (a little worse)', bad:'Mistakes'};
+    const cls = {best:'t-best',fine:'t-fine',bad:'t-bad'};
+    for (const k of ['best','fine','bad']) if (groups[k].length)
+      h += `<div class="tier ${cls[k]}"><h3>${label[k]}</h3>${groups[k].map(x=>`<div style="padding:3px 0;cursor:pointer" data-id="${x.id}"><b>${x.move}</b> <span class="muted">${x.feats[0][1]}</span></div>`).join('')}</div>`;
+    h += `<div class="muted" style="font-size:12px">Click a Move (here or on the board) for numbers, reasons and the expected line.</div>`;
+    if (SCEN[scen].note) h += `<div class="note">${SCEN[scen].note}</div>`;
+  }
+  $('#side').innerHTML = h + sideCommon();
+  const open = (id, ev) => {
+    const x = SCEN[scen].opts.find(q=>q.id===id); if(!x) return;
+    document.querySelectorAll('.pop').forEach(p=>p.remove());
+    const p = document.createElement('div'); p.className='pop';
+    p.style.left = Math.min(ev.clientX+10, innerWidth-320)+'px'; p.style.top = Math.min(ev.clientY+10, innerHeight-300)+'px';
+    p.innerHTML = `<b>${x.move}</b><div style="margin:4px 0">${pct(x.win)} to win <span class="muted">(±${Math.round(x.se*200)}) · best is ${pct(best.win)}</span></div>${obar(x)}<div style="margin:6px 0">${chips(x)}</div>${x.line.length?lineList(x.line):''}<div class="muted" style="margin-top:4px">click anywhere to close</div>`;
+    document.body.appendChild(p);
+    setTimeout(()=>document.addEventListener('click',()=>p.remove(),{once:true}),0);
+  };
+  document.querySelectorAll('[data-id]').forEach(el=>el.onclick = ev => open(el.dataset.id, ev));
+  document.querySelectorAll('.card.acc').forEach(el=>el.onclick = ev => { const os = cardOpts(el.dataset.card).sort((a,b)=>b.win-a.win); if (os[0]) open(os[0].id, ev); });
+}
+
+// ---------- wiring ----------
+function render(){
+  $('#main').classList.remove('wide');
+  $('#tabs').innerHTML = Object.entries(SCEN).map(([k,s])=>`<button class="${k===scen?'on':''}" data-s="${k}">${s.tab}</button>`).join('');
+  document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{ scen=b.dataset.s; hl=null; setParam('scen',scen); render(); });
+  ({A,B,C,D})[variant]();
+  const a = $('#ask'); if (a) a.onclick = () => { asked=!asked; render(); };
+  $('#vlabel').textContent = `${variant} (${VARIANTS[variant]})`;
+}
+function cycle(d){ const ks = Object.keys(VARIANTS); variant = ks[(ks.indexOf(variant)+d+ks.length)%ks.length]; setParam('variant',variant); render(); }
+$('#prev').onclick = ()=>cycle(-1); $('#next').onclick = ()=>cycle(1);
+addEventListener('keydown', e => { if (e.target.closest('input,textarea,[contenteditable]')) return; if (e.key==='ArrowLeft') cycle(-1); if (e.key==='ArrowRight') cycle(1); });
+if (!VARIANTS[variant]) variant='A';
+if (!SCEN[scen]) scen='card';
+render();
+</script>
+</body>
+</html>
