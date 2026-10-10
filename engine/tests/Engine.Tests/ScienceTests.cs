@@ -35,6 +35,7 @@ public class ScienceTests
             if (s.IsOver) throw new InvalidOperationException("No matching card became accessible");
             if (s.Step == StepKind.Reveal) { game.Apply(chance.Next(s)); continue; }
             if (s.Pending(0).Kind == DecisionKind.ChooseStarter) { game.Apply(Move.StartMe); continue; }
+            if (s.Pending(0).Kind == DecisionKind.DraftWonder) { game.Apply(s.LegalMoves()[0]); continue; }
             var card = Enumerable.Range(0, GameState.SlotCount).Where(s.IsAccessible).Select(s.SlotCard)
                 .Where(c => c >= 0 && pick(GameData.Cards[c])).DefaultIfEmpty(-1).First();
             if (card >= 0)
@@ -75,7 +76,7 @@ public class ScienceTests
         Assert.Equal(ProgressTokens.All, (ushort)(s.TokensSetOut | s.TokensSetAside));
         Assert.Equal(0, s.TokensSetOut & s.TokensSetAside);
         Assert.All(tokens, t => Assert.True(s.TokenOnBoard(t)));
-        Assert.Equal(1, s.Age);
+        Assert.True(s.AwaitingDraftOffer); // the Wonder draft comes next
         Assert.Equal(0, s.Tokens(0) | s.Tokens(1));
     }
 

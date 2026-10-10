@@ -17,6 +17,12 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
         if (state.Step != StepKind.Reveal) throw new InvalidOperationException("The game is not waiting for a Reveal");
         if (state.FirstPlayer < 0) return new FirstPlayerReveal(_rng.Next(2));
         if (state.AwaitingTokens) return new TokenReveal(Pick(ProgressTokens.Count, ProgressTokens.OnBoard));
+        if (state.AwaitingDraftOffer)
+        {
+            // 4 of the Wonders nobody has seen, uniformly (the shuffled Wonder pile).
+            var unseen = GameState.WondersIn(state.UnseenWonders).ToArray();
+            return new DraftReveal(Pick(unseen.Length, GameState.DraftOfferSize).Select(i => unseen[i]).ToArray());
+        }
         if (state.AwaitingGuildPattern) return new GuildPatternReveal(Pick(GameState.SlotCount, GameState.GuildsPerGame));
 
         var slots = state.SlotsToReveal;

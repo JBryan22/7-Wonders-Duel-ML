@@ -10,9 +10,13 @@ namespace SevenWondersDuel.Engine;
 /// rules base start-choice=new
 /// reveal first P1
 /// reveal tokens agriculture economy law strategy urbanism
+/// reveal draft pyramids great-lighthouse circus-maximus piraeus
+/// P1 draft pyramids
+/// ...
 /// reveal age1 0.0 theater 0.1 altar 2.0 ...
 /// P1 build lumber-yard
 /// reveal 3.1 baths
+/// P2 wonder baths piraeus
 /// ...
 /// P2 token law
 /// P2 start opponent
@@ -40,6 +44,7 @@ public static class MoveLog
         MoveEntry m => $"{PlayerName(m.Player)} {FormatMove(m.Move)}",
         FirstPlayerReveal f => $"reveal first {PlayerName(f.Player)}",
         TokenReveal t => "reveal tokens " + string.Join(' ', t.Tokens.Select(TokenSlug)),
+        DraftReveal d => "reveal draft " + string.Join(' ', d.Wonders.Select(WonderSlug)),
         SlotReveal r => FormatSlotReveal(r),
         GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
@@ -52,6 +57,8 @@ public static class MoveLog
         MoveKind.StartMe => "start me",
         MoveKind.StartOpponent => "start opponent",
         MoveKind.Token => $"token {TokenSlug(move.Token)}",
+        MoveKind.Draft => $"draft {WonderSlug(move.Wonder)}",
+        MoveKind.Wonder => $"wonder {CardSlug(move.Card)} {WonderSlug(move.Wonder)}",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -67,6 +74,7 @@ public static class MoveLog
     static string PlayerName(int player) => $"P{player + 1}";
     static string CardSlug(int card) => card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : $"#{card}";
     static string TokenSlug(int token) => token >= 0 && token < GameData.Tokens.Length ? GameData.Tokens[token].Id : $"#{token}";
+    static string WonderSlug(int wonder) => wonder >= 0 && wonder < GameData.Wonders.Length ? GameData.Wonders[wonder].Id : $"#{wonder}";
 
     /// <summary>Parses a Move Log and replays it, checking every entry. Errors name the offending line.</summary>
     public static Game Parse(string text)
@@ -104,6 +112,7 @@ public static class MoveLog
         {
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));
             if (t.Length > 1 && t[1] == "tokens") return new TokenReveal(t.Skip(2).Select(GameData.TokenIndex).ToArray());
+            if (t.Length > 1 && t[1] == "draft") return new DraftReveal(t.Skip(2).Select(GameData.WonderIndex).ToArray());
             if (t.Length > 1 && t[1] == "guilds")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
@@ -129,10 +138,16 @@ public static class MoveLog
             return new SlotReveal(age, opening, cards);
         }
 
+        if (t.Length >= 2 && t[1] == "wonder")
+        {
+            if (t.Length != 4) throw new FormatException("Expected 'P<n> wonder <card> <wonder>'");
+            return new MoveEntry(ParsePlayer(t[0]), Move.BuildWonder(GameData.CardIndex(t[2]), GameData.WonderIndex(t[3])));
+        }
         if (t.Length != 3) throw new FormatException("Expected 'P<n> <move> <argument>'");
         var player = ParsePlayer(t[0]);
         var move = t[1] switch
         {
+            "draft" => Move.Draft(GameData.WonderIndex(t[2])),
             "build" => Move.Build(GameData.CardIndex(t[2])),
             "discard" => Move.Discard(GameData.CardIndex(t[2])),
             "start" => t[2] switch

@@ -28,6 +28,7 @@ public class ThreeAgesTests
             var s = game.State;
             if (s.Step == StepKind.Reveal) game.Apply(chance.Next(s));
             else if (s.Pending(0).Kind == DecisionKind.ChooseStarter) game.Apply(Move.StartMe);
+            else if (s.Pending(0).Kind == DecisionKind.DraftWonder) game.Apply(s.LegalMoves()[0]);
             else game.Apply(s.LegalMoves().Last(m => m.Kind == MoveKind.Discard));
         }
         return game;
@@ -41,7 +42,7 @@ public class ThreeAgesTests
     {
         var game = LastCardOfAgeOne(rules);
         game.State.SetConflictPawn(pawn);
-        game.Apply(game.State.LegalMoves().Last());
+        game.Apply(game.State.LegalMoves().Last(m => m.Kind == MoveKind.Discard));
         return game;
     }
 

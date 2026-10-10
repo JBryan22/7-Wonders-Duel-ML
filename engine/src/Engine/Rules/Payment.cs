@@ -20,6 +20,12 @@ public static class Payment
     static readonly byte[] ChoiceMask = GameData.Cards
         .Select(c => (byte)c.ProduceChoice.Aggregate(0, (m, r) => m | 1 << (int)r))
         .ToArray();
+    /// <summary>The same per Wonder (the Great Lighthouse, Piraeus).</summary>
+    static readonly byte[] WonderChoiceMask = GameData.Wonders
+        .Select(w => (byte)w.ProduceChoice.Aggregate(0, (m, r) => m | 1 << (int)r))
+        .ToArray();
+    static readonly ushort WonderChoiceProducers = (ushort)GameData.Wonders
+        .Where(w => w.ProduceChoice.Length > 0).Aggregate(0, (m, w) => m | 1 << w.Index);
 
     /// <summary>
     /// The price of buying one unit of <paramref name="r"/> for <paramref name="player"/>: 1 with a fixed-price
@@ -37,10 +43,7 @@ public static class Payment
         return QuoteCost(s, player, def.Cost, discount);
     }
 
-    /// <summary>
-    /// What building a Wonder costs, with the Architecture discount. Ticket 07 adds the Wonders' own choice
-    /// production (Piraeus, the Great Lighthouse) to <see cref="QuoteCost"/>'s units.
-    /// </summary>
+    /// <summary>What building a Wonder costs, with the Architecture discount.</summary>
     public static PaymentQuote QuoteWonder(GameState s, int player, int wonder)
     {
         var discount = s.HasToken(player, ProgressTokens.Architecture) ? ProgressTokens.Discount : 0;
@@ -68,13 +71,17 @@ public static class Payment
         }
         if (!anyNeed) return new PaymentQuote(cost.Coins, 0);
 
-        // Each choice producer covers one unit of one of its resources. Wonder producers join in ticket 07.
+        // Each choice producer, card or built Wonder, covers one unit of one of its resources.
         Span<byte> units = stackalloc byte[8];
         var unitCount = 0;
         var producers = s.City(player) & CardSets.ChoiceProducers;
         if (!producers.IsEmpty)
             foreach (var c in producers.Cards())
                 units[unitCount++] = ChoiceMask[c];
+        var wonders = (ushort)(s.BuiltWonders(player) & WonderChoiceProducers);
+        if (wonders != 0)
+            foreach (var w in GameState.WondersIn(wonders))
+                units[unitCount++] = WonderChoiceMask[w];
 
         return new PaymentQuote(cost.Coins, Cheapest(need, price, units[..unitCount], discount));
     }

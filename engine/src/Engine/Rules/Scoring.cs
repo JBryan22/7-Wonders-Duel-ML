@@ -86,7 +86,8 @@ public static class Scoring
                 case CardColor.Purple: points[(int)ScoreCategory.Guilds] += GuildPoints(s, def.Guild); break;
             }
         }
-        // Wonder VP arrive with Wonders (ticket 07).
+        foreach (var w in GameState.WondersIn(s.BuiltWonders(player)))
+            points[(int)ScoreCategory.Wonders] += GameData.Wonders[w].VictoryPoints;
         points[(int)ScoreCategory.Progress] = ProgressPoints(s, player);
         points[(int)ScoreCategory.Coins] = s.Coins(player) / 3;
         points[(int)ScoreCategory.Military] = MilitaryPoints(s.MilitaryLead(player));

@@ -51,8 +51,15 @@ public static class StatePrinter
               .Append($" | city: {(s.City(p).IsEmpty ? "empty" : s.City(p).ToString())}");
             if (s.Tokens(p) != 0) sb.Append($" | tokens: {ProgressTokens.Names(s.Tokens(p))}");
             if (s.DistinctSymbols(p) > 0) sb.Append($" | science symbols: {s.DistinctSymbols(p)}");
+            if (s.Wonders(p) != 0)
+                sb.Append(" | wonders: ").Append(string.Join(", ", GameState.WondersIn(s.Wonders(p)).Select(w =>
+                    GameData.Wonders[w].Id + (s.IsWonderBuilt(w) ? $" (built with {GameData.Cards[s.WonderCard(w)].Id})"
+                        : s.IsWonderRemoved(w) ? " (removed)" : ""))));
             sb.Append('\n');
         }
+        if (s.DraftOffer != 0)
+            sb.Append($"Draft offer: {string.Join(' ', GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonders[w].Id))}\n");
+        if (s.PlayAgain) sb.Append($"P{s.CurrentPlayer + 1} plays again after this turn\n");
         if (s.TokensSetOut != 0)
             sb.Append($"Progress tokens on the board: {(s.BoardTokens != 0 ? ProgressTokens.Names(s.BoardTokens) : "none")}\n");
         if (s.Age > 0)

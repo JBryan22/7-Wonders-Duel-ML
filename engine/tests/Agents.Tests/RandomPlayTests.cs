@@ -19,7 +19,7 @@ public class RandomPlayTests
                 Assert.NotNull(s.Result);
                 var taken = game.Log.OfType<MoveEntry>().Count(m => m.Move.TakesCard);
                 var choices = game.Log.OfType<MoveEntry>().Count(m => m.Move.Kind is MoveKind.StartMe or MoveKind.StartOpponent);
-                Assert.Equal(taken, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
+                Assert.Equal(taken, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count + s.TotalWondersBuilt);
                 if (s.Result.Victory == VictoryType.Military)
                 {
                     // The pawn stands on the loser's capital and the game stopped where it was.
@@ -50,7 +50,7 @@ public class RandomPlayTests
                 if (rules.StartChoice == StartChoice.New) Assert.Equal(2, choices);
                 else Assert.InRange(choices, 0, 2);
                 Assert.Single(game.Log.OfType<GuildPatternReveal>());
-                Assert.Equal(3, ((s.City(0) | s.City(1) | s.DiscardPile) & CardSets.Guilds).Count);
+                Assert.Equal(3, ((s.City(0) | s.City(1) | s.DiscardPile | s.CardsUnderWonders(0) | s.CardsUnderWonders(1)) & CardSets.Guilds).Count);
                 // The winner has more VP, or equal VP and more blue VP; otherwise it is a draw.
                 var (a, b) = (s.Result.P1, s.Result.P2);
                 var expected = a.Total != b.Total ? (a.Total > b.Total ? 0 : 1)
@@ -59,6 +59,56 @@ public class RandomPlayTests
             }
         Assert.True(military > 0, "no random game ended in a military victory");
         Assert.True(science > 0, "no random game ended in a science victory");
+    }
+
+    [Fact]
+    public void Wonders_are_drafted_a_b_b_a_at_most_seven_are_built_and_play_again_follows_its_wonder_over_2k_random_games()
+    {
+        var sevenBuilt = 0;
+        var playAgains = 0;
+        for (ulong seed = 0; seed < 2000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed);
+            var s = game.State;
+            var first = s.FirstPlayer;
+            Assert.Equal(new[] { first, 1 - first, 1 - first, first, 1 - first, first, first, 1 - first },
+                game.Log.OfType<MoveEntry>().Where(m => m.Move.Kind == MoveKind.Draft).Select(m => m.Player));
+            Assert.Equal(2, game.Log.OfType<DraftReveal>().Count());
+            Assert.All(new[] { 0, 1 }, p => Assert.Equal(4, System.Numerics.BitOperations.PopCount(s.Wonders(p))));
+            Assert.Equal(0, s.Wonders(0) & s.Wonders(1));
+            Assert.All(new[] { 0, 1 }, p => Assert.Equal(s.BuiltWonders(p), (ushort)(s.BuiltWonders(p) & s.Wonders(p))));
+            Assert.InRange(s.TotalWondersBuilt, 0, GameState.MaxWondersBuilt);
+            Assert.Equal(game.Log.OfType<MoveEntry>().Count(m => m.Move.Kind == MoveKind.Wonder), s.TotalWondersBuilt);
+            Assert.Equal(s.TotalWondersBuilt == GameState.MaxWondersBuilt ? 1 : 0, System.Numerics.BitOperations.PopCount(s.RemovedWonders));
+            if (s.TotalWondersBuilt == GameState.MaxWondersBuilt) sevenBuilt++;
+
+            // Replay: after a play-again Wonder, the same player takes the next card unless the Age or the game ended.
+            var replay = GameState.New(game.Rules);
+            var expectNext = -1;
+            var age = 0;
+            foreach (var entry in game.Log)
+            {
+                if (entry is MoveEntry m)
+                {
+                    if (m.Move.TakesCard)
+                    {
+                        if (expectNext >= 0 && replay.Age == age) Assert.Equal(expectNext, m.Player);
+                        expectNext = -1;
+                    }
+                    if (m.Move.Kind == MoveKind.Wonder && replay.WonderPlaysAgain(m.Player, m.Move.Wonder))
+                    {
+                        expectNext = m.Player;
+                        age = replay.Age;
+                        playAgains++;
+                    }
+                    else if (m.Move.TakesCard) expectNext = -1;
+                    replay.Apply(m.Move);
+                }
+                else replay.Apply((Reveal)entry);
+            }
+        }
+        Assert.True(sevenBuilt > 0, "no random game built 7 Wonders");
+        Assert.True(playAgains > 0, "no random game built a play-again Wonder");
     }
 
     [Fact]

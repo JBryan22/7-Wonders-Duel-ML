@@ -61,6 +61,19 @@ public sealed class GameState
     ushort _tokensSetOut;
     ushort _boardTokens;
     readonly ushort[] _tokens = new ushort[2];
+    /// <summary>Wonder masks (one bit per Wonder index): the current draft offer, every Wonder offered so far, removed Wonders.</summary>
+    ushort _draftOffer;
+    ushort _wondersSeen;
+    ushort _wondersRemoved;
+    /// <summary>Wonders drafted so far (0..8): which round and whose pick comes next.</summary>
+    byte _draftPicks;
+    /// <summary>Per player: Wonders owned (built or not, removed included) and Wonders built.</summary>
+    readonly ushort[] _wonders = new ushort[2];
+    readonly ushort[] _wondersBuilt = new ushort[2];
+    /// <summary>Per Wonder: the Age card tucked under it, or -1 while unbuilt.</summary>
+    readonly sbyte[] _wonderCard = new sbyte[GameData.Wonders.Length];
+    /// <summary>The player whose turn it is gets another turn once the current one ends (a Wonder's "play again").</summary>
+    bool _playAgain;
 
     GameState(Ruleset rules) => Rules = rules;
 
@@ -71,6 +84,7 @@ public sealed class GameState
         s._coins[0] = s._coins[1] = StartingCoins;
         s._militaryTokens = (1 << MilitaryTokenCount) - 1;
         Array.Fill(s._slots, Empty);
+        Array.Fill(s._wonderCard, (sbyte)-1);
         return s;
     }
 
@@ -143,7 +157,7 @@ public sealed class GameState
 
     /// <summary>
     /// True if this Wonder gives its owner another turn: printed "play again", or any Wonder once Theology is owned
-    /// (never twice). Ticket 07 calls it when a Wonder is built.
+    /// (never twice). Checked when a Wonder is built.
     /// </summary>
     public bool WonderPlaysAgain(int player, int wonder) =>
         GameData.Wonders[wonder].PlayAgain || HasToken(player, ProgressTokens.Theology);
@@ -157,8 +171,75 @@ public sealed class GameState
     public int Production(int player, Resource r) => _production[player * Resources.Count + (int)r];
     public int CardsOfColor(int player, CardColor color) => (_city[player] & CardSets.OfColor[(int)color]).Count;
     public int YellowCards(int player) => CardsOfColor(player, CardColor.Yellow);
-    /// <summary>Wonders this player has built. Wonders arrive in ticket 07; until then none are built.</summary>
-    public int WondersBuilt(int player) => 0;
+    // ---------------------------------------------------------------- Wonders
+
+    /// <summary>Wonders drafted in total: 8, in two rounds of 4 (rules-reference §1).</summary>
+    public const int DraftSize = 8;
+    /// <summary>Wonders offered per draft round.</summary>
+    public const int DraftOfferSize = 4;
+    /// <summary>Only 7 Wonders can be built in a game: once the 7th is built the last unbuilt one leaves the game.</summary>
+    public const int MaxWondersBuilt = 7;
+
+    /// <summary>The Wonders this game drafts from: the 12 base Wonders (the promo switches arrive in tickets 12-13).</summary>
+    public ushort WonderPool => BaseWonderPool;
+    static readonly ushort BaseWonderPool = (ushort)GameData.Wonders.Where(w => !w.IsPromo).Aggregate(0, (m, w) => m | 1 << w.Index);
+
+    /// <summary>True during setup when the next draft round's 4 Wonders must be revealed.</summary>
+    public bool AwaitingDraftOffer => _tokensSetOut != 0 && Age == 0 && _draftOffer == 0 && _draftPicks < DraftSize;
+    /// <summary>The Wonders on offer in the current draft round, one bit per Wonder index (0 outside the draft).</summary>
+    public ushort DraftOffer => _draftOffer;
+    /// <summary>Wonders drafted so far (0..8).</summary>
+    public int DraftPicks => _draftPicks;
+    /// <summary>Wonders of the pool never offered so far: what a draft Reveal draws from.</summary>
+    public ushort UnseenWonders => (ushort)(WonderPool & ~_wondersSeen);
+
+    /// <summary>
+    /// Who makes draft pick <paramref name="pick"/> (0..7): A-B-B-A per round, where A is the first player in
+    /// round 1 and the second player in round 2 (rules-reference §1, mistake 19).
+    /// </summary>
+    public int DraftPicker(int pick)
+    {
+        var a = pick < DraftOfferSize ? FirstPlayer : 1 - FirstPlayer;
+        var i = pick % DraftOfferSize;
+        return i is 0 or 3 ? a : 1 - a;
+    }
+
+    /// <summary>The Wonders a player drafted, built or not (a removed Wonder stays listed), one bit per Wonder index.</summary>
+    public ushort Wonders(int player) => _wonders[player];
+    /// <summary>The Wonders a player has built.</summary>
+    public ushort BuiltWonders(int player) => _wondersBuilt[player];
+    /// <summary>Wonders that left the game unbuilt (the 8th once 7 are built).</summary>
+    public ushort RemovedWonders => _wondersRemoved;
+    public bool OwnsWonder(int player, int wonder) => (_wonders[player] & 1 << wonder) != 0;
+    public bool IsWonderBuilt(int wonder) => ((_wondersBuilt[0] | _wondersBuilt[1]) & 1 << wonder) != 0;
+    public bool IsWonderRemoved(int wonder) => (_wondersRemoved & 1 << wonder) != 0;
+    /// <summary>The player's Wonders that can still be built: owned, unbuilt and not removed.</summary>
+    public ushort BuildableWonders(int player) => (ushort)(_wonders[player] & ~_wondersBuilt[player] & ~_wondersRemoved);
+    /// <summary>The Age card tucked under a built Wonder, or -1.</summary>
+    public int WonderCard(int wonder) => _wonderCard[wonder];
+    /// <summary>The Age cards tucked under a player's built Wonders.</summary>
+    public CardSet CardsUnderWonders(int player)
+    {
+        var set = CardSet.Empty;
+        foreach (var w in WondersIn(_wondersBuilt[player])) set = set.With(_wonderCard[w]);
+        return set;
+    }
+    /// <summary>Wonders this player has built (the Arena and the Builders Guild count them).</summary>
+    public int WondersBuilt(int player) => System.Numerics.BitOperations.PopCount((uint)_wondersBuilt[player]);
+    public int TotalWondersBuilt => WondersBuilt(0) + WondersBuilt(1);
+    /// <summary>
+    /// True while the current turn has earned a play-again that has not started yet: only between a play-again Wonder
+    /// and the end of its turn (for example while a decision it caused is still queued). When the turn ends the flag
+    /// is spent: the same player gets the next take-card decision, queued behind any Reveals.
+    /// </summary>
+    public bool PlayAgain => _playAgain;
+
+    /// <summary>The Wonders in a mask, in index order.</summary>
+    public static IEnumerable<int> WondersIn(ushort mask)
+    {
+        for (var w = 0; w < GameData.Wonders.Length; w++)
+            if ((mask & 1 << w) != 0) yield return w;
+    }
 
     /// <summary>The card in a slot, or its back: <see cref="Empty"/>, <see cref="Hidden"/> or <see cref="HiddenGuild"/>.</summary>
     public int SlotCard(int slot) => _slots[slot];
@@ -193,7 +274,7 @@ public sealed class GameState
 
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
-        : FirstPlayer < 0 || AwaitingTokens || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
+        : FirstPlayer < 0 || AwaitingTokens || AwaitingDraftOffer || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -218,13 +299,22 @@ public sealed class GameState
             case DecisionKind.ChooseToken:
                 foreach (var t in ProgressTokens.In(_boardTokens)) buffer[n++] = Move.PickToken(t);
                 break;
+            case DecisionKind.DraftWonder:
+                foreach (var w in WondersIn(_draftOffer)) buffer[n++] = Move.Draft(w);
+                break;
             default:
+                // Which Wonders the player can afford does not depend on the card taken.
+                Span<int> wonders = stackalloc int[DraftOfferSize];
+                var wonderCount = 0;
+                foreach (var w in WondersIn(BuildableWonders(player)))
+                    if (CanAffordWonder(player, w)) wonders[wonderCount++] = w;
                 for (var s = 0; s < SlotCount; s++)
                 {
                     if (!IsAccessible(s)) continue;
                     var card = _slots[s];
                     if (CanAffordBuild(player, card)) buffer[n++] = Move.Build(card);
                     buffer[n++] = Move.Discard(card);
+                    for (var i = 0; i < wonderCount; i++) buffer[n++] = Move.BuildWonder(card, wonders[i]);
                 }
                 break;
         }
@@ -251,6 +341,11 @@ public sealed class GameState
                 : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
                 : !TokenOnBoard(move.Token) ? $"{GameData.Tokens[move.Token].Id} is not on the board"
                 : null;
+        if (decision.Kind == DecisionKind.DraftWonder)
+            return move.Kind != MoveKind.Draft ? "the decision is which Wonder to draft"
+                : move.Wonder < 0 || move.Wonder >= GameData.Wonders.Length ? "unknown Wonder"
+                : (_draftOffer & 1 << move.Wonder) == 0 ? $"{GameData.Wonders[move.Wonder].Id} is not in the draft offer"
+                : null;
         if (!move.TakesCard) return "the decision is which card to take";
 
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
@@ -260,12 +355,26 @@ public sealed class GameState
         return move.Kind switch
         {
             MoveKind.Discard => null,
+            MoveKind.Wonder => WhyWonderIllegal(decision.Player, move.Wonder),
             _ => CanAffordBuild(decision.Player, move.Card) ? null
                 : $"{GameData.Cards[move.Card].Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {_coins[decision.Player]}",
         };
     }
 
+    string? WhyWonderIllegal(int player, int wonder)
+    {
+        if (wonder < 0 || wonder >= GameData.Wonders.Length) return "unknown Wonder";
+        var id = GameData.Wonders[wonder].Id;
+        return IsWonderRemoved(wonder) ? $"{id} left the game: 7 Wonders are built"
+            : !OwnsWonder(player, wonder) ? $"P{player + 1} does not own {id}"
+            : IsWonderBuilt(wonder) ? $"{id} is already built"
+            : !CanAffordWonder(player, wonder)
+                ? $"{id} costs {Payment.QuoteWonder(this, player, wonder).Total} coins, player has {_coins[player]}"
+            : null;
+    }
+
     bool CanAffordBuild(int player, int card) => Payment.Quote(this, player, card).Total <= _coins[player];
+    bool CanAffordWonder(int player, int wonder) => Payment.QuoteWonder(this, player, wonder).Total <= _coins[player];
 
     int SlotOf(int card)
     {
@@ -290,6 +399,12 @@ public sealed class GameState
             return;
         }
 
+        if (move.Kind == MoveKind.Draft)
+        {
+            DraftWonder(player, move.Wonder);
+            return;
+        }
+
         if (!move.TakesCard)
         {
             CurrentPlayer = move.Kind == MoveKind.StartMe ? player : 1 - player;
@@ -301,9 +416,10 @@ public sealed class GameState
         _slots[slot] = Empty;
         _occupied &= ~(1u << slot);
 
-        if (move.Kind == MoveKind.Build)
+        if (move.Kind is MoveKind.Build or MoveKind.Wonder)
         {
-            Build(player, move.Card);
+            if (move.Kind == MoveKind.Build) Build(player, move.Card);
+            else BuildWonder(player, move.Card, move.Wonder);
             if (IsOver)
             {
                 // Supremacy ends the game in the middle of a move (rules-reference §12 mistake 14).
@@ -350,6 +466,52 @@ public sealed class GameState
     }
 
     /// <summary>
+    /// Builds a Wonder with an Age card (rules-reference §2, §7): pays the cheapest way (Architecture applies, the
+    /// trading coins go to an opponent who owns Economy), tucks the card under it (never to the discard pile), then
+    /// applies its coins, the opponent's coin loss and its shields. Once the 7th Wonder of the game is built, the
+    /// last unbuilt one leaves the game. "Play again" (printed, or from Theology) is granted only if the game goes on;
+    /// it takes effect when the turn ends, after the Reveals of newly accessible cards.
+    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library) arrive in ticket 08.
+    /// </summary>
+    void BuildWonder(int player, int card, int wonder)
+    {
+        var def = GameData.Wonders[wonder];
+        var opponent = 1 - player;
+        var quote = Payment.QuoteWonder(this, player, wonder);
+        _coins[player] -= quote.Total;
+        if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
+        _wondersBuilt[player] |= (ushort)(1 << wonder);
+        _wonderCard[wonder] = (sbyte)card;
+
+        // "7 Wonders, not one more!" (rules-reference §7): the one Wonder still unbuilt leaves the game.
+        if (TotalWondersBuilt == MaxWondersBuilt)
+            _wondersRemoved = (ushort)((_wonders[0] | _wonders[1]) & ~(_wondersBuilt[0] | _wondersBuilt[1]));
+
+        _coins[player] += def.Coins;
+        _coins[opponent] = Math.Max(0, _coins[opponent] - def.OpponentLoses);
+        // Wonder shields never get Strategy's bonus (rules-reference §12 mistake 9).
+        if (def.Shields > 0) AddShields(player, def.Shields);
+        if (!IsOver && WonderPlaysAgain(player, wonder)) _playAgain = true;
+    }
+
+    /// <summary>Takes a Wonder from the offer; the next pick, the next round's Reveal, or Age I follows.</summary>
+    void DraftWonder(int player, int wonder)
+    {
+        _draftOffer &= (ushort)~(1 << wonder);
+        _wonders[player] |= (ushort)(1 << wonder);
+        _draftPicks++;
+        if (_draftPicks == DraftSize)
+        {
+            // The draft's first player starts Age I (rules-reference §1).
+            CurrentPlayer = FirstPlayer;
+            StartAge(1);
+        }
+        else if (_draftOffer != 0)
+            PushDecision(new PendingDecision(DecisionKind.DraftWonder, DraftPicker(_draftPicks)));
+        // else: round 2's offer is revealed next (AwaitingDraftOffer).
+    }
+
+    /// <summary>
     /// A player has just gained a scientific symbol (a green card entering the city by any route, or Law). Six
     /// different symbols win at once; otherwise a completed pair asks for a Progress token while any remain on the
     /// board (compulsory, spec A3). Each symbol exists twice, so a pair forms at most once (rules-reference §6).
@@ -366,7 +528,7 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Gives a player a Progress token: from the board after a pair, or (ticket 07) the Great Library's pick from the
+    /// Gives a player a Progress token: from the board after a pair, or (ticket 08) the Great Library's pick from the
     /// box. Applies the immediate effects: coins (Agriculture, Urbanism) and Law's symbol, which can win by science.
     /// </summary>
     internal void TakeToken(int player, int token)
@@ -383,7 +545,7 @@ public sealed class GameState
     /// (rules-reference §8). Entering a zone that still holds a military token loots it: the opponent loses that many
     /// coins (all they have if fewer) to the bank, and the token leaves the game. Reaching the capital ends the game
     /// at once with a military victory. Retreating never loots, so each token triggers at most once.
-    /// Red cards (with Strategy's extra shield already added by the caller) and Wonders (ticket 07) feed it.
+    /// Red cards (with Strategy's extra shield already added by the caller) and Wonders feed it.
     /// </summary>
     internal void AddShields(int player, int shields)
     {
@@ -422,6 +584,10 @@ public sealed class GameState
                 ApplyTokenReveal(t);
                 break;
 
+            case DraftReveal d:
+                ApplyDraftReveal(d);
+                break;
+
             case GuildPatternReveal g:
                 ApplyGuildPattern(g);
                 break;
@@ -435,7 +601,31 @@ public sealed class GameState
         }
     }
 
-    /// <summary>The Progress tokens set out at setup. Age I starts right after (ticket 07 puts the Wonder draft in between).</summary>
+    /// <summary>One draft round's 4 Wonders, drawn from the unseen Wonders of the pool; the round's first pick follows.</summary>
+    void ApplyDraftReveal(DraftReveal d)
+    {
+        if (!AwaitingDraftOffer)
+            throw new InvalidOperationException(_tokensSetOut == 0
+                ? "The draft comes after the first player and the Progress tokens"
+                : "The game is not waiting for a draft offer");
+        if (d.Wonders.Length != DraftOfferSize || d.Wonders.Distinct().Count() != DraftOfferSize)
+            throw new InvalidOperationException($"A draft offer names {DraftOfferSize} different Wonders");
+        ushort mask = 0;
+        foreach (var w in d.Wonders)
+        {
+            if (w < 0 || w >= GameData.Wonders.Length) throw new InvalidOperationException($"Unknown Wonder {w}");
+            if ((UnseenWonders & 1 << w) == 0)
+                throw new InvalidOperationException((WonderPool & 1 << w) == 0
+                    ? $"{GameData.Wonders[w].Id} is not in this game's Wonder pool"
+                    : $"{GameData.Wonders[w].Id} was already offered");
+            mask |= (ushort)(1 << w);
+        }
+        _draftOffer = mask;
+        _wondersSeen |= mask;
+        PushDecision(new PendingDecision(DecisionKind.DraftWonder, DraftPicker(_draftPicks)));
+    }
+
+    /// <summary>The Progress tokens set out at setup. The Wonder draft follows, then Age I.</summary>
     void ApplyTokenReveal(TokenReveal t)
     {
         if (!AwaitingTokens)
@@ -451,7 +641,6 @@ public sealed class GameState
             mask |= (ushort)(1 << token);
         }
         _tokensSetOut = _boardTokens = mask;
-        StartAge(1);
     }
 
     void ApplyGuildPattern(GuildPatternReveal g)
@@ -524,6 +713,11 @@ public sealed class GameState
             PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
     }
 
+    /// <summary>
+    /// Ends the turn: the next Age if the layout is empty (a pending play-again is lost), otherwise the same player
+    /// again after a play-again Wonder, or the opponent. The new take-card decision waits behind the Reveals of
+    /// newly accessible cards (<see cref="Step"/> asks for those first), so a play-again turn sees them.
+    /// </summary>
     void EndTurn()
     {
         if (_occupied == 0)
@@ -531,12 +725,15 @@ public sealed class GameState
             EndAge();
             return;
         }
-        CurrentPlayer ^= 1;
+        if (_playAgain) _playAgain = false;
+        else CurrentPlayer ^= 1;
         PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
     }
 
     void EndAge()
     {
+        // "Play again" disappears at the end of an Age (rules-reference §12 mistake 8).
+        _playAgain = false;
         if (Age == AgeCount) Result = Scoring.Civilian(this);
         else StartAge(Age + 1);
     }
@@ -568,6 +765,9 @@ public sealed class GameState
 
     /// <summary>Test setup: replaces the tokens on the board.</summary>
     internal void SetBoardTokens(ushort mask) => _boardTokens = mask;
+
+    /// <summary>Test setup: gives a player a Wonder, unbuilt, outside the draft.</summary>
+    internal void GiveWonder(int player, int wonder) => _wonders[player] |= (ushort)(1 << wonder);
 
     // ---------------------------------------------------------------- copying and comparing
 
@@ -601,6 +801,14 @@ public sealed class GameState
         _tokensSetOut = other._tokensSetOut;
         _boardTokens = other._boardTokens;
         other._tokens.CopyTo(_tokens, 0);
+        _draftOffer = other._draftOffer;
+        _wondersSeen = other._wondersSeen;
+        _wondersRemoved = other._wondersRemoved;
+        _draftPicks = other._draftPicks;
+        other._wonders.CopyTo(_wonders, 0);
+        other._wondersBuilt.CopyTo(_wondersBuilt, 0);
+        other._wonderCard.CopyTo(_wonderCard, 0);
+        _playAgain = other._playAgain;
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
@@ -610,6 +818,10 @@ public sealed class GameState
         && _militaryTokens == o._militaryTokens
         && _tokensSetOut == o._tokensSetOut && _boardTokens == o._boardTokens && _tokens.AsSpan().SequenceEqual(o._tokens)
         && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
+        && _draftOffer == o._draftOffer && _wondersSeen == o._wondersSeen && _wondersRemoved == o._wondersRemoved
+        && _draftPicks == o._draftPicks && _playAgain == o._playAgain
+        && _wonders.AsSpan().SequenceEqual(o._wonders) && _wondersBuilt.AsSpan().SequenceEqual(o._wondersBuilt)
+        && _wonderCard.AsSpan().SequenceEqual(o._wonderCard)
         && _queueCount == o._queueCount
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)
         && _city.AsSpan().SequenceEqual(o._city) && _production.AsSpan().SequenceEqual(o._production)

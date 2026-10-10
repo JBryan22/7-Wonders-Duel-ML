@@ -34,6 +34,7 @@ public class MilitaryTests
             var s = game.State;
             if (s.Step == StepKind.Reveal) { game.Apply(chance.Next(s)); continue; }
             if (s.Pending(0).Kind == DecisionKind.ChooseStarter) { game.Apply(Move.StartMe); continue; }
+            if (s.Pending(0).Kind == DecisionKind.DraftWonder) { game.Apply(s.LegalMoves()[0]); continue; }
             var red = s.LegalMoves().Where(m => m.Kind == MoveKind.Build && GameData.Cards[m.Card].Color == CardColor.Red).ToList();
             if (red.Count > 0) return (game, red[0].Card);
             game.Apply(s.LegalMoves().Last(m => m.Kind == MoveKind.Discard));
