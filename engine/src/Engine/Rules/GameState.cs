@@ -1098,6 +1098,19 @@ public sealed class GameState
         return new Observation(copy, player);
     }
 
+    /// <summary>
+    /// The Determinizer's guess at a hidden Great Library draw: makes this state's draw known as
+    /// <paramref name="draw"/> (3 tokens left in the box), as if the private Reveal had been seen.
+    /// </summary>
+    internal void FillLibraryDraw(ushort draw)
+    {
+        if (!_libraryDrawHidden) throw new InvalidOperationException("No hidden Great Library draw to fill");
+        if (System.Numerics.BitOperations.PopCount((uint)draw) != LibraryDrawSize || (draw & ~TokensSetAside) != 0)
+            throw new InvalidOperationException($"A Great Library draw is {LibraryDrawSize} tokens from the box");
+        _libraryDraw = draw;
+        _libraryDrawHidden = false;
+    }
+
     // ---------------------------------------------------------------- copying and comparing
 
     public GameState Clone()

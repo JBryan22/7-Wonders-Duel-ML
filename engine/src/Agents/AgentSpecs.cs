@@ -18,6 +18,7 @@ public static class AgentSpecs
             : throw new FormatException("The random Agent takes no argument"),
         ["heuristic"] = (argument, seed) =>
             new HeuristicAgent(HeuristicWeights.Parse(argument), seed),
+        ["pimc"] = (argument, seed) => new PimcAgent(PimcSettings.Parse(argument), seed),
     };
 
     public static IEnumerable<string> Names => Factories.Keys.Order();

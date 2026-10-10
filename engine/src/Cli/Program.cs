@@ -17,7 +17,8 @@ const string Usage = """
                                        play N seed pairs (default 200 = 400 games) with seats swapped; report the win
                                        rate with its 95% CI, Elo (Random = 0) and the victory types. With --out, each
                                        finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
-                                       Agents: random, heuristic[:science|military|civilian|balanced] (default balanced)
+                                       Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
+                                       pimc[:samples=50,playouts=1,margin=0.02]
     """;
 
 try
