@@ -41,9 +41,11 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel AI (base game
 - [Expansion extension points](issues/18-expansion-extension-points.md): v1 builds only the cheap seams and names the rest. Expansions are Ruleset switches, each its own module, and v1 rejects them. Reveals carry an audience (used for the Great Library). Moves can name a slot. A uniform Determinizer is built. Layouts, victory types and outcome classes come from data. Payment choices become a follow-up Pending Decision (named only).
 - [Training compute budget and v1 stopping rule](issues/20-compute-budget-and-stopping-rule.md): v1 succeeds when the best network passes the Anchor (MCTS at 1,000 simulations), aiming for +200 Elo. The Run stops at a plateau (20 Generations) or a 300 desktop-hour cap, and the experiments get 150 hours of pilots run first. A calibration run sizes Generations to about 1 hour. The Advisor uses 800 simulations (3,200 to think longer). The warm-start trigger is <1% science wins in Generations 6–10. Training is started and paused only by hand (shortcuts or `7wd train`), with pause losing at most a minute. The Run stops itself only when there's no reason to continue.
 
+- [Assemble the v1 spec and phased build plan](issues/14-assemble-v1-spec.md): the destination, [`docs/spec-v1.md`](../../docs/spec-v1.md). Part A is the v1 spec. Part B has 11 build phases (P0 Foundations through P10 TTS Adapter), each ending in something runnable and a validation experiment. v1 is done when the best network passes the Anchor and one full TTS game is advised by it.
+
 ## Not yet specified
 
-_Nothing: every open question is settled. Only "Assemble the v1 spec and phased build plan" remains._
+_Nothing. The destination is reached: every ticket is closed and the way is clear. Next comes `/to-tickets` or building P0._
 
 ## Out of scope
 
