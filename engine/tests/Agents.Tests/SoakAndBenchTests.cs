@@ -25,6 +25,48 @@ public class SoakAndBenchTests
         Assert.Equal("rules base start-choice=2015 promo=messe", Soak.RulesFor(1, Engine.Promos.Messe).ToString());
     }
 
+    [Theory]
+    [InlineData(Engine.Promos.Liberty, "rules base start-choice=2015 promo=liberty")]
+    [InlineData(Engine.Promos.Messe | Engine.Promos.Liberty, "rules base start-choice=2015 promo=messe,liberty")]
+    public void Every_invariant_holds_over_3k_soaked_games_with_the_statue_of_liberty(Engine.Promos promos, string rules)
+    {
+        var report = Soak.Run(3000, firstSeed: 2_000_000, promos: promos);
+        Assert.True(report.Passed, string.Join('\n', report.Failures.Take(10)));
+        Assert.Equal(3000, report.Civilian + report.Military + report.Science);
+        Assert.Equal(rules, Soak.RulesFor(1, promos).ToString());
+    }
+
+    [Fact]
+    public void The_statue_of_liberty_is_drafted_built_and_resolved_in_random_promo_games()
+    {
+        var liberty = Engine.Data.GameData.WonderIndex("statue-of-liberty");
+        int drafted = 0, built = 0, gives = 0, opponentPicks = 0;
+        for (ulong seed = 0; seed < 1000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed, new Engine.Ruleset(Promos: Engine.Promos.Liberty));
+            var s = game.State;
+            if (((s.Wonders(0) | s.Wonders(1)) & 1 << liberty) != 0) drafted++;
+            if (s.IsWonderBuilt(liberty)) built++;
+            for (var i = 0; i < game.Log.Count; i++)
+            {
+                if (game.Log[i] is not Engine.MoveEntry { Move.Kind: Engine.MoveKind.LibertyGive } give) continue;
+                gives++;
+                // Wonder, (flips,) returned cards, keep, give: all the Statue's owner's.
+                Assert.IsType<Engine.ReturnedReveal>(game.Log[i - 2]);
+                var keep = Assert.IsType<Engine.MoveEntry>(game.Log[i - 1]);
+                Assert.Equal((give.Player, Engine.MoveKind.LibertyKeep), (keep.Player, keep.Move.Kind));
+                var wonder = game.Log.Take(i).OfType<Engine.MoveEntry>().Last(m => m.Move.Kind == Engine.MoveKind.Wonder);
+                Assert.Equal((give.Player, liberty), (wonder.Player, wonder.Move.Wonder));
+                // A token picked by the opponent during the owner's turn.
+                opponentPicks += game.Log.Skip(i + 1).TakeWhile(e => e is Engine.MoveEntry { Move.Kind: Engine.MoveKind.Token })
+                    .Count(e => ((Engine.MoveEntry)e).Player != give.Player);
+            }
+        }
+        Assert.InRange(drafted, 500, 750); // 8 of 13 Wonders are drafted: ~615
+        Assert.True(built > 0 && gives == built, $"built {built}, gives {gives}");
+        Assert.True(opponentPicks > 0, "no opponent token pick from a given card in 1000 games");
+    }
+
     [Fact]
     public void The_messe_is_drafted_built_and_resolved_in_random_promo_games()
     {

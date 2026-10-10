@@ -31,6 +31,13 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
             return new LibraryReveal(state.PlayerToDecide,
                 Pick(box.Length, GameState.LibraryDrawSize).Select(i => box[i]).ToArray());
         }
+        if (state.SlotsToReveal == 0 && state.AwaitingReturnedCards)
+        {
+            // The 3 removed cards are exchangeable with the face-down slots: 3 of the Age's unseen cards, uniformly.
+            var pool = state.UnseenPool(state.Age);
+            return new ReturnedReveal(state.Age,
+                Pick(pool.Count, GameState.ReturnedCardCount).Select(pool.ElementAt).ToArray());
+        }
 
         var slots = state.SlotsToReveal;
         var named = CardSet.Empty;

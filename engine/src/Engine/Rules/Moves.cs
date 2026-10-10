@@ -1,6 +1,6 @@
 namespace SevenWondersDuel.Engine;
 
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe }
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -30,6 +30,10 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     public static Move Mausoleum(int card) => new(MoveKind.Mausoleum, card);
     /// <summary>"messe tavern": the Messe builds a card of the current Age's top row for free, even a covered one.</summary>
     public static Move Messe(int card) => new(MoveKind.Messe, card);
+    /// <summary>"liberty-keep study": the Statue of Liberty's owner builds this returned card for free.</summary>
+    public static Move LibertyKeep(int card) => new(MoveKind.LibertyKeep, card);
+    /// <summary>"liberty-give circus": the opponent builds this returned card for free; the third goes to the discard pile.</summary>
+    public static Move LibertyGive(int card) => new(MoveKind.LibertyGive, card);
     /// <summary>"library law": keep one of the 3 Progress tokens the Great Library drew.</summary>
     public static Move Library(int token) => new(MoveKind.Library, token);
 
@@ -66,11 +70,21 @@ public enum DecisionKind : byte
     /// pushed when the top row is empty.
     /// </summary>
     Messe,
+    /// <summary>
+    /// The Statue of Liberty (promo): choose which of the 3 returned cards its owner builds for free. Comes after the
+    /// cards' Reveal; never skipped.
+    /// </summary>
+    LibertyKeep,
+    /// <summary>
+    /// The Statue of Liberty: choose which of the 2 other returned cards the opponent builds for free (the last one
+    /// goes to the discard pile). The owner decides; then the owner's card resolves fully, then the opponent's.
+    /// </summary>
+    LibertyGive,
 }
 
 /// <summary>
 /// A choice the Game State is waiting on, owned by the player who must make it. <see cref="Wonder"/> is the Wonder
-/// whose power asked for it (Destroy, Mausoleum, Library, Messe), or -1.
+/// whose power asked for it (Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive), or -1.
 /// </summary>
 public readonly record struct PendingDecision(DecisionKind Kind, int Player, int Wonder = -1);
 
@@ -154,5 +168,15 @@ public sealed record LibraryReveal(int Player, int[] Tokens) : Reveal
 
     public bool Redacted => Tokens.Length == 0;
     public override int Audience => Player;
+    public override string ToString() => MoveLog.Format(this);
+}
+
+/// <summary>
+/// The Statue of Liberty's 3 returned cards ("reveal returned age2 brewery caravansery school"): the cards of the
+/// current Age removed at setup (in Age III never Guilds), drawn from the Age's unseen non-Guild cards. Public; it
+/// comes right after the flips caused by the Statue's own Age card, before liberty-keep.
+/// </summary>
+public sealed record ReturnedReveal(int Age, int[] Cards) : Reveal
+{
     public override string ToString() => MoveLog.Format(this);
 }

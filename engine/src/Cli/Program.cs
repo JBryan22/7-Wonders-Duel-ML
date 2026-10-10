@@ -4,11 +4,11 @@ using SevenWondersDuel.Engine;
 const string Usage = """
     usage: 7wd <command>
       replay <log-file>                replay a Move Log and print the final Game State
-      random [--seed N] [--promo P]    play one random game and print its Move Log (P: messe)
+      random [--seed N] [--promo P]    play one random game and print its Move Log (P: messe, liberty or messe,liberty)
       bench [--seconds S]              random games/s on one thread (default 5 s per variant)
       soak [--games N] [--seed S] [--promo P]
                                        check the random-play invariants over N games (default 100000) from seed S,
-                                       with the promo Wonders P switched on (e.g. messe)
+                                       with the promo Wonders P switched on (e.g. messe,liberty)
       crosscheck [--games N] [--seed S] [--driver PATH] [--freeze DIR]
                                        compare N random games (default 10000) with indjev99's C++ engine; the driver
                                        comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games

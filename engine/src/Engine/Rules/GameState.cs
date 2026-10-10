@@ -81,15 +81,24 @@ public sealed class GameState
     /// <summary>The Great Library's private draw while its pick is pending (one bit per token), and whether this copy only knows that it was drawn.</summary>
     ushort _libraryDraw;
     bool _libraryDrawHidden;
+    /// <summary>
+    /// The Statue of Liberty: the returned cards still undecided (3 after their Reveal, 2 after liberty-keep), the
+    /// card kept by its owner until liberty-give, and the card given to the opponent until its build (after the
+    /// owner's card has resolved fully). Empty / -1 at every other time.
+    /// </summary>
+    CardSet _libertyOffer;
+    sbyte _libertyKept;
+    sbyte _libertyGiven;
 
-    GameState(Ruleset rules) => Rules = rules;
+    GameState(Ruleset rules)
+    {
+        Rules = rules;
+        _libertyKept = _libertyGiven = -1;
+    }
 
     /// <summary>A new game before any Reveal: the first Reveal names the first player.</summary>
     public static GameState New(Ruleset rules)
     {
-        // The Messe is supported; the Statue of Liberty's rules arrive with ticket 13.
-        if (rules.HasPromo(Promos.Liberty))
-            throw new NotSupportedException($"The Statue of Liberty ({rules}) is not supported by the Engine yet");
         var s = new GameState(rules) { FirstPlayer = -1 };
         s._coins[0] = s._coins[1] = StartingCoins;
         s._militaryTokens = (1 << MilitaryTokenCount) - 1;
@@ -275,6 +284,19 @@ public sealed class GameState
     /// <summary>True when the Great Library was just built and its private draw must be revealed (after any flips).</summary>
     public bool AwaitingLibraryDraw =>
         _queueCount > 0 && _queue[0].Kind == DecisionKind.Library && _libraryDraw == 0 && !_libraryDrawHidden;
+    /// <summary>The Statue of Liberty's returned cards per Age (promo-wonders §3): the 3 removed unseen at setup.</summary>
+    public const int ReturnedCardCount = 3;
+    /// <summary>
+    /// The Statue of Liberty's returned cards still undecided: all 3 while liberty-keep is pending, the other 2 while
+    /// liberty-give is pending, otherwise empty. Public: both players see them (promo-wonders §3.1.5).
+    /// </summary>
+    public CardSet LibertyOffer => _libertyOffer;
+    /// <summary>The card the Statue's owner chose to keep, while liberty-give is pending; otherwise -1.</summary>
+    public int LibertyKept => _libertyKept;
+    /// <summary>True when the Statue of Liberty was just built and its 3 returned cards must be revealed (after any flips).</summary>
+    public bool AwaitingReturnedCards =>
+        _queueCount > 0 && _queue[0].Kind == DecisionKind.LibertyKeep && _libertyOffer.IsEmpty;
+
     /// <summary>The colour the pending Destroy decision targets (brown for Zeus, grey for Circus Maximus), or null.</summary>
     public CardColor? DestroyColor =>
         _queueCount > 0 && _queue[0].Kind == DecisionKind.Destroy ? DestroyColorOf(_queue[0].Wonder) : null;
@@ -324,7 +346,7 @@ public sealed class GameState
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
         : FirstPlayer < 0 || AwaitingTokens || AwaitingDraftOffer || _awaitingGuildPattern || SlotsToReveal != 0
-            || AwaitingLibraryDraw ? StepKind.Reveal
+            || AwaitingLibraryDraw || AwaitingReturnedCards ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -364,6 +386,12 @@ public sealed class GameState
             case DecisionKind.Messe:
                 for (var s = 0; s < SlotCount; s++)
                     if ((TopRowSlots & 1u << s) != 0) buffer[n++] = Move.Messe(_slots[s]);
+                break;
+            case DecisionKind.LibertyKeep:
+                foreach (var c in _libertyOffer.Cards()) buffer[n++] = Move.LibertyKeep(c);
+                break;
+            case DecisionKind.LibertyGive:
+                foreach (var c in _libertyOffer.Cards()) buffer[n++] = Move.LibertyGive(c);
                 break;
             default:
                 // Which Wonders the player can afford does not depend on the card taken.
@@ -436,6 +464,16 @@ public sealed class GameState
             return top >= 0 && (TopRowSlots & 1u << top) != 0 ? null
                 : $"{GameData.Cards[move.Card].Id} is not in the top row of the Age {Age} structure";
         }
+        if (decision.Kind is DecisionKind.LibertyKeep or DecisionKind.LibertyGive)
+        {
+            var keep = decision.Kind == DecisionKind.LibertyKeep;
+            return move.Kind != (keep ? MoveKind.LibertyKeep : MoveKind.LibertyGive)
+                    ? keep ? "the decision is which returned card the Statue of Liberty's owner builds"
+                        : "the decision is which returned card the opponent builds (the other is discarded)"
+                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
+                : !_libertyOffer.Contains(move.Card) ? $"{GameData.Cards[move.Card].Id} is not among the Statue of Liberty's cards on offer"
+                : null;
+        }
         if (!move.TakesCard) return "the decision is which card to take";
 
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
@@ -490,10 +528,27 @@ public sealed class GameState
     {
         if (WhyIllegal(move) is { } why) throw new InvalidOperationException($"Illegal move '{move}': {why}");
         var player = _queue[0].Player;
+        var wonder = _queue[0].Wonder;
         PopDecision();
 
         switch (move.Kind)
         {
+            case MoveKind.LibertyKeep:
+                _libertyOffer = _libertyOffer.Without(move.Card);
+                _libertyKept = (sbyte)move.Card;
+                PushDecision(new PendingDecision(DecisionKind.LibertyGive, player, wonder));
+                return;
+            case MoveKind.LibertyGive:
+                // The third card goes to the discard pile (promo-wonders §3.4: [7WD] loses it). Then the owner's card
+                // resolves fully, token pick or win included, before the opponent's card (FinishDecision).
+                _discard |= _libertyOffer.Without(move.Card);
+                _libertyOffer = CardSet.Empty;
+                var kept = _libertyKept;
+                _libertyKept = -1;
+                _libertyGiven = (sbyte)move.Card;
+                Build(player, kept, free: true);
+                FinishDecision();
+                return;
             case MoveKind.Token:
                 TakeToken(player, move.Token);
                 FinishDecision();
@@ -563,15 +618,29 @@ public sealed class GameState
         if (_queueCount == 0) EndTurn();
     }
 
-    /// <summary>After a decision a Wonder or a science pair asked for: a win clears the queue, an empty queue ends the turn.</summary>
+    /// <summary>
+    /// After a decision a Wonder or a science pair asked for: a win clears the queue, an empty queue ends the turn.
+    /// The Statue of Liberty's given card is built here, once its owner's card has resolved (its token pick
+    /// included): it goes to the opponent of the player whose turn it is, who may then owe a token pick, or win.
+    /// </summary>
     void FinishDecision()
     {
-        if (IsOver) _queueCount = 0;
+        if (!IsOver && _queueCount == 0 && _libertyGiven >= 0)
+        {
+            var given = _libertyGiven;
+            _libertyGiven = -1;
+            Build(1 - CurrentPlayer, given, free: true);
+        }
+        if (IsOver)
+        {
+            _queueCount = 0;
+            _libertyGiven = -1;
+        }
         else if (_queueCount == 0) EndTurn();
     }
 
     /// <summary>
-    /// Puts a card into a player's city with all its effects. A <paramref name="free"/> build (the Mausoleum, the Messe) pays
+    /// Puts a card into a player's city with all its effects. A <paramref name="free"/> build (the Mausoleum, the Messe, the Statue of Liberty) pays
     /// nothing and earns no Urbanism coins (rules-reference §12 mistake 4); everything else applies as usual,
     /// including a science pair or win.
     /// </summary>
@@ -613,7 +682,7 @@ public sealed class GameState
     /// applies its coins, the opponent's coin loss and its shields. Once the 7th Wonder of the game is built, the
     /// last unbuilt one leaves the game. "Play again" (printed, or from Theology) is granted only if the game goes on;
     /// it takes effect when the turn ends, after the Reveals of newly accessible cards.
-    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library, the Messe) then queue their decision.
+    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library, the Messe, the Statue of Liberty) then queue their decision.
     /// </summary>
     void BuildWonder(int player, int card, int wonder)
     {
@@ -655,6 +724,11 @@ public sealed class GameState
             case WonderEffect.Messe:
                 // Empty only when the Messe's own Age card was the Age's last (then the effect does nothing).
                 if (TopRowSlots != 0) PushDecision(new PendingDecision(DecisionKind.Messe, player, wonder));
+                break;
+            case WonderEffect.Liberty:
+                // Never skipped: an Age card was just taken, so this Age's 3 removed cards exist (promo-wonders
+                // §3.1.10). Their Reveal (AwaitingReturnedCards) comes after the flips, then liberty-keep and -give.
+                PushDecision(new PendingDecision(DecisionKind.LibertyKeep, player, wonder));
                 break;
         }
     }
@@ -764,6 +838,10 @@ public sealed class GameState
                 ApplyLibraryReveal(l);
                 break;
 
+            case ReturnedReveal r:
+                ApplyReturnedReveal(r);
+                break;
+
             default:
                 throw new InvalidOperationException($"Unsupported Reveal {reveal.GetType().Name}");
         }
@@ -796,6 +874,29 @@ public sealed class GameState
             mask |= (ushort)(1 << token);
         }
         _libraryDraw = mask;
+    }
+
+    /// <summary>
+    /// The Statue of Liberty's 3 returned cards: unseen non-Guild cards of the current Age (the 3 removed at setup
+    /// are exchangeable with the face-down slots, ADR 0002). Public, and after the flips its Age card caused.
+    /// </summary>
+    void ApplyReturnedReveal(ReturnedReveal r)
+    {
+        if (!AwaitingReturnedCards) throw new InvalidOperationException("The game is not waiting for the Statue of Liberty's returned cards");
+        if (SlotsToReveal != 0) throw new InvalidOperationException("Newly accessible cards are revealed before the Statue of Liberty's cards");
+        if (r.Age != Age) throw new InvalidOperationException($"The returned cards are Age {Age}'s, not Age {r.Age}'s");
+        if (r.Cards.Length != ReturnedCardCount || r.Cards.Distinct().Count() != ReturnedCardCount)
+            throw new InvalidOperationException($"The Statue of Liberty reveals {ReturnedCardCount} different cards");
+        var offer = CardSet.Empty;
+        foreach (var card in r.Cards)
+        {
+            if (card < 0 || card >= GameData.Cards.Length) throw new InvalidOperationException($"Unknown card {card}");
+            if (!UnseenPool(Age).Contains(card))
+                throw new InvalidOperationException($"{GameData.Cards[card].Id} cannot be a returned card: not an unseen Age {Age} card");
+            offer = offer.With(card);
+        }
+        _libertyOffer = offer;
+        _seen |= offer;
     }
 
     /// <summary>One draft round's 4 Wonders, drawn from the unseen Wonders of the pool; the round's first pick follows.</summary>
@@ -1039,6 +1140,9 @@ public sealed class GameState
         _playAgain = other._playAgain;
         _libraryDraw = other._libraryDraw;
         _libraryDrawHidden = other._libraryDrawHidden;
+        _libertyOffer = other._libertyOffer;
+        _libertyKept = other._libertyKept;
+        _libertyGiven = other._libertyGiven;
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
@@ -1051,6 +1155,7 @@ public sealed class GameState
         && _draftOffer == o._draftOffer && _wondersSeen == o._wondersSeen && _wondersRemoved == o._wondersRemoved
         && _draftPicks == o._draftPicks && _playAgain == o._playAgain
         && _libraryDraw == o._libraryDraw && _libraryDrawHidden == o._libraryDrawHidden
+        && _libertyOffer == o._libertyOffer && _libertyKept == o._libertyKept && _libertyGiven == o._libertyGiven
         && _wonders.AsSpan().SequenceEqual(o._wonders) && _wondersBuilt.AsSpan().SequenceEqual(o._wondersBuilt)
         && _wonderCard.AsSpan().SequenceEqual(o._wonderCard)
         && _queueCount == o._queueCount
@@ -1115,6 +1220,13 @@ public sealed class GameState
             w.Write(_playAgain);
             w.Write(_libraryDraw);
             w.Write(_libraryDrawHidden);
+            // Only Statue of Liberty games carry its fields, so the base game's pinned bytes are unchanged.
+            if (Rules.HasPromo(Promos.Liberty))
+            {
+                Set(w, _libertyOffer);
+                w.Write(_libertyKept);
+                w.Write(_libertyGiven);
+            }
         }
         return stream.ToArray();
     }

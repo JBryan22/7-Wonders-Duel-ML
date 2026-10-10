@@ -107,13 +107,6 @@ public class MesseTests
         Assert.InRange(offered, 90, 160);
     }
 
-    [Fact]
-    public void The_statue_of_liberty_is_still_refused_until_ticket_13()
-    {
-        var e = Assert.Throws<NotSupportedException>(() => GameState.New(Ruleset.Parse("rules base promo=messe,liberty")));
-        Assert.Contains("Statue of Liberty", e.Message);
-    }
-
     // ---------------------------------------------------------------- The Messe
 
     [Fact]

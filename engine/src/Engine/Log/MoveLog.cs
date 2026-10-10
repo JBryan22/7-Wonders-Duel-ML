@@ -28,6 +28,10 @@ namespace SevenWondersDuel.Engine;
 /// P1 mausoleum quarry
 /// P2 wonder baths messe                       (rules ... promo=messe)
 /// P2 messe palisade
+/// P1 wonder altar statue-of-liberty           (rules ... promo=liberty)
+/// reveal returned age1 stable tavern workshop
+/// P1 liberty-keep tavern
+/// P1 liberty-give workshop                    (the stable goes to the discard pile)
 /// P2 start opponent
 /// reveal guilds 0.1 3.0 5.2
 /// reveal age3 0.0 palace 0.1 senate ...
@@ -65,6 +69,7 @@ public static class MoveLog
         GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
         LibraryReveal { Redacted: true } l => $"reveal {PlayerName(l.Player)} library ? ? ?",
         LibraryReveal l => $"reveal {PlayerName(l.Player)} library " + string.Join(' ', l.Tokens.Select(TokenSlug)),
+        ReturnedReveal r => $"reveal returned age{r.Age} " + string.Join(' ', r.Cards.Select(CardSlug)),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
     };
 
@@ -81,6 +86,8 @@ public static class MoveLog
         MoveKind.Mausoleum => $"mausoleum {CardSlug(move.Card)}",
         MoveKind.Library => $"library {TokenSlug(move.Token)}",
         MoveKind.Messe => $"messe {CardSlug(move.Card)}",
+        MoveKind.LibertyKeep => $"liberty-keep {CardSlug(move.Card)}",
+        MoveKind.LibertyGive => $"liberty-give {CardSlug(move.Card)}",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -147,6 +154,13 @@ public static class MoveLog
                 if (drawn.Contains("?")) throw new FormatException("A redacted Great Library draw hides all 3 tokens: '? ? ?'");
                 return new LibraryReveal(ParsePlayer(t[1]), drawn.Select(GameData.TokenIndex).ToArray());
             }
+            if (t.Length > 1 && t[1] == "returned")
+            {
+                if (t.Length != 3 + GameState.ReturnedCardCount || !t[2].StartsWith("age", StringComparison.Ordinal)
+                    || !int.TryParse(t[2].AsSpan(3), out var returnedAge))
+                    throw new FormatException("Expected 'reveal returned age<N> <card> <card> <card>'");
+                return new ReturnedReveal(returnedAge, t.Skip(3).Select(GameData.CardIndex).ToArray());
+            }
             if (t.Length > 1 && t[1] == "guilds")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
@@ -196,6 +210,8 @@ public static class MoveLog
             "library" => Move.Library(GameData.TokenIndex(t[2])),
             // A top-row card is always face up, so the Messe may name its slot too ("P1 messe 0.1").
             "messe" => Move.Messe(ParseTakenCard(t[2], state)),
+            "liberty-keep" => Move.LibertyKeep(GameData.CardIndex(t[2])),
+            "liberty-give" => Move.LibertyGive(GameData.CardIndex(t[2])),
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);

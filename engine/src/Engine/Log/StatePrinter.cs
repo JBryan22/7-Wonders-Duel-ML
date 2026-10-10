@@ -63,6 +63,10 @@ public static class StatePrinter
         if (s.DestroyColor is { } color) sb.Append($"P{s.PlayerToDecide + 1} destroys one of P{2 - s.PlayerToDecide}'s {color.ToString().ToLowerInvariant()} cards\n");
         if (s.Step == StepKind.Decision && s.Pending(0).Kind == DecisionKind.Messe)
             sb.Append($"P{s.PlayerToDecide + 1} builds a top-row card for free (the Messe)\n");
+        if (!s.LibertyOffer.IsEmpty)
+            sb.Append(s.LibertyKept < 0
+                ? $"Statue of Liberty: P{s.PlayerToDecide + 1} keeps one of {s.LibertyOffer}\n"
+                : $"Statue of Liberty: P{s.PlayerToDecide + 1} keeps {GameData.Cards[s.LibertyKept].Id}, gives P{2 - s.PlayerToDecide} one of {s.LibertyOffer} (the other is discarded)\n");
         if (s.DraftOffer != 0)
             sb.Append($"Draft offer: {string.Join(' ', GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonders[w].Id))}\n");
         if (s.PlayAgain) sb.Append($"P{s.CurrentPlayer + 1} plays again after this turn\n");

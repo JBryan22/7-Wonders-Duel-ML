@@ -121,11 +121,19 @@ public static class Soak
             Check((s.Tokens(0) & s.Tokens(1)) == 0, "both players own the same Progress token");
             Check((s.BoardTokens & (s.Tokens(0) | s.Tokens(1))) == 0, "a Progress token is both owned and on the board");
             Check(s.TotalWondersBuilt <= GameState.MaxWondersBuilt, "more than 7 Wonders built");
+            Check((s.LibertyOffer & ~s.Seen).IsEmpty && (s.LibertyOffer & (s.City(0) | s.City(1) | s.DiscardPile)).IsEmpty,
+                "a Statue of Liberty card on offer is unrevealed or already placed");
         }
 
         Check(s.Result is not null, "the game is over without a Result");
-        // The Messe takes a second card from the structure, without a take-card Move.
-        var taken = game.Log.Count(e => e is MoveEntry { Move.TakesCard: true } or MoveEntry { Move.Kind: MoveKind.Messe });
+        // The Messe takes a second card from the structure, without a take-card Move; the Statue of Liberty adds its
+        // 3 returned cards (two built, one discarded), less the given card when the owner's kept card won first.
+        var taken = game.Log.Count(e => e is MoveEntry { Move.TakesCard: true } or MoveEntry { Move.Kind: MoveKind.Messe })
+            + GameState.ReturnedCardCount * game.Log.Count(e => e is MoveEntry { Move.Kind: MoveKind.LibertyGive });
+        // (A given card once built can only move between the cities and the discard pile: Zeus, Circus Maximus, Mausoleum.)
+        if (game.Log.LastOrDefault(e => e is MoveEntry { Move.Kind: MoveKind.LibertyGive }) is MoveEntry given
+            && !(s.City(0) | s.City(1) | s.DiscardPile).Contains(given.Move.Card))
+            taken--;
         Check(taken == s.City(0).Count + s.City(1).Count + s.DiscardPile.Count + s.TotalWondersBuilt,
             "a taken card is not in a city, the discard pile or under a Wonder");
         Check(BitOperations.PopCount((uint)(s.Wonders(0) | s.Wonders(1))) == GameState.DraftSize, "8 Wonders were not drafted");
