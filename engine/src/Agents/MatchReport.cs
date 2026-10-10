@@ -70,8 +70,8 @@ public sealed record MatchReport(MatchSettings Settings, IReadOnlyList<MatchPair
         return EloScale * Math.Log10(rate / (1 - rate));
     }
 
-    /// <summary>An Agent's known rating: given in the settings, or 0 for Random (the scale's zero).</summary>
-    static double? Known(string spec, double? given) => given ?? (spec == "random" ? 0 : null);
+    /// <summary>An Agent's known rating: given in the settings, or the Ladder's recorded one (Random = 0, the scale's zero).</summary>
+    static double? Known(string spec, double? given) => given ?? Ladder.Elo(spec);
 
     /// <summary>A's Elo on the shared scale (Random = 0), when B's rating is known; else null.</summary>
     public double? EloA => Known(Settings.AgentA, Settings.EloA) ??

@@ -18,7 +18,8 @@ const string Usage = """
                                        rate with its 95% CI, Elo (Random = 0) and the victory types. With --out, each
                                        finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
                                        Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
-                                       pimc[:samples=50,playouts=1,margin=0.02]
+                                       pimc[:samples=50,playouts=1,margin=0.02], mcts[:sims=1000,c=0.7,margin=0.02]
+                                       (the Anchor). The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
     """;
 
 try

@@ -19,6 +19,7 @@ public static class AgentSpecs
         ["heuristic"] = (argument, seed) =>
             new HeuristicAgent(HeuristicWeights.Parse(argument), seed),
         ["pimc"] = (argument, seed) => new PimcAgent(PimcSettings.Parse(argument), seed),
+        ["mcts"] = (argument, seed) => new MctsAgent(MctsSettings.Parse(argument), seed),
     };
 
     public static IEnumerable<string> Names => Factories.Keys.Order();
