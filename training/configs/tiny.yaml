@@ -1,0 +1,34 @@
+# The tiny config (spec A7): CPU-only, for the training-loop smoke test and quick laptop checks. A Generation takes
+# seconds; the numbers say nothing about strength.
+encoding_version: 1
+seed: 0
+generations: 2
+
+network:
+  width: 64
+  blocks: 2
+
+selfplay:
+  games: 10
+  simulations: 8
+  device: cpu
+  threads: 1
+  parallel: 10
+  workers: 1
+
+training:
+  window_positions: 1000   # ~2 tiny Generations (~700 positions each)
+  reuse: 2.0
+  batch_size: 256
+  device: cpu
+  min_steps: 4
+
+matches:
+  pairs: 5
+  simulations: 8
+  device: cpu
+  threads: 1
+  anchor: mcts:sims=50     # a cheap stand-in for the Anchor, so the smoke test exercises the Anchor Match
+  anchor_elo: null
+  anchor_every: 2
+  generation0_opponent: random

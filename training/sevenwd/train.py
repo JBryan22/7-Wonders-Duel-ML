@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from .export import export_onnx
-from .losses import compute_losses
+from .losses import compute_losses, policy_entropy
 from .manifest import Manifest, load_manifest
 from .network import Network, NetworkConfig
 from .shards import ShardDataset, find_shards
@@ -127,7 +127,7 @@ def train(
             losses.total.backward()
             optimizer.step()
             step += 1
-            result.history.append(losses.as_floats())
+            result.history.append({**losses.as_floats(), "entropy": policy_entropy(policy, legal)})
             if log_every and (i + 1) % log_every == 0:
                 avg = {k: np.mean([h[k] for h in result.history[-log_every:]]) for k in result.history[-1]}
                 print(f"step {step}: " + " ".join(f"{k} {v:.4f}" for k, v in avg.items()), flush=True)

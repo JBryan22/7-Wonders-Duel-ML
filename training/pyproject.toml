@@ -8,10 +8,13 @@ dependencies = [
     "torch>=2.9",
     "onnx>=1.17",
     "onnxscript>=0.3",
+    "pyyaml>=6",
+    "tensorboard>=2.18",
 ]
 
 [project.scripts]
 sevenwd-train = "sevenwd.train:main"
+sevenwd-loop = "sevenwd.loop:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "onnxruntime>=1.20"]

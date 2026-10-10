@@ -34,6 +34,13 @@ def policy_loss(logits: torch.Tensor, target: torch.Tensor, legal: torch.Tensor)
     return -(target * log_p).sum(dim=-1).mean()
 
 
+def policy_entropy(logits: torch.Tensor, legal: torch.Tensor) -> float:
+    """Mean entropy (nats) of the network's policy over the legal Moves: a watch figure (spec A7), not a loss."""
+    with torch.no_grad():
+        log_p = masked_log_softmax(logits, legal).masked_fill(~legal, 0.0)
+        return float(-(log_p.exp() * log_p).sum(dim=-1).mean())
+
+
 def compute_losses(
     policy_logits: torch.Tensor,
     value: torch.Tensor,

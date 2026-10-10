@@ -1,0 +1,45 @@
+# The spec's starting defaults (docs/spec-v1.md A7, "Starting defaults"), to be revised by the calibration run
+# (ticket 26) and then frozen into the main Run. Every setting is listed; see sevenwd/config.py for what each means.
+encoding_version: 1
+seed: 0
+generations: null          # keep going until stopped
+init: null                 # or another Run's checkpoint, e.g. runs/warm/net/latest.pt
+
+network:
+  width: 256
+  blocks: 4
+
+selfplay:
+  games: 2000              # per Generation; then sized to ~1 desktop-hour
+  simulations: 64
+  mode: gumbel             # or classic (debug scaffolding)
+  search: ""               # extra neural: settings, e.g. "m=16,cvisit=50"
+  promo_rate: 1.0
+  device: cpu
+  threads: 4
+  parallel: null           # games at a time (default 32 per core)
+  workers: null            # inference threads (default 1 per 4 cores, at most 4)
+
+training:
+  window_positions: 1000000
+  reuse: 2.0               # each new position is seen ~2x on average
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  device: auto             # CUDA when available
+  checkpoint_minutes: 5
+  min_steps: 1
+
+matches:
+  pairs: 200               # 400 games
+  simulations: 800
+  mode: gumbel
+  search: ""
+  device: cpu
+  threads: 4
+  parallel: null           # game threads (default: every core)
+  promo: null              # base-only (headline Elo)
+  anchor: mcts             # the Anchor, Elo 1512
+  anchor_elo: null         # only needed when the anchor isn't a Ladder rung
+  anchor_every: 5
+  generation0_opponent: random
