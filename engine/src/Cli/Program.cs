@@ -23,6 +23,19 @@ const string Usage = """
                                        (Gumbel search; mode=classic gives PUCT with c=1.25,noise=0,alpha=0.3,temp=0;
                                        neural:uniform and neural:playout are built-in references).
                                        The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
+      selfplay <onnx>[,sims=64,...] --games N --out DIR [--seed S] [--promo-rate R] [--parallel P] [--workers W]
+                                       the network plays itself (spec A7): N games from seed S (default 0), each with
+                                       both promos with probability R (default 1), P games at a time (default 32 per
+                                       core) sharing W inference threads (default 1 per 4 cores, at most 4). The model
+                                       takes the neural: settings (default 64 sims, Gumbel, device=cpu,threads=4;
+                                       device=cuda uses the GPU). Writes DIR/games.jsonl (the
+                                       Game Records, saved per game; rerunning resumes) and, when all are done, the
+                                       encoded shard DIR/shard. Ctrl+C stops; reports games/s and positions/s
+      selfplay-check <dir> [--games N] [--model ONNX] [--device D] [--threads T]
+                                       replay the first N Game Records (default 20) from their seeds with the same
+                                       network and check that the Move Logs and policy targets come out identical
+      shard <dir|games.jsonl> --out DIR
+                                       re-encode Game Records into a shard (e.g. under a new Encoding version)
       netbench <onnx> [--device auto|cpu|cuda] [--threads N] [--seconds S]
                                        network inference speed per batch size (N: CPU threads, default all cores)
       manifest [--out PATH]            print the Encoding manifest (spec A6), or write it to PATH; the committed copy is
@@ -43,6 +56,9 @@ try
         ["manifest", "--out", var path] => Manifest(path),
         ["match", var a, var b, .. var options] when !a.StartsWith("--") && !b.StartsWith("--") => RunMatch(a, b, options),
         ["netbench", var model, .. var options] when !model.StartsWith("--") => NetBench(model, options),
+        ["selfplay", var model, .. var options] when !model.StartsWith("--") => RunSelfPlay(model, options),
+        ["selfplay-check", var dir, .. var options] when !dir.StartsWith("--") => SelfPlayCheck(dir, options),
+        ["shard", var records, "--out", var dir] => Shard(records, dir),
         _ => Fail(Usage),
     };
 }
@@ -203,6 +219,90 @@ static int RunMatch(string a, string b, string[] options)
             + $"(mean batch {(batcher.Batches == 0 ? 0 : (double)batcher.Positions / batcher.Batches):0.0})"
             + (batcher.Network.FallbackReason is { } why ? $"; CUDA unavailable: {why}" : ""));
     return report.Complete ? 0 : 2;
+}
+
+static int RunSelfPlay(string model, string[] options)
+{
+    int? games = null, parallel = null, workers = null;
+    string? directory = null;
+    ulong seed = 0;
+    var promoRate = 1.0;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--games" when int.TryParse(value, out var g) && g > 0: games = g; break;
+            case "--out" when value is not null: directory = value; break;
+            case "--seed" when ulong.TryParse(value, out var s): seed = s; break;
+            case "--promo-rate" when double.TryParse(value, CultureInfo.InvariantCulture, out var r) && r is >= 0 and <= 1: promoRate = r; break;
+            case "--parallel" when int.TryParse(value, out var p) && p > 0: parallel = p; break;
+            case "--workers" when int.TryParse(value, out var w) && w > 0: workers = w; break;
+            default: return Fail(Usage);
+        }
+    }
+    if (games is null || directory is null) return Fail(Usage);
+    // Self-Play defaults to the training budget of 64 simulations; anything in the spec overrides it.
+    var settings = new SelfPlaySettings(NeuralSettings.Parse($"sims={SelfPlaySettings.DefaultSimulations},{model}"), games.Value, seed, promoRate);
+
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        if (stop.IsCancellationRequested) return;
+        Console.Error.WriteLine("stopping: finished games are kept, games in progress are dropped");
+        stop.Cancel();
+    };
+    var threads = parallel ?? SelfPlay.DefaultParallel;
+    Console.WriteLine($"7wd selfplay: {settings.Agent.Model} ({settings.SearchSpec}, device={settings.Agent.Device}, threads={settings.Agent.Threads}), "
+        + $"{games} games from seed {seed}, promo rate {promoRate:0.##}, {threads} at a time, "
+        + $"{workers ?? SelfPlay.DefaultWorkers} inference threads, saved in {directory}");
+    var finished = 0;
+    var step = Math.Max(1, games.Value / 10);
+    var report = SelfPlay.Run(settings, directory, threads, stop.Token, workers: workers, onGame: _ =>
+    {
+        var n = Interlocked.Increment(ref finished);
+        if (n % step == 0) Console.Error.WriteLine($"  {n} more games finished");
+    });
+    Console.WriteLine(report);
+    return report.Complete ? 0 : 2;
+}
+
+static int SelfPlayCheck(string directory, string[] options)
+{
+    var games = 20;
+    var device = InferenceDevice.Cpu;
+    var threads = 4;
+    string? model = null;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--games" when int.TryParse(value, out var g) && g > 0: games = g; break;
+            case "--model" when value is not null: model = value; break;
+            case "--device" when Enum.TryParse<InferenceDevice>(value, true, out var d): device = d; break;
+            case "--threads" when int.TryParse(value, out var t) && t >= 0: threads = t; break;
+            default: return Fail(Usage);
+        }
+    }
+    var different = SelfPlay.Check(directory, games, device, threads, model);
+    var count = Math.Min(games, SelfPlay.Load(directory).Count);
+    if (different.Count == 0)
+    {
+        Console.WriteLine($"7wd selfplay-check: {count} Game Records replayed from their seeds, all identical");
+        return 0;
+    }
+    Console.WriteLine($"7wd selfplay-check: {different.Count} of {count} Game Records replayed differently: games {string.Join(", ", different)}");
+    return 1;
+}
+
+static int Shard(string records, string directory)
+{
+    var games = SelfPlay.Load(records).OrderBy(r => r.Game).ToList();
+    var positions = ShardWriter.Write(directory, games);
+    Console.WriteLine($"wrote {positions:N0} positions from {games.Count:N0} Game Records to {directory} (Encoding v{NetworkEncoding.Version})");
+    return 0;
 }
 
 static int Fail(string message)

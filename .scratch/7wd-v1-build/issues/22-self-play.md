@@ -4,9 +4,21 @@
 
 **Blocked by:** 21
 
-**Status:** ready-for-agent
+**Status:** done
 
 Spec: `docs/spec-v1.md`.
 
-- [ ] Replaying a Game Record from its seeds reproduces its Move Log
-- [ ] Shards load in Python
+- [x] Replaying a Game Record from its seeds reproduces its Move Log
+- [x] Shards load in Python
+
+## Notes
+
+- Code: `Agents/SelfPlay/` (`SelfPlay` + `SelfPlaySettings`/`SelfPlayHeader`/`SelfPlayReport`, `GameRecord` + `SearchedDecision`, `ShardWriter`, `Npy`). CLI: `7wd selfplay <onnx>[,neural settings] --games N --out DIR [--seed S] [--promo-rate R] [--parallel P] [--workers W]` (defaults: 64 sims, Gumbel, `device=cpu,threads=4`, promo rate 1, P = 32 per core (512 on the desktop), W = 1 per 4 cores, max 4); `7wd selfplay-check DIR [--games N]` replays records from their seeds and compares; `7wd shard <dir|games.jsonl> --out DIR` re-encodes records (new Encoding version). Exit code 2 = stopped before all games were done.
+- **Directory layout (for loop.py):** `DIR/games.jsonl` = header line `{"format":"7wd-selfplay-1","model","modelSha256","search","games","seed","promoRate","encodingVersion"}` then one Game Record per line, appended + flushed per finished game (in completion order; sort by `game`). Rerunning the same command resumes (a torn last line is dropped); a different header (anything but the model path) is refused. When every game is in, `DIR/shard/` is written atomically (temp dir + rename) in exactly the ticket-19 format, positions in game order then log order; `DIR/summary.json` holds the session report. `find_shards([gen dirs])` finds `DIR/shard`.
+- **Game Record** (JSON, camelCase): `game, seed, chanceSeed, seedP1, seedP2, log` (full Move Log text with rules header), `winner` (0/1/−1 draw), `victory, vpP1, vpP2, searched: [{entry, q, target}], seconds`. `entry` = index of the Move in the log entries (after the 2 header lines, Reveals counted); `target` = policy target in legal-Move order (Gumbel improved policy / classic visit shares), `q` = the search's visit-weighted root value (−1..1, decider's view; unused in v1, kept for possible value mixing). Both rounded to 4 decimals (halves the record; targets then sum to 1 ± ~1e-3). Forced decisions (1 legal Move) aren't searched or recorded. Seeds: `Rng(firstSeed + game)` → chance, P1 search, P2 search, promo draw (both promos when draw < rate). Each seat has its own `NeuralAgent` (own seed).
+- Shard rows encode `state.Observe(decider)` (what the root evaluation saw), list every legal Move (= mask), value/outcome from the decider's view. Python test `training/tests/test_selfplay.py` runs `dotnet run … selfplay` on `tiny.onnx` and loads the shard with `ShardDataset` (skipped without the .NET SDK; CI has it).
+- **Batching change:** `InferenceBatcher` takes `workers` (default 1, so Matches are unchanged). With one inference thread, Self-Play was limited by that thread copying inputs/outputs and waking hundreds of blocked game threads (~45 % of its time), not by the network: 1,000 positions/s on CUDA, 820 on CPU. With 4 workers: ~1,500 on both. Games stay thread/batch independent on the CPU (tested with 1 vs 3 workers).
+- **Throughput (desktop, 16 threads, RTX 3060, random gen-0 256×4, 64 Gumbel sims, both promos, 2,000 games):** CPU defaults 94 s = **21.3 games/s, 1,463 positions/s** (90.7k network evals/s, mean batch 57); `device=cuda` 91 s = 21.9 games/s, 1,504 positions/s. ~69 searched positions per game, ~62 evaluations per position. CPU is as fast as CUDA, so the default stays CPU (GPU free for training). Varied P (128–1024) and ORT threads (4/8) change little (±10 %). `selfplay-check` on 50 of those games: all identical.
+- **For ticket 26:** that's ~5M positions (~75k games) per desktop-hour, ~35× the spec's 2,000-games-per-Generation starting guess, so the 300-hour cap buys far more than 500k games; Generation sizing will be set by training speed and the window, not Self-Play. Disk: a Game Record is ~8.5 KB (log ~2.5 KB + targets), so at that rate records grow ~0.6 GB/desktop-hour: compress finished Generations' `games.jsonl` (gzip) or keep fewer if that matters. A shard is ~4.7 KB per position (641 MB per 2,000 games; a 1M-position window ≈ 4.7 GB).
+- Replay is exact on the CPU only (CUDA outputs depend slightly on batch composition), as for Matches.
+- Tests: Engine 342 (unchanged), Agents 92 (10 new `SelfPlayTests`: replay from seeds incl. via the directory check and a changed seed differing, games independent of parallelism/workers incl. byte-identical shard input, record contents vs log/legal Moves/forced decisions, promo rate, resume after a torn line with identical games and shard, foreign session refused, stop keeps finished games and writes no shard, every shard row rebuilt independently from the logs, .npy header format, `neural:uniform` and classic-mode Self-Play), Python 24 (1 new). Determinism hashes and frozen C++ games untouched (Engine not modified).
