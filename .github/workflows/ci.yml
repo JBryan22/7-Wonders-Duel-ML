@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: C# tests
+        working-directory: engine
+        run: dotnet test --configuration Release
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Python tests
+        working-directory: training
+        run: |
+          uv sync
+          uv run pytest -q

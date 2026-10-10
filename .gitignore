@@ -1,1 +1,14 @@
 .claude/worktrees/
+
+# Training runs, data and networks stay out of git (spec A2)
+runs/
+
+# .NET
+bin/
+obj/
+*.user
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
