@@ -2,6 +2,7 @@
 
 Type: task (AFK)
 Status: open
+Assignee: Jesse Bryan
 Blocked by: 06, 07, 08, 09, 10, 11, 12, 13, 16, 18, 19, 20
 
 ## Question
