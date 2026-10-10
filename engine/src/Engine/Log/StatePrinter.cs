@@ -20,7 +20,7 @@ public static class StatePrinter
 
         if (s.Age > 0 && s.CardsLeftInAge > 0)
         {
-            sb.Append("Layout (* = accessible, ? = unknown):\n");
+            sb.Append("Layout (* = accessible, ? = unknown, ?guild = unknown Guild):\n");
             var layout = s.Layout;
             for (var row = 0; row < layout.RowCount; row++)
             {
@@ -32,6 +32,7 @@ public static class StatePrinter
                     {
                         GameState.Empty => "--",
                         GameState.Hidden => "?",
+                        GameState.HiddenGuild => "?guild",
                         _ => GameData.Cards[card].Id,
                     };
                     sb.Append($"{layout.SlotName(slot.Index)} {text}{(s.IsAccessible(slot.Index) ? "*" : "")}  ");
@@ -50,6 +51,7 @@ public static class StatePrinter
               .Append($" | city: {(s.City(p).IsEmpty ? "empty" : s.City(p).ToString())}\n");
         }
         sb.Append($"Discard pile: {(s.DiscardPile.IsEmpty ? "empty" : s.DiscardPile.ToString())}\n");
+        if (s.Result is { } result) sb.Append("Result: ").Append(result).Append('\n');
         return sb.ToString();
     }
 }

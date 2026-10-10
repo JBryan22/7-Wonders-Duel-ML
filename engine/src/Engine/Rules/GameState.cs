@@ -8,18 +8,22 @@ namespace SevenWondersDuel.Engine;
 /// <summary>
 /// The complete, canonical game at one moment (spec A4). Mutable: <see cref="Apply(Move)"/> and
 /// <see cref="Apply(Reveal)"/> change it in place, and search copies it first with <see cref="Clone"/> or
-/// <see cref="CopyFrom"/>. Hidden identities are never stored: a face-down slot is just <see cref="Hidden"/>
-/// until a Reveal names it (ADR 0002).
+/// <see cref="CopyFrom"/>. Hidden identities are never stored: a face-down slot holds only its back,
+/// <see cref="Hidden"/> or <see cref="HiddenGuild"/>, until a Reveal names it (ADR 0002).
 /// </summary>
 public sealed class GameState
 {
     /// <summary>Slot value of a taken (empty) slot.</summary>
     public const sbyte Empty = -1;
-    /// <summary>Slot value of a card whose identity is not known yet (face down, or face up but not yet revealed).</summary>
+    /// <summary>Slot value of an unknown card of the current Age (face down, or face up but not yet revealed).</summary>
     public const sbyte Hidden = -2;
+    /// <summary>Slot value of an unknown Guild: an Age III slot showing the purple Guild back.</summary>
+    public const sbyte HiddenGuild = -3;
 
-    /// <summary>The last Age the Engine plays. Ticket 04 adds Ages II and III.</summary>
-    public const int LastAge = 1;
+    /// <summary>The number of Ages; the game ends after the last one.</summary>
+    public const int AgeCount = 3;
+    /// <summary>Guilds shuffled into Age III (rules-reference §1).</summary>
+    public const int GuildsPerGame = 3;
     public const int StartingCoins = 7;
     public const int SlotCount = 20;
     /// <summary>Upper bound on legal Moves in any position, for caller-supplied buffers.</summary>
@@ -46,6 +50,7 @@ public sealed class GameState
     uint _occupied;
     CardSet _seen;
     CardSet _discard;
+    bool _awaitingGuildPattern;
 
     GameState(Ruleset rules) => Rules = rules;
 
@@ -63,9 +68,19 @@ public sealed class GameState
     public int FirstPlayer { get; private set; }
     /// <summary>The current Age, or 0 before Age I starts.</summary>
     public int Age { get; private set; }
-    /// <summary>The player whose turn it is.</summary>
+    /// <summary>The player whose turn it is (during the start-of-Age choice: the player who took the last card).</summary>
     public int CurrentPlayer { get; private set; }
-    public bool IsOver { get; private set; }
+    public bool IsOver => Result is not null;
+    /// <summary>How the game ended, or null while it is running.</summary>
+    public Result? Result { get; private set; }
+
+    /// <summary>
+    /// The Conflict Pawn: spaces from the centre toward P2's capital (positive) or P1's (negative).
+    /// Ticket 05 moves it; until then it stays at 0.
+    /// </summary>
+    public int ConflictPawn { get; private set; }
+    /// <summary>How many spaces the pawn stands toward this player's opponent's capital (negative if toward their own).</summary>
+    public int MilitaryLead(int player) => player == 0 ? ConflictPawn : -ConflictPawn;
 
     public AgeLayout Layout => GameData.Layout(Age);
     public int Coins(int player) => _coins[player];
@@ -74,28 +89,37 @@ public sealed class GameState
     /// <summary>Every card whose identity has been revealed so far.</summary>
     public CardSet Seen => _seen;
     public int Production(int player, Resource r) => _production[player * Resources.Count + (int)r];
-    public int YellowCards(int player) => (_city[player] & CardSets.OfColor[(int)CardColor.Yellow]).Count;
+    public int CardsOfColor(int player, CardColor color) => (_city[player] & CardSets.OfColor[(int)color]).Count;
+    public int YellowCards(int player) => CardsOfColor(player, CardColor.Yellow);
+    /// <summary>Wonders this player has built. Wonders arrive in ticket 07; until then none are built.</summary>
+    public int WondersBuilt(int player) => 0;
 
-    /// <summary>The card in a slot, <see cref="Empty"/> or <see cref="Hidden"/>.</summary>
+    /// <summary>The card in a slot, or its back: <see cref="Empty"/>, <see cref="Hidden"/> or <see cref="HiddenGuild"/>.</summary>
     public int SlotCard(int slot) => _slots[slot];
     public bool IsOccupied(int slot) => (_occupied & 1u << slot) != 0;
     public bool IsAccessible(int slot) => IsOccupied(slot) && (_occupied & CoveredByMask[Age - 1][slot]) == 0;
     public int CardsLeftInAge => System.Numerics.BitOperations.PopCount(_occupied);
     /// <summary>True until the first card of the current Age is taken.</summary>
     public bool AgeUntouched => Age > 0 && _occupied == AllSlots;
+    /// <summary>True at the start of Age III until the Guild back pattern is revealed.</summary>
+    public bool AwaitingGuildPattern => _awaitingGuildPattern;
 
-    /// <summary>Cards of an Age that could still be revealed (never named so far).</summary>
+    /// <summary>Non-Guild cards of an Age that could still be revealed (never named so far).</summary>
     public CardSet UnseenPool(int age) => CardSets.OfAge[age] & ~_seen;
+    /// <summary>Guilds that could still be revealed.</summary>
+    public CardSet UnseenGuilds => CardSets.Guilds & ~_seen;
+    /// <summary>The cards a hidden slot could turn out to be: unseen Guilds behind a Guild back, else unseen cards of the Age.</summary>
+    public CardSet UnseenPoolFor(int slot) => _slots[slot] == HiddenGuild ? UnseenGuilds : UnseenPool(Age);
 
     /// <summary>Slots that should show their card (face up, or accessible) but whose identity is not yet known.</summary>
     public uint SlotsToReveal
     {
         get
         {
-            if (Age == 0) return 0;
+            if (Age == 0 || _awaitingGuildPattern) return 0;
             uint mask = 0;
             for (var s = 0; s < SlotCount; s++)
-                if (_slots[s] == Hidden && ((FaceUpMask[Age - 1] & 1u << s) != 0 || IsAccessible(s)))
+                if (_slots[s] <= Hidden && ((FaceUpMask[Age - 1] & 1u << s) != 0 || IsAccessible(s)))
                     mask |= 1u << s;
             return mask;
         }
@@ -103,7 +127,7 @@ public sealed class GameState
 
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
-        : FirstPlayer < 0 || SlotsToReveal != 0 ? StepKind.Reveal
+        : FirstPlayer < 0 || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -119,12 +143,21 @@ public sealed class GameState
         if (Step != StepKind.Decision) return 0;
         var n = 0;
         var player = _queue[0].Player;
-        for (var s = 0; s < SlotCount; s++)
+        switch (_queue[0].Kind)
         {
-            if (!IsAccessible(s)) continue;
-            var card = _slots[s];
-            if (CanAffordBuild(player, card)) buffer[n++] = Move.Build(card);
-            buffer[n++] = Move.Discard(card);
+            case DecisionKind.ChooseStarter:
+                buffer[n++] = Move.StartMe;
+                buffer[n++] = Move.StartOpponent;
+                break;
+            default:
+                for (var s = 0; s < SlotCount; s++)
+                {
+                    if (!IsAccessible(s)) continue;
+                    var card = _slots[s];
+                    if (CanAffordBuild(player, card)) buffer[n++] = Move.Build(card);
+                    buffer[n++] = Move.Discard(card);
+                }
+                break;
         }
         return n;
     }
@@ -141,6 +174,11 @@ public sealed class GameState
     public string? WhyIllegal(Move move)
     {
         if (Step != StepKind.Decision) return $"the game is waiting for {(IsOver ? "nothing (it is over)" : "a Reveal")}";
+        var decision = _queue[0];
+        if (decision.Kind == DecisionKind.ChooseStarter)
+            return move.Kind is MoveKind.StartMe or MoveKind.StartOpponent ? null : "the decision is who starts the Age";
+        if (!move.TakesCard) return "the decision is which card to take";
+
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
         var slot = SlotOf(move.Card);
         if (slot < 0) return $"{GameData.Cards[move.Card].Id} is not in the layout";
@@ -148,9 +186,8 @@ public sealed class GameState
         return move.Kind switch
         {
             MoveKind.Discard => null,
-            MoveKind.Build => CanAffordBuild(_queue[0].Player, move.Card) ? null
-                : $"{GameData.Cards[move.Card].Id} costs {Payment.Quote(this, _queue[0].Player, move.Card).Total} coins, player has {_coins[_queue[0].Player]}",
-            _ => "unknown move kind",
+            _ => CanAffordBuild(decision.Player, move.Card) ? null
+                : $"{GameData.Cards[move.Card].Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {_coins[decision.Player]}",
         };
     }
 
@@ -169,25 +206,46 @@ public sealed class GameState
     {
         if (WhyIllegal(move) is { } why) throw new InvalidOperationException($"Illegal move '{move}': {why}");
         var player = _queue[0].Player;
+        PopDecision();
+
+        if (!move.TakesCard)
+        {
+            CurrentPlayer = move.Kind == MoveKind.StartMe ? player : 1 - player;
+            PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
+            return;
+        }
+
         var slot = SlotOf(move.Card);
         _slots[slot] = Empty;
         _occupied &= ~(1u << slot);
 
-        if (move.Kind == MoveKind.Build)
-        {
-            _coins[player] -= Payment.Quote(this, player, move.Card).Total;
-            AddToCity(player, move.Card);
-            _coins[player] += GameData.Cards[move.Card].Coins;
-        }
+        if (move.Kind == MoveKind.Build) Build(player, move.Card);
         else
         {
-            // Discard value counts yellow cards already in the city (rules-reference §11 mistake 5).
+            // Discard value counts yellow cards already in the city (rules-reference §12 mistake 5).
             _coins[player] += 2 + YellowCards(player);
             _discard = _discard.With(move.Card);
         }
 
-        PopDecision();
         if (_queueCount == 0) EndTurn();
+    }
+
+    void Build(int player, int card)
+    {
+        var def = GameData.Cards[card];
+        _coins[player] -= Payment.Quote(this, player, card).Total;
+        AddToCity(player, card);
+        // One-time coins, counted with the new card already in the city (the Lighthouse counts itself).
+        _coins[player] += def.Coins + def.CoinsPerAmount * def.CoinsPer switch
+        {
+            CoinsPerKind.Brown => CardsOfColor(player, CardColor.Brown),
+            CoinsPerKind.Grey => CardsOfColor(player, CardColor.Grey),
+            CoinsPerKind.Red => CardsOfColor(player, CardColor.Red),
+            CoinsPerKind.Yellow => CardsOfColor(player, CardColor.Yellow),
+            CoinsPerKind.Wonder => WondersBuilt(player),
+            _ => 0,
+        };
+        if (def.IsGuild) _coins[player] += Scoring.GuildCoins(this, def.Guild);
     }
 
     public void Apply(Reveal reveal)
@@ -202,6 +260,10 @@ public sealed class GameState
                 StartAge(1);
                 break;
 
+            case GuildPatternReveal g:
+                ApplyGuildPattern(g);
+                break;
+
             case SlotReveal r:
                 ApplySlotReveal(r);
                 break;
@@ -211,9 +273,21 @@ public sealed class GameState
         }
     }
 
+    void ApplyGuildPattern(GuildPatternReveal g)
+    {
+        if (!_awaitingGuildPattern) throw new InvalidOperationException("The game is not waiting for the Guild back pattern");
+        if (g.Slots.Length != GuildsPerGame || g.Slots.Distinct().Count() != GuildsPerGame)
+            throw new InvalidOperationException($"The Guild back pattern names {GuildsPerGame} different slots");
+        foreach (var slot in g.Slots)
+            if (slot < 0 || slot >= SlotCount) throw new InvalidOperationException($"Slot {slot} is not in the layout");
+        foreach (var slot in g.Slots) _slots[slot] = HiddenGuild;
+        _awaitingGuildPattern = false;
+    }
+
     void ApplySlotReveal(SlotReveal r)
     {
         if (r.Age != Age) throw new InvalidOperationException($"Reveal is for Age {r.Age}, the game is in Age {Age}");
+        if (_awaitingGuildPattern) throw new InvalidOperationException("The Guild back pattern must be revealed first");
         if (r.Opening != AgeUntouched)
             throw new InvalidOperationException(r.Opening
                 ? "An Age's opening Reveal must come before any card is taken"
@@ -221,16 +295,18 @@ public sealed class GameState
         if (r.Cards.Length == 0) throw new InvalidOperationException("Reveal names no card");
 
         var needed = SlotsToReveal;
-        var pool = UnseenPool(Age);
+        var named = CardSet.Empty;
         foreach (var (slot, card) in r.Cards)
         {
             if (slot < 0 || slot >= SlotCount || (needed & 1u << slot) == 0)
                 throw new InvalidOperationException($"Slot {SlotName(slot)} is not waiting for a Reveal");
-            if (card < 0 || card >= GameData.Cards.Length || !pool.Contains(card))
+            var guildBack = _slots[slot] == HiddenGuild;
+            if (card < 0 || card >= GameData.Cards.Length || !(UnseenPoolFor(slot) & ~named).Contains(card))
                 throw new InvalidOperationException(
-                    $"{(card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : "?")} cannot be revealed: not an unseen Age {Age} card");
+                    $"{(card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : "?")} cannot be revealed in {SlotName(slot)}: "
+                    + (guildBack ? "not an unseen Guild" : $"not an unseen Age {Age} card"));
             needed &= ~(1u << slot);
-            pool = pool.Without(card);
+            named = named.With(card);
         }
         foreach (var (slot, card) in r.Cards)
         {
@@ -241,12 +317,30 @@ public sealed class GameState
 
     string SlotName(int slot) => slot >= 0 && slot < SlotCount && Age > 0 ? Layout.SlotName(slot) : slot.ToString();
 
+    /// <summary>
+    /// Lays out an Age's structure face down. Its Reveals (the Guild back pattern in Age III, then the face-up
+    /// cards) come before any decision, so in Ages II and III the start-of-Age choice is made seeing the new layout.
+    /// </summary>
     void StartAge(int age)
     {
         Age = age;
         Array.Fill(_slots, Hidden);
         _occupied = AllSlots;
-        PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
+        _awaitingGuildPattern = age == AgeCount;
+        if (age == 1)
+        {
+            PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
+            return;
+        }
+
+        // The weaker military chooses who starts (rules-reference §9). On a tie, CurrentPlayer (who took the
+        // last card) chooses under the newer rule, or simply starts under the 2015 rule.
+        if (ConflictPawn != 0)
+            PushDecision(new PendingDecision(DecisionKind.ChooseStarter, ConflictPawn > 0 ? 1 : 0));
+        else if (Rules.StartChoice == StartChoice.New)
+            PushDecision(new PendingDecision(DecisionKind.ChooseStarter, CurrentPlayer));
+        else
+            PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
     }
 
     void EndTurn()
@@ -262,12 +356,8 @@ public sealed class GameState
 
     void EndAge()
     {
-        if (Age == LastAge)
-        {
-            IsOver = true;
-            return;
-        }
-        throw new NotImplementedException("Ages II and III arrive in ticket 04");
+        if (Age == AgeCount) Result = Scoring.Civilian(this);
+        else StartAge(Age + 1);
     }
 
     void PushDecision(PendingDecision d)
@@ -292,6 +382,9 @@ public sealed class GameState
 
     internal void SetCoins(int player, int coins) => _coins[player] = coins;
 
+    /// <summary>Test setup until military moves the pawn (ticket 05).</summary>
+    internal void SetConflictPawn(int position) => ConflictPawn = position;
+
     // ---------------------------------------------------------------- copying and comparing
 
     public GameState Clone()
@@ -308,7 +401,8 @@ public sealed class GameState
         FirstPlayer = other.FirstPlayer;
         Age = other.Age;
         CurrentPlayer = other.CurrentPlayer;
-        IsOver = other.IsOver;
+        Result = other.Result; // immutable, safe to share
+        ConflictPawn = other.ConflictPawn;
         other._slots.CopyTo(_slots, 0);
         other._coins.CopyTo(_coins, 0);
         other._city.CopyTo(_city, 0);
@@ -318,12 +412,14 @@ public sealed class GameState
         _occupied = other._occupied;
         _seen = other._seen;
         _discard = other._discard;
+        _awaitingGuildPattern = other._awaitingGuildPattern;
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
     public bool SameAs(GameState o) =>
         Rules == o.Rules && FirstPlayer == o.FirstPlayer && Age == o.Age && CurrentPlayer == o.CurrentPlayer
-        && IsOver == o.IsOver && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
+        && Equals(Result, o.Result) && ConflictPawn == o.ConflictPawn && _awaitingGuildPattern == o._awaitingGuildPattern
+        && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
         && _queueCount == o._queueCount
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)
         && _city.AsSpan().SequenceEqual(o._city) && _production.AsSpan().SequenceEqual(o._production)

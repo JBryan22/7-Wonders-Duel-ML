@@ -12,6 +12,10 @@ namespace SevenWondersDuel.Engine;
 /// reveal age1 0.0 theater 0.1 altar 2.0 ...
 /// P1 build lumber-yard
 /// reveal 3.1 baths
+/// ...
+/// P2 start opponent
+/// reveal guilds 0.1 3.0 5.2
+/// reveal age3 0.0 palace 0.1 senate ...
 /// </code>
 /// Slots are "row.position", both counted from 0 at the top row. Blank lines and lines starting with '#' are ignored.
 /// Ticket 09 finishes the grammar (slot-named Moves, redacted private Reveals).
@@ -34,6 +38,7 @@ public static class MoveLog
         MoveEntry m => $"{PlayerName(m.Player)} {FormatMove(m.Move)}",
         FirstPlayerReveal f => $"reveal first {PlayerName(f.Player)}",
         SlotReveal r => FormatSlotReveal(r),
+        GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
     };
 
@@ -41,6 +46,8 @@ public static class MoveLog
     {
         MoveKind.Build => $"build {CardSlug(move.Card)}",
         MoveKind.Discard => $"discard {CardSlug(move.Card)}",
+        MoveKind.StartMe => "start me",
+        MoveKind.StartOpponent => "start opponent",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -91,6 +98,11 @@ public static class MoveLog
         if (t[0] == "reveal")
         {
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));
+            if (t.Length > 1 && t[1] == "guilds")
+            {
+                var guildLayout = GameData.Layout(GameState.AgeCount);
+                return new GuildPatternReveal(t.Skip(2).Select(x => ParseSlot(guildLayout, x)).ToArray());
+            }
 
             var i = 1;
             var opening = false;
@@ -111,13 +123,18 @@ public static class MoveLog
             return new SlotReveal(age, opening, cards);
         }
 
-        if (t.Length != 3) throw new FormatException("Expected 'P<n> <move> <card>'");
+        if (t.Length != 3) throw new FormatException("Expected 'P<n> <move> <argument>'");
         var player = ParsePlayer(t[0]);
-        var card = GameData.CardIndex(t[2]);
         var move = t[1] switch
         {
-            "build" => Move.Build(card),
-            "discard" => Move.Discard(card),
+            "build" => Move.Build(GameData.CardIndex(t[2])),
+            "discard" => Move.Discard(GameData.CardIndex(t[2])),
+            "start" => t[2] switch
+            {
+                "me" => Move.StartMe,
+                "opponent" => Move.StartOpponent,
+                _ => throw new FormatException($"Expected 'start me' or 'start opponent', got 'start {t[2]}'"),
+            },
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);

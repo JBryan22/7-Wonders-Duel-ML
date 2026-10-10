@@ -2,21 +2,35 @@ using SevenWondersDuel.Engine;
 
 namespace SevenWondersDuel.Agents.Tests;
 
-/// <summary>Random-play invariants for Age I (spec A11.3). Plain seeded loops: a failure names its seed.</summary>
+/// <summary>Random-play invariants over full three-Age games (spec A11.3). Plain seeded loops: a failure names its seed.</summary>
 public class RandomPlayTests
 {
     [Fact]
-    public void Random_age_one_games_always_end_with_all_20_cards_taken()
+    public void Random_full_games_always_end_with_a_result_after_all_60_cards_are_taken()
     {
-        for (ulong seed = 0; seed < 1000; seed++)
-        {
-            var game = GameRunner.PlayRandom(seed);
-            var s = game.State;
-            Assert.True(s.IsOver, $"seed {seed}");
-            Assert.Equal(0, s.CardsLeftInAge);
-            Assert.Equal(20, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
-            Assert.Equal(20, game.Log.OfType<MoveEntry>().Count());
-        }
+        foreach (var rules in new[] { Ruleset.Default, new Ruleset(StartChoice.Rule2015) })
+            for (ulong seed = 0; seed < 1000; seed++)
+            {
+                var game = GameRunner.PlayRandom(seed, rules);
+                var s = game.State;
+                Assert.True(s.IsOver, $"seed {seed}");
+                Assert.NotNull(s.Result);
+                Assert.Equal(VictoryType.Civilian, s.Result.Victory);
+                Assert.Equal(3, s.Age);
+                Assert.Equal(0, s.CardsLeftInAge);
+                Assert.Equal(60, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
+                Assert.Equal(60, game.Log.OfType<MoveEntry>().Count(m => m.Move.TakesCard));
+                // Under the newer rule a tied military always gives the last taker a choice; under 2015 never.
+                var choices = game.Log.OfType<MoveEntry>().Count(m => !m.Move.TakesCard);
+                Assert.Equal(rules.StartChoice == StartChoice.New ? 2 : 0, choices);
+                Assert.Single(game.Log.OfType<GuildPatternReveal>());
+                Assert.Equal(3, ((s.City(0) | s.City(1) | s.DiscardPile) & CardSets.Guilds).Count);
+                // The winner has more VP, or equal VP and more blue VP; otherwise it is a draw.
+                var (a, b) = (s.Result.P1, s.Result.P2);
+                var expected = a.Total != b.Total ? (a.Total > b.Total ? 0 : 1)
+                    : a[ScoreCategory.Blue] != b[ScoreCategory.Blue] ? (a[ScoreCategory.Blue] > b[ScoreCategory.Blue] ? 0 : 1) : -1;
+                Assert.Equal(expected, s.Result.Winner);
+            }
     }
 
     [Fact]
@@ -46,7 +60,7 @@ public class RandomPlayTests
     }
 
     [Fact]
-    public void Coins_never_go_negative_over_10k_random_age_one_games()
+    public void Coins_never_go_negative_over_10k_random_games()
     {
         for (ulong seed = 0; seed < 10_000; seed++)
         {

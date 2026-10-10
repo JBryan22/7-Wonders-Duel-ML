@@ -129,12 +129,12 @@ public class AgeOneTests
     }
 
     [Fact]
-    public void Turns_alternate_and_the_game_ends_when_age_one_is_empty()
+    public void Turns_alternate_and_age_two_starts_when_age_one_is_empty()
     {
         var game = Play();
         var chance = new RandomChanceSource(1);
         var turns = 0;
-        while (game.State.Step != StepKind.GameOver)
+        while (game.State.Age == 1)
         {
             if (game.State.Step == StepKind.Reveal)
             {
@@ -146,7 +146,8 @@ public class AgeOneTests
             turns++;
         }
         Assert.Equal(20, turns);
-        Assert.Equal(0, game.State.CardsLeftInAge);
+        Assert.Equal(2, game.State.Age);
+        Assert.Equal(20, game.State.CardsLeftInAge);
         Assert.Equal(20, game.State.DiscardPile.Count);
     }
 }
