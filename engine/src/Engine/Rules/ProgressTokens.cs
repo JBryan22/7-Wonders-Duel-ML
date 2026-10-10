@@ -33,11 +33,7 @@ public static class ProgressTokens
     public static readonly int Urbanism = GameData.TokenIndex("urbanism");
 
     /// <summary>The tokens in a bitmask, in index order.</summary>
-    public static IEnumerable<int> In(ushort mask)
-    {
-        for (var t = 0; t < GameData.Tokens.Length; t++)
-            if ((mask & 1 << t) != 0) yield return t;
-    }
+    public static Bits In(ushort mask) => new(mask);
 
     public static string Names(ushort mask) => string.Join(' ', In(mask).Select(t => GameData.Tokens[t].Id));
 }

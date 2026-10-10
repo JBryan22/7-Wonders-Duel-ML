@@ -262,11 +262,7 @@ public sealed class GameState
         GameData.Wonders[wonder].Effect == WonderEffect.DestroyBrown ? CardColor.Brown : CardColor.Grey;
 
     /// <summary>The Wonders in a mask, in index order.</summary>
-    public static IEnumerable<int> WondersIn(ushort mask)
-    {
-        for (var w = 0; w < GameData.Wonders.Length; w++)
-            if ((mask & 1 << w) != 0) yield return w;
-    }
+    public static Bits WondersIn(ushort mask) => new(mask);
 
     /// <summary>The card in a slot, or its back: <see cref="Empty"/>, <see cref="Hidden"/> or <see cref="HiddenGuild"/>.</summary>
     public int SlotCard(int slot) => _slots[slot];
@@ -1011,6 +1007,67 @@ public sealed class GameState
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)
         && _city.AsSpan().SequenceEqual(o._city) && _production.AsSpan().SequenceEqual(o._production)
         && _queue.AsSpan(0, _queueCount).SequenceEqual(o._queue.AsSpan(0, o._queueCount));
+
+    /// <summary>
+    /// Every field <see cref="SameAs"/> compares, as canonical little-endian bytes: equal states give equal bytes on
+    /// any OS and runtime. The determinism test pins a hash of these (spec A11, determinism).
+    /// </summary>
+    public byte[] ToBytes()
+    {
+        using var stream = new MemoryStream();
+        using (var w = new BinaryWriter(stream))
+        {
+            static void Set(BinaryWriter w, CardSet c)
+            {
+                w.Write((ulong)c.Bits);
+                w.Write((ulong)(c.Bits >> 64));
+            }
+            w.Write((byte)Rules.StartChoice);
+            w.Write((byte)Rules.Promos);
+            w.Write(FirstPlayer);
+            w.Write(Age);
+            w.Write(CurrentPlayer);
+            w.Write(ConflictPawn);
+            w.Write(Result is not null);
+            if (Result is { } r)
+            {
+                w.Write(r.Winner);
+                w.Write((byte)r.Victory);
+                foreach (var sheet in new[] { r.P1, r.P2 })
+                    for (var c = 0; c < ScoreSheet.CategoryCount; c++) w.Write(sheet[(ScoreCategory)c]);
+            }
+            foreach (var slot in _slots) w.Write(slot);
+            foreach (var coins in _coins) w.Write(coins);
+            foreach (var city in _city) Set(w, city);
+            foreach (var p in _production) w.Write(p);
+            w.Write(_queueCount);
+            for (var i = 0; i < _queueCount; i++)
+            {
+                w.Write((byte)_queue[i].Kind);
+                w.Write(_queue[i].Player);
+                w.Write(_queue[i].Wonder);
+            }
+            w.Write(_occupied);
+            Set(w, _seen);
+            Set(w, _discard);
+            w.Write(_awaitingGuildPattern);
+            w.Write(_militaryTokens);
+            w.Write(_tokensSetOut);
+            w.Write(_boardTokens);
+            foreach (var t in _tokens) w.Write(t);
+            w.Write(_draftOffer);
+            w.Write(_wondersSeen);
+            w.Write(_wondersRemoved);
+            w.Write(_draftPicks);
+            foreach (var m in _wonders) w.Write(m);
+            foreach (var m in _wondersBuilt) w.Write(m);
+            foreach (var c in _wonderCard) w.Write(c);
+            w.Write(_playAgain);
+            w.Write(_libraryDraw);
+            w.Write(_libraryDrawHidden);
+        }
+        return stream.ToArray();
+    }
 
     public override string ToString() => StatePrinter.Describe(this);
 }

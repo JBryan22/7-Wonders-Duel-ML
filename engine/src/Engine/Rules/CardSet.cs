@@ -37,11 +37,8 @@ public readonly record struct CardSet(UInt128 Bits)
         return BitOperations.TrailingZeroCount(bits);
     }
 
-    public IEnumerable<int> Cards()
-    {
-        for (var i = 0; i < GameData.Cards.Length; i++)
-            if (Contains(i)) yield return i;
-    }
+    /// <summary>The cards in index order (allocation-free in a <c>foreach</c>).</summary>
+    public Bits Cards() => new(Bits);
 
     public override string ToString() => string.Join(' ', Cards().Select(c => GameData.Cards[c].Id));
 }
