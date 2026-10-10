@@ -79,5 +79,13 @@ Whatever supplies Reveals: a random generator in Self-Play and search, or the hu
 _Avoid_: Dealer, RNG (when the role is meant)
 
 **Pending Decision**:
-The kind of choice the Game State is waiting on next (for example: take a card, pick a progress token, destroy an opponent's card, choose who starts the next Age); every Move resolves exactly one.
+The kind of choice the Game State is waiting on next (for example: take a card, pick a progress token, destroy an opponent's card, choose who starts the next Age); every Move resolves exactly one. Each belongs to the player who must make it, usually but not always the player whose turn it is.
 _Avoid_: Phase, sub-turn, prompt
+
+**Ruleset**:
+The rule options a game is played under, such as the start-player rule and which promo Wonders are in the Wonder pool; fixed at setup and recorded at the head of the Move Log.
+_Avoid_: Variant, mode, settings
+
+**Wonder pool**:
+The Wonders shuffled for the draft at setup: the 12 base Wonders plus any promo Wonders the Ruleset adds.
+_Avoid_: Wonder deck
