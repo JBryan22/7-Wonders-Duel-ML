@@ -50,6 +50,13 @@ public static class StatePrinter
               .Append($" | production: {(production.Length > 0 ? production : "none")}")
               .Append($" | city: {(s.City(p).IsEmpty ? "empty" : s.City(p).ToString())}\n");
         }
+        if (s.Age > 0)
+        {
+            var tokens = string.Join(' ', Enumerable.Range(0, GameState.MilitaryTokenCount).Where(s.MilitaryTokenLeft)
+                .Select(t => $"P{t / 2 + 1}:{GameState.MilitaryTokenCoins(t)}"));
+            var pawn = s.ConflictPawn == 0 ? "centre" : $"{Math.Abs(s.ConflictPawn)} toward P{(s.ConflictPawn > 0 ? 2 : 1)}";
+            sb.Append($"Conflict Pawn: {pawn} | military tokens left: {(tokens.Length > 0 ? tokens : "none")}\n");
+        }
         sb.Append($"Discard pile: {(s.DiscardPile.IsEmpty ? "empty" : s.DiscardPile.ToString())}\n");
         if (s.Result is { } result) sb.Append("Result: ").Append(result).Append('\n');
         return sb.ToString();

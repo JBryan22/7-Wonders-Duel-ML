@@ -28,6 +28,10 @@ public sealed class GameState
     public const int SlotCount = 20;
     /// <summary>Upper bound on legal Moves in any position, for caller-supplied buffers.</summary>
     public const int MaxMoves = 128;
+    /// <summary>Spaces from the centre to a capital: the pawn reaching it is military supremacy (rules-reference §8).</summary>
+    public const int CapitalDistance = 9;
+    /// <summary>Military tokens on the board at the start: a 2-coin and a 5-coin token on each side.</summary>
+    public const int MilitaryTokenCount = 4;
     const int QueueCapacity = 8;
     const uint AllSlots = (1u << SlotCount) - 1;
 
@@ -51,6 +55,8 @@ public sealed class GameState
     CardSet _seen;
     CardSet _discard;
     bool _awaitingGuildPattern;
+    /// <summary>Military tokens still on the board, one bit per <see cref="MilitaryToken"/> index.</summary>
+    byte _militaryTokens;
 
     GameState(Ruleset rules) => Rules = rules;
 
@@ -59,6 +65,7 @@ public sealed class GameState
     {
         var s = new GameState(rules) { FirstPlayer = -1 };
         s._coins[0] = s._coins[1] = StartingCoins;
+        s._militaryTokens = (1 << MilitaryTokenCount) - 1;
         Array.Fill(s._slots, Empty);
         return s;
     }
@@ -75,12 +82,24 @@ public sealed class GameState
     public Result? Result { get; private set; }
 
     /// <summary>
-    /// The Conflict Pawn: spaces from the centre toward P2's capital (positive) or P1's (negative).
-    /// Ticket 05 moves it; until then it stays at 0.
+    /// The Conflict Pawn: spaces from the centre toward P2's capital (positive) or P1's (negative), -9..9.
+    /// Shields move it (<see cref="AddShields"/>).
     /// </summary>
     public int ConflictPawn { get; private set; }
     /// <summary>How many spaces the pawn stands toward this player's opponent's capital (negative if toward their own).</summary>
     public int MilitaryLead(int player) => player == 0 ? ConflictPawn : -ConflictPawn;
+
+    /// <summary>
+    /// Index (0..3) of a military token: the one on <paramref name="victim"/>'s side of the track, small (2 coins,
+    /// zone 3-5) or large (5 coins, zone 6-8). The victim loses coins when the opponent first pushes the pawn into its zone.
+    /// </summary>
+    public static int MilitaryToken(int victim, bool large) => victim * 2 + (large ? 1 : 0);
+    /// <summary>Coins a military token takes from its victim.</summary>
+    public static int MilitaryTokenCoins(int token) => (token & 1) != 0 ? 5 : 2;
+    /// <summary>The attacker's lead at which the pawn enters a token's zone.</summary>
+    public static int MilitaryTokenZone(int token) => (token & 1) != 0 ? 6 : 3;
+    public bool MilitaryTokenLeft(int token) => (_militaryTokens & 1 << token) != 0;
+    public int MilitaryTokensLeft => System.Numerics.BitOperations.PopCount((uint)_militaryTokens);
 
     public AgeLayout Layout => GameData.Layout(Age);
     public int Coins(int player) => _coins[player];
@@ -219,7 +238,16 @@ public sealed class GameState
         _slots[slot] = Empty;
         _occupied &= ~(1u << slot);
 
-        if (move.Kind == MoveKind.Build) Build(player, move.Card);
+        if (move.Kind == MoveKind.Build)
+        {
+            Build(player, move.Card);
+            if (IsOver)
+            {
+                // Supremacy ends the game in the middle of a move (rules-reference §12 mistake 14).
+                _queueCount = 0;
+                return;
+            }
+        }
         else
         {
             // Discard value counts yellow cards already in the city (rules-reference §12 mistake 5).
@@ -246,6 +274,36 @@ public sealed class GameState
             _ => 0,
         };
         if (def.IsGuild) _coins[player] += Scoring.GuildCoins(this, def.Guild);
+        if (def.Shields > 0) AddShields(player, def.Shields);
+    }
+
+    /// <summary>
+    /// Moves the Conflict Pawn <paramref name="shields"/> spaces toward the opponent's capital, one space at a time
+    /// (rules-reference §8). Entering a zone that still holds a military token loots it: the opponent loses that many
+    /// coins (all they have if fewer) to the bank, and the token leaves the game. Reaching the capital ends the game
+    /// at once with a military victory. Retreating never loots, so each token triggers at most once.
+    /// Wonders (ticket 07) and Strategy (ticket 06) feed it too.
+    /// </summary>
+    internal void AddShields(int player, int shields)
+    {
+        var opponent = 1 - player;
+        var step = player == 0 ? 1 : -1;
+        for (var i = 0; i < shields; i++)
+        {
+            ConflictPawn += step;
+            var lead = MilitaryLead(player);
+            if (lead >= CapitalDistance)
+            {
+                Result = Scoring.Supremacy(this, player, VictoryType.Military);
+                return;
+            }
+            for (var t = MilitaryToken(opponent, false); t <= MilitaryToken(opponent, true); t++)
+            {
+                if (lead != MilitaryTokenZone(t) || !MilitaryTokenLeft(t)) continue;
+                _coins[opponent] = Math.Max(0, _coins[opponent] - MilitaryTokenCoins(t));
+                _militaryTokens &= (byte)~(1 << t);
+            }
+        }
     }
 
     public void Apply(Reveal reveal)
@@ -382,7 +440,7 @@ public sealed class GameState
 
     internal void SetCoins(int player, int coins) => _coins[player] = coins;
 
-    /// <summary>Test setup until military moves the pawn (ticket 05).</summary>
+    /// <summary>Test setup: puts the pawn on a space without looting.</summary>
     internal void SetConflictPawn(int position) => ConflictPawn = position;
 
     // ---------------------------------------------------------------- copying and comparing
@@ -413,12 +471,14 @@ public sealed class GameState
         _seen = other._seen;
         _discard = other._discard;
         _awaitingGuildPattern = other._awaitingGuildPattern;
+        _militaryTokens = other._militaryTokens;
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
     public bool SameAs(GameState o) =>
         Rules == o.Rules && FirstPlayer == o.FirstPlayer && Age == o.Age && CurrentPlayer == o.CurrentPlayer
         && Equals(Result, o.Result) && ConflictPawn == o.ConflictPawn && _awaitingGuildPattern == o._awaitingGuildPattern
+        && _militaryTokens == o._militaryTokens
         && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
         && _queueCount == o._queueCount
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)

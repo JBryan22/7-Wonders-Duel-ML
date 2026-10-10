@@ -6,8 +6,9 @@ namespace SevenWondersDuel.Agents.Tests;
 public class RandomPlayTests
 {
     [Fact]
-    public void Random_full_games_always_end_with_a_result_after_all_60_cards_are_taken()
+    public void Random_full_games_always_end_with_a_result_after_all_60_cards_or_a_military_victory()
     {
+        var military = 0;
         foreach (var rules in new[] { Ruleset.Default, new Ruleset(StartChoice.Rule2015) })
             for (ulong seed = 0; seed < 1000; seed++)
             {
@@ -15,14 +16,28 @@ public class RandomPlayTests
                 var s = game.State;
                 Assert.True(s.IsOver, $"seed {seed}");
                 Assert.NotNull(s.Result);
+                var taken = game.Log.OfType<MoveEntry>().Count(m => m.Move.TakesCard);
+                var choices = game.Log.OfType<MoveEntry>().Count(m => !m.Move.TakesCard);
+                Assert.Equal(taken, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
+                if (s.Result.Victory == VictoryType.Military)
+                {
+                    // The pawn stands on the loser's capital and the game stopped where it was.
+                    military++;
+                    Assert.Equal(GameState.CapitalDistance, Math.Abs(s.ConflictPawn));
+                    Assert.Equal(s.ConflictPawn > 0 ? 0 : 1, s.Result.Winner);
+                    Assert.Equal(60 - 20 * (3 - s.Age) - s.CardsLeftInAge, taken);
+                    Assert.True(choices <= s.Age - 1, $"seed {seed}");
+                    continue;
+                }
                 Assert.Equal(VictoryType.Civilian, s.Result.Victory);
+                Assert.True(Math.Abs(s.ConflictPawn) < GameState.CapitalDistance);
                 Assert.Equal(3, s.Age);
                 Assert.Equal(0, s.CardsLeftInAge);
-                Assert.Equal(60, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
-                Assert.Equal(60, game.Log.OfType<MoveEntry>().Count(m => m.Move.TakesCard));
-                // Under the newer rule a tied military always gives the last taker a choice; under 2015 never.
-                var choices = game.Log.OfType<MoveEntry>().Count(m => !m.Move.TakesCard);
-                Assert.Equal(rules.StartChoice == StartChoice.New ? 2 : 0, choices);
+                Assert.Equal(60, taken);
+                // Under the newer rule every Age start is a choice (weaker military, or the last taker on a tie);
+                // under 2015 only an untied military gives one.
+                if (rules.StartChoice == StartChoice.New) Assert.Equal(2, choices);
+                else Assert.InRange(choices, 0, 2);
                 Assert.Single(game.Log.OfType<GuildPatternReveal>());
                 Assert.Equal(3, ((s.City(0) | s.City(1) | s.DiscardPile) & CardSets.Guilds).Count);
                 // The winner has more VP, or equal VP and more blue VP; otherwise it is a draw.
@@ -31,6 +46,29 @@ public class RandomPlayTests
                     : a[ScoreCategory.Blue] != b[ScoreCategory.Blue] ? (a[ScoreCategory.Blue] > b[ScoreCategory.Blue] ? 0 : 1) : -1;
                 Assert.Equal(expected, s.Result.Winner);
             }
+        Assert.True(military > 0, "no random game ended in a military victory");
+    }
+
+    [Fact]
+    public void The_pawn_stays_on_the_track_and_looted_tokens_never_come_back_over_2k_random_games()
+    {
+        for (ulong seed = 0; seed < 2000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed);
+            var replay = GameState.New(game.Rules);
+            var tokens = replay.MilitaryTokensLeft;
+            foreach (var entry in game.Log)
+            {
+                if (entry is MoveEntry m) replay.Apply(m.Move); else replay.Apply((Reveal)entry);
+                Assert.InRange(replay.ConflictPawn, -GameState.CapitalDistance, GameState.CapitalDistance);
+                Assert.True(replay.MilitaryTokensLeft <= tokens, $"seed {seed}");
+                tokens = replay.MilitaryTokensLeft;
+                // A token is gone exactly when the pawn has at some point entered its zone; at least, the current lead implies it.
+                for (var t = 0; t < GameState.MilitaryTokenCount; t++)
+                    if (replay.MilitaryLead(1 - t / 2) >= GameState.MilitaryTokenZone(t))
+                        Assert.False(replay.MilitaryTokenLeft(t), $"seed {seed}");
+            }
+        }
     }
 
     [Fact]

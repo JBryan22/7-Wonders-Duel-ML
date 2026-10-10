@@ -64,6 +64,13 @@ public static class Scoring
         return new Result(winner, VictoryType.Civilian, p1, p2);
     }
 
+    /// <summary>
+    /// An immediate win by military or science supremacy (rules-reference §10). Both score sheets show the position
+    /// as it stands, for reporting only.
+    /// </summary>
+    public static Result Supremacy(GameState s, int winner, VictoryType victory) =>
+        new(winner, victory, Score(s, 0), Score(s, 1));
+
     /// <summary>One player's victory points by category, as if the game ended now.</summary>
     public static ScoreSheet Score(GameState s, int player)
     {
