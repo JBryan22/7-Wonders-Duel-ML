@@ -15,6 +15,11 @@ smoke-test config.
                weight_decay, device, checkpoint_minutes, min_steps
     matches:   pairs, simulations, mode, search, device, threads, parallel (game threads), promo, anchor, anchor_elo,
                anchor_every, generation0_opponent
+    stop:      when the Run stops itself (spec A7, "Budget and stopping"; null switches a rule off):
+               cap_hours (desktop-hours of training), plateau_generations (the Anchor Elo hasn't risen by more than its
+               error bar over this many Generations), science_min_share + science_from/science_to (warm-start
+               trigger: science wins under this share of the Self-Play games of those Generations), progress_by (warm-
+               start trigger: no Anchor Elo progress by this Generation). See stopping.py.
 """
 from __future__ import annotations
 
@@ -77,6 +82,16 @@ class MatchSection:
 
 
 @dataclass(frozen=True)
+class StopSection:
+    cap_hours: float | None = 300.0
+    plateau_generations: int | None = 20
+    science_min_share: float | None = 0.01
+    science_from: int = 6
+    science_to: int = 10
+    progress_by: int | None = 20
+
+
+@dataclass(frozen=True)
 class RunConfig:
     encoding_version: int = 1
     seed: int = 0
@@ -86,13 +101,14 @@ class RunConfig:
     selfplay: SelfPlaySection = field(default_factory=SelfPlaySection)
     training: TrainingSection = field(default_factory=TrainingSection)
     matches: MatchSection = field(default_factory=MatchSection)
+    stop: StopSection = field(default_factory=StopSection)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 SECTIONS = {"network": NetworkSection, "selfplay": SelfPlaySection, "training": TrainingSection,
-            "matches": MatchSection}
+            "matches": MatchSection, "stop": StopSection}
 
 
 def _build(cls, raw: Any, where: str):
@@ -149,3 +165,9 @@ def validate(c: RunConfig) -> None:
     need(c.matches.mode in ("gumbel", "classic"), "matches.mode is gumbel or classic")
     need(c.matches.anchor_every >= 0, "matches.anchor_every is 0 (never) or a positive number of Generations")
     need(c.generations is None or c.generations >= 0, "generations must be 0 or more")
+    st = c.stop
+    need(st.cap_hours is None or st.cap_hours > 0, "stop.cap_hours is positive (or null: no cap)")
+    need(st.plateau_generations is None or st.plateau_generations > 0, "stop.plateau_generations is positive or null")
+    need(st.science_min_share is None or 0 <= st.science_min_share <= 1, "stop.science_min_share is 0..1 or null")
+    need(1 <= st.science_from <= st.science_to, "stop.science_from..science_to are Generations, 1 <= from <= to")
+    need(st.progress_by is None or st.progress_by > 0, "stop.progress_by is a positive Generation or null")

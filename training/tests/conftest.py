@@ -31,3 +31,13 @@ def make_shard(manifest, tmp_path):
     def make(name="shard", n=32, seed=0, **kw):
         return write_shard(tmp_path / name, manifest.version, *synthetic_positions(manifest, n, seed, **kw))
     return make
+
+
+@pytest.fixture(scope="session", autouse=True)
+def quiet_controls(tmp_path_factory):
+    """No desktop notifications from tests, and the current-Run pointer kept out of the real runs/ folder (session
+    scope, so it also covers module fixtures; child processes inherit it)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("SEVENWD_NOTIFY", "0")
+        mp.setenv("SEVENWD_CURRENT_RUN", str(tmp_path_factory.mktemp("current") / "current.txt"))
+        yield

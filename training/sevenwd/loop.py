@@ -4,6 +4,9 @@
     uv run sevenwd-loop ../runs/tiny                                 # continue it where it left off
     uv run sevenwd-loop ../runs/tiny --generations 3                 # ... but stop after Generation 3
 
+This runs the loop in the foreground (Ctrl+C pauses it). The owner's controls are `7wd-train start | pause | status`
+(control.py), which run this same loop in the background.
+
 A Run is a directory started from a frozen config (see config.py). Starting it again always continues where it left
 off; a Run whose config.yaml was edited, or started with a different --config, refuses to start (a changed setup is a
 new Run). Layout:
@@ -15,6 +18,8 @@ new Run). Layout:
     generations.csv        one row per finished Generation
     best.json              the "best" pointer: the network the Advisor uses
     loop.log               what the loop did, with times
+    status.json            what the loop is doing now, desktop-hours used, why it stopped (runstate.py; also
+                           loop.lock, loop.pid, pause.request and overrides.json)
     tb/                    TensorBoard (uv run tensorboard --logdir <run>/tb)
     net/latest.pt          the training checkpoint (network, optimiser, step count)
     net/gen-NNNN.onnx      Generation N's network; net/gen-NNNN.train.json its training plan and losses
@@ -29,7 +34,14 @@ best network when that is older), and against the Anchor every anchor_every Gene
 uses the newest network; the best pointer moves when a Generation beats the current best under the pass rule.
 
 Every step skips work already done (the C# side resumes Self-Play and Matches by itself), so stopping and starting
-again loses only work in progress. Pausing within a step and self-stopping are ticket 24's job.
+again loses only work in progress. A pause request (the file pause.request, or Ctrl+C) stops the loop at the next
+step and inside steps: Self-Play and Matches get it as --stop-file and stop within about a second, keeping finished
+games and seed pairs; training checks it after every step and saves its checkpoint. After every Generation the
+stopping rule (stopping.py) may stop the Run itself: plateau, cap, a warm-start trigger; a Generation that fails twice
+is an unrecoverable fault. A self-stop is recorded in status.json, generations.csv (stop_reason) and TensorBoard (text
+"stop_reason"), with a desktop notification.
+
+Exit codes: 0 finished (the configured Generations are done), 1 refused or a fault, 2 paused, 3 stopped itself.
 """
 from __future__ import annotations
 
@@ -46,21 +58,30 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from . import stopping
 from .config import ConfigError, RunConfig, load_config
 from .export import export_onnx, read_metadata
 from .manifest import REPO_ROOT, Manifest, load_manifest
+from .notify import notify
+from .runstate import (PAUSE, PID, LineCounter, RunError, RunLock, StatusWriter, add_override, clear_pause,
+                       pause_requested, read_overrides)
 from .shards import HEADER as SHARD_HEADER
+from .stopping import StopReason
 from .train import TrainConfig, load_checkpoint, train
 
 RUN_FORMAT = "7wd-run-1"
 # The ONNX exporter warns about optional packages it doesn't need (torchvision, triton) on every export.
 QUIET_LOGGERS = ("torch.onnx._internal.exporter._registration", "torch.utils.flop_counter")
-STOPPED = 2
+STOPPED = 2        # paused (pause request, Ctrl+C, or a C# step stopped)
+SELF_STOPPED = 3   # the stopping rule stopped the Run
+RETRIES = 1        # a failing Generation is tried again this many times before it counts as an unrecoverable fault
+RETRY_DELAY = 30.0
 
 COLUMNS = [
     "generation", "finished", "selfplay_games", "selfplay_positions", "selfplay_seconds", "selfplay_positions_per_s",
@@ -70,16 +91,22 @@ COLUMNS = [
     "prev_score", "prev_low", "prev_high", "prev_elo_diff",
     "best_opponent", "best_score", "best_low", "best_passes",
     "anchor_score", "anchor_low", "anchor_high", "anchor_elo",
-    "elo", "best_generation", "seconds",
+    "elo", "best_generation", "seconds", "hours", "stop_reason",
 ]
 
 
-class RunError(Exception):
-    """The Run can't start as asked (an edited config, a different config, another Encoding version...)."""
-
-
 class LoopStopped(Exception):
-    """A C# step was stopped (Ctrl+C); finished work is kept and the next start continues."""
+    """The loop was paused (a pause request, Ctrl+C, or a C# step that stopped); finished work is kept and the next
+    start continues."""
+
+
+class SelfStopped(Exception):
+    """The stopping rule stopped the Run (plateau, cap, warm-start trigger)."""
+
+    def __init__(self, reason: StopReason, tell: bool = True):
+        super().__init__(reason.message)
+        self.reason = reason
+        self.tell = tell  # show a notification (not when a start finds the Run already stopped)
 
 
 def gen_name(g: int) -> str:
@@ -168,6 +195,10 @@ class Run:
 
     def match_dir(self, g: int, opponent: str) -> Path:
         return self.root / "matches" / f"{gen_name(g)}-vs-{opponent}"
+
+    @property
+    def pause_path(self) -> Path:
+        return self.root / PAUSE
 
     def rel(self, path: Path) -> str:
         """A path inside the Run as the C# side gets it: relative to the Run, forward slashes."""
@@ -380,11 +411,21 @@ class Cli:
 # --- one Generation ----------------------------------------------------------------------------------------------------
 
 class Loop:
-    def __init__(self, run: Run, cli: Cli, say: Callable[[str], None] | None = None):
+    def __init__(self, run: Run, cli: Cli, say: Callable[[str], None] | None = None,
+                 status: StatusWriter | None = None, ignore_stop_now: bool = False):
         self.run = run
         self.cli = cli
         self.config = run.config
         self._say = say or print
+        self.status = status or StatusWriter(run.root)
+        self.ignore_stop_now = ignore_stop_now  # --ignore-stop: record the standing stop rules that hold now as ignored
+
+    def check_pause(self) -> None:
+        if pause_requested(self.run.root):
+            raise LoopStopped("pause requested")
+
+    def doing(self, what: str, progress: Callable[[], str] | None = None) -> None:
+        self.status.doing(what, progress)
 
     def say(self, message: str) -> None:
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}"
@@ -405,29 +446,75 @@ class Loop:
 
     def run_until(self, last: int | None = None) -> int:
         """Run Generations until Generation `last` (default: the config's `generations`, else forever) is done.
-        Returns the number of finished Generations."""
+        Returns the number of finished Generations. Raises LoopStopped when paused, SelfStopped when the stopping rule
+        stops the Run (also when it already holds at start)."""
         last = last if last is not None else self.config.generations
+        rows: list[dict] = read_rows(self.run)
+        self.status.update(state="running", reason=None, stop_kind=None, cap_hours=self.config.stop.cap_hours,
+                           **progress_fields(rows))
+        while True:
+            reason = stopping.check(self.config, rows, self.status.hours(), read_overrides(self.run.root),
+                                    at_start=True)
+            if reason is None:
+                break
+            if not self.ignore_stop_now:
+                raise SelfStopped(reason, tell=False)
+            add_override(self.run.root, reason.kind)
+            self.say(f"ignoring this stop rule from now on, as asked: {reason.message}")
+
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=str(self.run.root / "tb"))
         try:
-            g = len(read_rows(self.run))
+            g = len(rows)
             while last is None or g <= last:
+                self.check_pause()
                 started = time.monotonic()
-                row = self.generation(g)
+                row = self.generation_with_retries(g)
                 row["seconds"] = time.monotonic() - started
                 row["finished"] = now()
+                row["hours"] = self.status.hours()
+                reason = stopping.check(self.config, rows + [row], row["hours"], read_overrides(self.run.root))
+                if reason:
+                    row["stop_reason"] = reason.message
                 append_row(self.run, row)
+                rows.append(row)
                 board(writer, row)
+                if reason:
+                    writer.add_text("stop_reason", reason.message, g)
                 writer.flush()
+                self.status.update(**progress_fields(rows))
                 self.say(summary_line(row))
+                if reason:
+                    raise SelfStopped(reason)
                 g += 1
             return g
         finally:
             writer.close()
 
+    def generation_with_retries(self, g: int) -> dict:
+        for attempt in range(RETRIES + 1):
+            try:
+                return self.generation(g)
+            except (LoopStopped, KeyboardInterrupt, RunError, ConfigError):
+                raise
+            except Exception as e:
+                if attempt == RETRIES:
+                    raise
+                self.say(f"Generation {g} failed ({type(e).__name__}: {first_line(e)}); trying again in "
+                         f"{RETRY_DELAY:.0f} s")
+                with open(self.run.root / "loop.log", "a", encoding="utf-8") as f:
+                    f.write(traceback.format_exc())
+                deadline = time.monotonic() + RETRY_DELAY
+                while time.monotonic() < deadline:
+                    self.check_pause()
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+        raise AssertionError("unreachable")
+
     def generation(self, g: int) -> dict:
         row: dict = {"generation": g}
         if g == 0:
+            self.check_pause()
+            self.doing("Generation 0: the starting network")
             self.initial_network()
             if read_best(self.run) is None:
                 write_best(self.run, 0, "the starting network")
@@ -441,10 +528,12 @@ class Loop:
             return row
 
         prev = read_rows(self.run)[-1]
+        self.check_pause()
         row.update(self.selfplay(g))
         window = window_for(self.run, g)
         row["window_generations"] = len(window)
         row["window_positions"] = sum(n for _, n in window)
+        self.check_pause()
         row.update(self.train_generation(g, window, row["selfplay_positions"]))
 
         prev_elo = num(prev.get("elo"))
@@ -507,9 +596,11 @@ class Loop:
         directory = self.run.selfplay_dir(g)
         if shard_positions(self.run, g) is None:
             self.say(f"Generation {g}: Self-Play, {s.games} games with {gen_name(g - 1)}")
+            lines = LineCounter(directory / "games.jsonl")
+            self.doing(f"Generation {g}: Self-Play", lambda: f"{max(0, lines() - 1):,}/{s.games:,} games")
             args = ["selfplay", self.neural_spec(self.run.net(g - 1), s), "--games", str(s.games),
                     "--out", self.run.rel(directory), "--seed", str(self.config.seed + g * 10_000_000),
-                    "--promo-rate", repr(s.promo_rate)]
+                    "--promo-rate", repr(s.promo_rate), "--stop-file", self.run.rel(self.run.pause_path)]
             if s.parallel:
                 args += ["--parallel", str(s.parallel)]
             if s.workers:
@@ -543,9 +634,17 @@ class Loop:
                     "window_positions": sum(n for _, n in window), "new_positions": new_positions}
             write_json(plan_path, plan)
         if not out.exists():
-            remaining = plan["start_step"] + plan["steps"] - step_now
+            end = plan["start_step"] + plan["steps"]
+            remaining = end - step_now
             self.say(f"Generation {g}: training {remaining} steps on {plan['window_positions']:,} positions "
                      f"(Generations {min(plan['window'])}-{max(plan['window'])})")
+            done = [step_now - plan["start_step"]]
+            self.doing(f"Generation {g}: training", lambda: f"{done[0]:,}/{plan['steps']:,} steps")
+
+            def tick(step: int) -> bool:
+                done[0] = step - plan["start_step"]
+                return pause_requested(self.run.root)
+
             c = self.config
             started = time.monotonic()
             result = train(self.run.manifest, [self.run.shard_dir(i) for i in plan["window"]],
@@ -553,14 +652,25 @@ class Loop:
                                        weight_decay=t.weight_decay, width=c.network.width, blocks=c.network.blocks,
                                        seed=c.seed + 7919 * g + step_now, device=t.device,
                                        checkpoint_minutes=t.checkpoint_minutes),
-                           checkpoint=self.run.checkpoint)
-            seconds = time.monotonic() - started
-            if result.history:
-                keys = result.history[0].keys()
-                plan["losses"] = {k: sum(h[k] for h in result.history) / len(result.history) for k in keys}
-                plan["seconds"] = plan.get("seconds", 0) + seconds
-                plan["steps_per_second"] = len(result.history) / seconds if seconds > 0 else None
+                           checkpoint=self.run.checkpoint, tick=tick)
+            # Losses are averaged over all of the Generation's steps, also when a pause split them over sessions.
+            sums = plan.pop("partial_sums", {})
+            counted = plan.pop("partial_steps", 0)
+            for h in result.history:
+                for k, v in h.items():
+                    sums[k] = sums.get(k, 0.0) + v
+            counted += len(result.history)
+            plan["seconds"] = plan.get("seconds", 0) + time.monotonic() - started
+            if result.stopped and result.step < end:
+                plan.update(partial_sums=sums, partial_steps=counted)
+                write_json(plan_path, plan)
+                raise LoopStopped(f"pause requested; training stopped at step {result.step - plan['start_step']} of "
+                                  f"{plan['steps']}, checkpoint saved")
+            if counted:
+                plan["losses"] = {k: v / counted for k, v in sums.items()}
+                plan["steps_per_second"] = counted / plan["seconds"] if plan["seconds"] > 0 else None
             plan["total_steps"] = result.step
+            self.doing(f"Generation {g}: exporting the network")
             self.export(result.model, out)
             write_json(plan_path, plan)
         losses = plan.get("losses", {})
@@ -582,9 +692,13 @@ class Loop:
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
             if summary.get("complete"):
                 return summary
+        self.check_pause()
         self.say(f"Generation {g}: Match against {name} ({m.pairs} seed pairs)")
+        lines = LineCounter(directory / "match.jsonl")
+        self.doing(f"Generation {g}: Match against {name}", lambda: f"{max(0, lines() - 1)}/{m.pairs} seed pairs")
         args = ["match", "neural:" + self.neural_spec(self.run.net(g), m), opponent,
-                "--pairs", str(m.pairs), "--seed", str(self.config.seed), "--out", self.run.rel(directory)]
+                "--pairs", str(m.pairs), "--seed", str(self.config.seed), "--out", self.run.rel(directory),
+                "--stop-file", self.run.rel(self.run.pause_path)]
         if m.promo:
             args += ["--promo", m.promo]
         if m.parallel:
@@ -609,6 +723,29 @@ def read_records(path: Path, encoding_version: int) -> list[dict]:
     if header.get("encodingVersion") != encoding_version:
         raise RuntimeError(f"{path}: Self-Play encoded v{header.get('encodingVersion')}, the Run is v{encoding_version}")
     return [json.loads(line) for line in lines[1:] if line.strip()]
+
+
+def first_line(e: BaseException) -> str:
+    text = str(e).strip()
+    return text.splitlines()[0] if text else type(e).__name__
+
+
+def progress_fields(rows: list[dict]) -> dict:
+    """What status shows about the finished Generations: how many, the latest Elo, the latest Anchor result, the
+    best pointer."""
+    fields: dict = {"finished_generations": len(rows)}
+    for r in reversed(rows):
+        if stopping.value(r.get("elo")) is not None:
+            fields["elo"] = stopping.value(r.get("elo"))
+            break
+    for r in reversed(rows):
+        score = stopping.value(r.get("anchor_score"))
+        if score is not None:
+            fields["anchor"] = f"{score:.0%} at Generation {r['generation']}"
+            break
+    if rows and stopping.value(rows[-1].get("best_generation")) is not None:
+        fields["best"] = int(stopping.value(rows[-1]["best_generation"]))
+    return fields
 
 
 SCALARS = {
@@ -654,23 +791,65 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", type=Path, help="start a new Run from this config (an existing Run must match it)")
     p.add_argument("--generations", type=int, help="stop after this Generation (default: the config's)")
     p.add_argument("--cli", help="the 7wd program to run (a 7wd.dll or executable; default: build engine/src/Cli)")
+    p.add_argument("--ignore-stop", action="store_true",
+                   help="go on although the cap or the plateau rule says stop (recorded in overrides.json)")
     args = p.parse_args(argv)
     try:
         run = start_run(args.run, args.config)
-        loop = Loop(run, None)  # type: ignore[arg-type]
-        loop.cli = Cli.locate(args.cli, say=loop.say)
-        done = loop.run_until(args.generations)
-        loop.say(f"stopped after Generation {done - 1}")
-        return 0
     except (RunError, ConfigError) as e:
         print(f"sevenwd-loop: {e}", file=sys.stderr)
         return 1
-    except RuntimeError as e:
-        print(f"sevenwd-loop: failed: {e}", file=sys.stderr)
+
+    lock = RunLock(run.root)
+    if not lock.acquire():
+        print(f"sevenwd-loop: {run.root} is already running (see 7wd-train status / pause)", file=sys.stderr)
         return 1
+    clear_pause(run.root)  # a start means go: an old pause request is spent
+    (run.root / PID).write_text(str(os.getpid()), encoding="utf-8")
+    status = StatusWriter(run.root)
+    status.update(state="running", reason=None, stop_kind=None, doing="starting (building 7wd)")
+    status.start_heartbeat()
+    loop = Loop(run, None, status=status, ignore_stop_now=args.ignore_stop)  # type: ignore[arg-type]
+    state, reason, kind, code = "done", None, None, 0
+    try:
+        loop.cli = Cli.locate(args.cli, say=loop.say)
+        done = loop.run_until(args.generations)
+        reason = f"finished Generation {done - 1}, as configured"
+        loop.say(f"stopped after Generation {done - 1}")
+        notify(f"7WD training: {run.root.name} finished", reason)
+    except SelfStopped as e:
+        state, reason, kind, code = "stopped", e.reason.message, e.reason.kind, SELF_STOPPED
+        loop.say(f"the Run stopped itself: {reason}")
+        if e.tell:
+            notify(f"7WD training: {run.root.name} stopped", reason)
+        print(f"sevenwd-loop: stopped: {reason}", file=sys.stderr)
     except (LoopStopped, KeyboardInterrupt) as e:
-        print(f"sevenwd-loop: stopped ({e or 'Ctrl+C'}); start it again to continue", file=sys.stderr)
-        return STOPPED
+        state, reason, code = "paused", str(e) or "Ctrl+C", STOPPED
+        if pause_requested(run.root) and not reason.startswith("pause requested"):
+            reason = "pause requested"  # a C# step that stopped because of it
+        loop.say(f"paused ({reason}); start it again to continue")
+        print(f"sevenwd-loop: paused ({reason}); start it again to continue", file=sys.stderr)
+    except (RunError, ConfigError) as e:
+        state, reason, code = "refused", str(e), 1
+        print(f"sevenwd-loop: {e}", file=sys.stderr)
+    except Exception as e:
+        state, reason, kind, code = "stopped", f"fault: {type(e).__name__}: {first_line(e)}", "fault", 1
+        with open(run.root / "loop.log", "a", encoding="utf-8") as f:
+            f.write(traceback.format_exc())
+        loop.say(f"the Run stopped itself on an unrecoverable fault: {first_line(e)} (details in loop.log)")
+        notify(f"7WD training: {run.root.name} stopped (fault)", first_line(e))
+        print(f"sevenwd-loop: failed: {e}", file=sys.stderr)
+    finally:
+        status.stop_heartbeat()
+        if state == "paused":
+            clear_pause(run.root)
+        status.update(state=state, reason=reason, stop_kind=kind)
+        try:
+            (run.root / PID).unlink()
+        except OSError:
+            pass
+        lock.release()
+    return code
 
 
 if __name__ == "__main__":

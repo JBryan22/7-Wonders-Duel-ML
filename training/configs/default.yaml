@@ -43,3 +43,11 @@ matches:
   anchor_elo: null         # only needed when the anchor isn't a Ladder rung
   anchor_every: 5
   generation0_opponent: random
+
+stop:                      # the Run stops itself on the first of these (null switches one off)
+  cap_hours: 300           # desktop-hours of training
+  plateau_generations: 20  # Anchor Elo hasn't risen by more than its error bar over the last 20 Generations
+  science_min_share: 0.01  # warm-start trigger: science wins under 1% of Self-Play games ...
+  science_from: 6          # ... over Generations 6-10
+  science_to: 10
+  progress_by: 20          # warm-start trigger: no Anchor Elo progress by Generation 20

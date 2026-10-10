@@ -15,6 +15,12 @@ dependencies = [
 [project.scripts]
 sevenwd-train = "sevenwd.train:main"
 sevenwd-loop = "sevenwd.loop:main"
+7wd-train = "sevenwd.control:main"
+
+[tool.uv]
+# Copy packages into .venv instead of hard-linking them from uv's cache: hard links fail when the repository lives in
+# OneDrive (the Windows desktop), and copying works everywhere.
+link-mode = "copy"
 
 [dependency-groups]
 dev = ["pytest>=8", "onnxruntime>=1.20"]

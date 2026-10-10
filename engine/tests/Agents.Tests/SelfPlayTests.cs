@@ -166,6 +166,38 @@ public sealed class SelfPlayTests : IDisposable
     }
 
     [Fact]
+    public void A_stop_file_cancels_once_it_appears()
+    {
+        Directory.CreateDirectory(_dir);
+        var flag = Path.Combine(_dir, "pause.request");
+        using var stop = new CancellationTokenSource();
+        var told = 0;
+        using (new StopFile(flag, stop, TimeSpan.FromMilliseconds(10), () => told++))
+        {
+            Thread.Sleep(100);
+            Assert.False(stop.IsCancellationRequested);
+            File.WriteAllText(flag, "pause");
+            Assert.True(SpinWait.SpinUntil(() => stop.IsCancellationRequested, TimeSpan.FromSeconds(5)));
+            Thread.Sleep(50);
+        }
+        Assert.Equal(1, told);
+    }
+
+    [Fact]
+    public void A_stop_file_stops_Self_Play_keeping_finished_games()
+    {
+        Directory.CreateDirectory(_dir);
+        var flag = Path.Combine(_dir, "pause.request");
+        using var stop = new CancellationTokenSource();
+        using var watcher = new StopFile(flag, stop, TimeSpan.FromMilliseconds(10));
+        var report = SelfPlay.Run(Settings(games: 50), Dir("f"), parallel: 2, stop.Token,
+            onGame: _ => File.WriteAllText(flag, "pause"));
+        Assert.False(report.Complete);
+        Assert.False(Directory.Exists(Path.Combine(Dir("f"), "shard")));
+        Assert.InRange(SelfPlay.Load(Dir("f")).Count, 1, 10);
+    }
+
+    [Fact]
     public void The_shard_holds_each_searched_decision_encoded_with_its_sparse_target()
     {
         var settings = Settings(games: 3, promoRate: 0.5);

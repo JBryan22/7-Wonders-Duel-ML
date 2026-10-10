@@ -14,9 +14,10 @@ const string Usage = """
                                        compare N random games (default 10000) with indjev99's C++ engine; the driver
                                        comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games
       match <agent-a> <agent-b> [--pairs N] [--seed S] [--promo P] [--out DIR] [--threads T] [--elo-a X] [--elo-b X]
-                                       play N seed pairs (default 200 = 400 games) with seats swapped; report the win
+            [--stop-file F]            play N seed pairs (default 200 = 400 games) with seats swapped; report the win
                                        rate with its 95% CI, Elo (Random = 0) and the victory types. With --out, each
-                                       finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
+                                       finished pair is saved and rerunning the same command resumes. Ctrl+C stops,
+                                       and so does the file F appearing (how the training loop pauses it).
                                        Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
                                        pimc[:samples=50,playouts=1,margin=0.02], mcts[:sims=1000,c=0.7,margin=0.02]
                                        (the Anchor), neural:<onnx>[,sims=800,m=16,cvisit=50,cscale=0.1,gumbel=1,device=cpu,threads=4]
@@ -24,13 +25,15 @@ const string Usage = """
                                        neural:uniform and neural:playout are built-in references).
                                        The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
       selfplay <onnx>[,sims=64,...] --games N --out DIR [--seed S] [--promo-rate R] [--parallel P] [--workers W]
+            [--stop-file F]
                                        the network plays itself (spec A7): N games from seed S (default 0), each with
                                        both promos with probability R (default 1), P games at a time (default 32 per
                                        core) sharing W inference threads (default 1 per 4 cores, at most 4). The model
                                        takes the neural: settings (default 64 sims, Gumbel, device=cpu,threads=4;
                                        device=cuda uses the GPU). Writes DIR/games.jsonl (the
                                        Game Records, saved per game; rerunning resumes) and, when all are done, the
-                                       encoded shard DIR/shard. Ctrl+C stops; reports games/s and positions/s
+                                       encoded shard DIR/shard. Ctrl+C (or the file F appearing) stops; reports
+                                       games/s and positions/s
       selfplay-check <dir> [--games N] [--model ONNX] [--device D] [--threads T]
                                        replay the first N Game Records (default 20) from their seeds with the same
                                        network and check that the Move Logs and policy targets come out identical
@@ -177,7 +180,7 @@ static int RunCrossCheck(string[] options)
 static int RunMatch(string a, string b, string[] options)
 {
     var settings = new MatchSettings(a, b);
-    string? directory = null;
+    string? directory = null, stopFile = null;
     int? threads = null;
     for (var i = 0; i < options.Length; i += 2)
     {
@@ -191,6 +194,7 @@ static int RunMatch(string a, string b, string[] options)
             case "--threads" when int.TryParse(value, out var t) && t > 0: threads = t; break;
             case "--elo-a" when double.TryParse(value, CultureInfo.InvariantCulture, out var e): settings = settings with { EloA = e }; break;
             case "--elo-b" when double.TryParse(value, CultureInfo.InvariantCulture, out var e): settings = settings with { EloB = e }; break;
+            case "--stop-file" when value is not null: stopFile = value; break;
             default: return Fail(Usage);
         }
     }
@@ -203,6 +207,8 @@ static int RunMatch(string a, string b, string[] options)
         Console.Error.WriteLine("stopping: finished pairs are kept, pairs in progress are dropped");
         stop.Cancel();
     };
+    using var watcher = stopFile is null ? null
+        : new StopFile(stopFile, stop, onStop: () => Console.Error.WriteLine($"stopping ({stopFile} appeared): finished pairs are kept, pairs in progress are dropped"));
 
     Console.WriteLine($"7wd match: {a} vs {b}, {settings.Pairs} seed pairs from seed {settings.FirstSeed} ({settings.Rules})"
         + (directory is null ? "" : $", saved in {directory}"));
@@ -224,7 +230,7 @@ static int RunMatch(string a, string b, string[] options)
 static int RunSelfPlay(string model, string[] options)
 {
     int? games = null, parallel = null, workers = null;
-    string? directory = null;
+    string? directory = null, stopFile = null;
     ulong seed = 0;
     var promoRate = 1.0;
     for (var i = 0; i < options.Length; i += 2)
@@ -238,6 +244,7 @@ static int RunSelfPlay(string model, string[] options)
             case "--promo-rate" when double.TryParse(value, CultureInfo.InvariantCulture, out var r) && r is >= 0 and <= 1: promoRate = r; break;
             case "--parallel" when int.TryParse(value, out var p) && p > 0: parallel = p; break;
             case "--workers" when int.TryParse(value, out var w) && w > 0: workers = w; break;
+            case "--stop-file" when value is not null: stopFile = value; break;
             default: return Fail(Usage);
         }
     }
@@ -253,6 +260,8 @@ static int RunSelfPlay(string model, string[] options)
         Console.Error.WriteLine("stopping: finished games are kept, games in progress are dropped");
         stop.Cancel();
     };
+    using var watcher = stopFile is null ? null
+        : new StopFile(stopFile, stop, onStop: () => Console.Error.WriteLine($"stopping ({stopFile} appeared): finished games are kept, games in progress are dropped"));
     var threads = parallel ?? SelfPlay.DefaultParallel;
     Console.WriteLine($"7wd selfplay: {settings.Agent.Model} ({settings.SearchSpec}, device={settings.Agent.Device}, threads={settings.Agent.Threads}), "
         + $"{games} games from seed {seed}, promo rate {promoRate:0.##}, {threads} at a time, "

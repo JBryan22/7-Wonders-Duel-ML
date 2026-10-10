@@ -6,7 +6,8 @@
 - With an existing --checkpoint, training continues from it (network, optimiser and step count); otherwise the
   network starts from --init (another checkpoint, e.g. a sibling Run's) or random weights (--seed).
 - --steps 0 with no --data exports the starting network as is: Generation 0's random network.
-- The checkpoint is written at the end and every --checkpoint-minutes, atomically.
+- The checkpoint is written at the end and every --checkpoint-minutes, atomically, and also when training is stopped
+  early (Ctrl+C, or the loop's pause request through `tick`), so a stop loses no steps.
 - Batches are drawn uniformly from all positions of the given shards (loop.py chooses the shards: the window).
 """
 from __future__ import annotations
@@ -17,6 +18,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
@@ -48,6 +50,7 @@ class TrainResult:
     model: Network
     step: int
     history: list[dict[str, float]] = field(default_factory=list)
+    stopped: bool = False  # stopped early by `tick`: fewer steps than asked were taken
 
 
 def pick_device(name: str) -> torch.device:
@@ -86,7 +89,10 @@ def train(
     checkpoint: Path | None = None,
     init: Path | None = None,
     log_every: int = 0,
+    tick: Callable[[int], bool] | None = None,
 ) -> TrainResult:
+    """Train for config.steps steps. `tick(step)` is called after every step (with the cumulative step count); when
+    it returns True, training stops there: the checkpoint is saved and the result says `stopped`."""
     torch.manual_seed(config.seed)
     rng = np.random.default_rng(config.seed)
     device = pick_device(config.device)
@@ -116,24 +122,33 @@ def train(
         if len(data) == 0:
             raise ValueError("no positions to train on")
         last_save = time.monotonic()
-        for i in range(config.steps):
-            batch = data.batch(rng.integers(0, len(data), size=min(config.batch_size, len(data))))
-            tensors = [torch.from_numpy(a).to(device, non_blocking=True)
-                       for a in (batch.input, batch.policy, batch.legal, batch.value, batch.outcome)]
-            x, policy_target, legal, value_target, outcome_target = tensors
-            policy, value, outcome = model(x)
-            losses = compute_losses(policy, value, outcome, policy_target, legal, value_target, outcome_target)
-            optimizer.zero_grad(set_to_none=True)
-            losses.total.backward()
-            optimizer.step()
-            step += 1
-            result.history.append({**losses.as_floats(), "entropy": policy_entropy(policy, legal)})
-            if log_every and (i + 1) % log_every == 0:
-                avg = {k: np.mean([h[k] for h in result.history[-log_every:]]) for k in result.history[-1]}
-                print(f"step {step}: " + " ".join(f"{k} {v:.4f}" for k, v in avg.items()), flush=True)
-            if checkpoint and time.monotonic() - last_save > config.checkpoint_minutes * 60:
+        try:
+            for i in range(config.steps):
+                batch = data.batch(rng.integers(0, len(data), size=min(config.batch_size, len(data))))
+                tensors = [torch.from_numpy(a).to(device, non_blocking=True)
+                           for a in (batch.input, batch.policy, batch.legal, batch.value, batch.outcome)]
+                x, policy_target, legal, value_target, outcome_target = tensors
+                policy, value, outcome = model(x)
+                losses = compute_losses(policy, value, outcome, policy_target, legal, value_target, outcome_target)
+                optimizer.zero_grad(set_to_none=True)
+                losses.total.backward()
+                optimizer.step()
+                step += 1
+                result.history.append({**losses.as_floats(), "entropy": policy_entropy(policy, legal)})
+                if log_every and (i + 1) % log_every == 0:
+                    avg = {k: np.mean([h[k] for h in result.history[-log_every:]]) for k in result.history[-1]}
+                    print(f"step {step}: " + " ".join(f"{k} {v:.4f}" for k, v in avg.items()), flush=True)
+                if checkpoint and time.monotonic() - last_save > config.checkpoint_minutes * 60:
+                    save_checkpoint(checkpoint, model, optimizer, step, manifest)
+                    last_save = time.monotonic()
+                if tick is not None and tick(step):
+                    result.stopped = True
+                    break
+        except KeyboardInterrupt:
+            # Ctrl+C: keep the steps taken (a step cut short is simply not counted; its update is at worst partial).
+            if checkpoint:
                 save_checkpoint(checkpoint, model, optimizer, step, manifest)
-                last_save = time.monotonic()
+            raise
 
     result.step = step
     if checkpoint:
