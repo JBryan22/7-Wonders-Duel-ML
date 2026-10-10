@@ -1,6 +1,6 @@
 namespace SevenWondersDuel.Engine;
 
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library }
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -28,6 +28,8 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     public static Move Destroy(int card) => new(MoveKind.Destroy, card);
     /// <summary>"mausoleum baths": build a card of the discard pile for free.</summary>
     public static Move Mausoleum(int card) => new(MoveKind.Mausoleum, card);
+    /// <summary>"messe tavern": the Messe builds a card of the current Age's top row for free, even a covered one.</summary>
+    public static Move Messe(int card) => new(MoveKind.Messe, card);
     /// <summary>"library law": keep one of the 3 Progress tokens the Great Library drew.</summary>
     public static Move Library(int token) => new(MoveKind.Library, token);
 
@@ -59,11 +61,16 @@ public enum DecisionKind : byte
     Mausoleum,
     /// <summary>The Great Library: keep 1 of the 3 Progress tokens drawn privately from the box (a Reveal comes first).</summary>
     Library,
+    /// <summary>
+    /// The Messe (promo): build one card of the current Age's top row for free, covered or not. Compulsory; never
+    /// pushed when the top row is empty.
+    /// </summary>
+    Messe,
 }
 
 /// <summary>
 /// A choice the Game State is waiting on, owned by the player who must make it. <see cref="Wonder"/> is the Wonder
-/// whose power asked for it (Destroy, Mausoleum, Library), or -1.
+/// whose power asked for it (Destroy, Mausoleum, Library, Messe), or -1.
 /// </summary>
 public readonly record struct PendingDecision(DecisionKind Kind, int Player, int Wonder = -1);
 

@@ -84,10 +84,11 @@ public class MoveLogTests
     }
 
     [Fact]
-    public void The_engine_rejects_promo_wonders_until_they_are_built()
+    public void The_engine_rejects_the_statue_of_liberty_until_it_is_built()
     {
-        // The grammar is ticket 09's; the Messe and the Statue of Liberty arrive with tickets 12-13.
-        var e = Assert.Throws<NotSupportedException>(() => MoveLog.Parse("7wd-log v1\nrules base promo=messe\n"));
+        // The grammar is ticket 09's; the Messe arrived with ticket 12, the Statue of Liberty arrives with ticket 13.
+        Assert.Equal(Promos.Messe, MoveLog.Parse("7wd-log v1\nrules base promo=messe\n").Rules.Promos);
+        var e = Assert.Throws<NotSupportedException>(() => MoveLog.Parse("7wd-log v1\nrules base promo=liberty\n"));
         Assert.Contains("not supported", e.Message);
     }
 

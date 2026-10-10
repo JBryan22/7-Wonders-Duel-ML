@@ -26,6 +26,8 @@ namespace SevenWondersDuel.Engine;
 /// P2 destroy quarry
 /// P1 wonder arsenal mausoleum
 /// P1 mausoleum quarry
+/// P2 wonder baths messe                       (rules ... promo=messe)
+/// P2 messe palisade
 /// P2 start opponent
 /// reveal guilds 0.1 3.0 5.2
 /// reveal age3 0.0 palace 0.1 senate ...
@@ -33,8 +35,8 @@ namespace SevenWondersDuel.Engine;
 /// Slots are "row.position", both counted from 0 at the top row. Blank lines and lines starting with '#' are ignored.
 /// <para>
 /// Two more forms are accepted but never written by the base game (spec A4, A10):
-/// a <b>slot-named Move</b>, where a take-card Move names the slot instead of the card ("P1 build 4.2",
-/// "P2 wonder 3.1 sphinx"; resolved to the face-up card in that slot, and logged by card name from then on), and a
+/// a <b>slot-named Move</b>, where a take-card or Messe Move names the slot instead of the card ("P1 build 4.2",
+/// "P2 wonder 3.1 sphinx", "P1 messe 0.1"; resolved to the face-up card in that slot, and logged by card name from then on), and a
 /// <b>redacted private Reveal</b>, "reveal P2 library ? ? ?", for a Great Library draw the log's keeper did not see.
 /// </para>
 /// The rules header follows <see cref="Ruleset"/>; a log with an expansion is rejected with a
@@ -78,6 +80,7 @@ public static class MoveLog
         MoveKind.Destroy => $"destroy {CardSlug(move.Card)}",
         MoveKind.Mausoleum => $"mausoleum {CardSlug(move.Card)}",
         MoveKind.Library => $"library {TokenSlug(move.Token)}",
+        MoveKind.Messe => $"messe {CardSlug(move.Card)}",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -191,6 +194,8 @@ public static class MoveLog
             "destroy" => Move.Destroy(GameData.CardIndex(t[2])),
             "mausoleum" => Move.Mausoleum(GameData.CardIndex(t[2])),
             "library" => Move.Library(GameData.TokenIndex(t[2])),
+            // A top-row card is always face up, so the Messe may name its slot too ("P1 messe 0.1").
+            "messe" => Move.Messe(ParseTakenCard(t[2], state)),
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);

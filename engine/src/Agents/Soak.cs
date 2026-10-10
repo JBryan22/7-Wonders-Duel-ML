@@ -22,22 +22,25 @@ public sealed record SoakReport(int Games, int Civilian, int Military, int Scien
 /// original; the Observation never holds the opponent's private Reveal (and otherwise equals the state). Plus the
 /// bookkeeping the rules imply: the pawn stays on the track, looted military tokens never return, Progress tokens are
 /// owned at most once, cached production matches the city, and every card taken is in a city, the discard pile or
-/// under a Wonder. Seeds alternate between the two start-choice rules. A failure names its seed and rules.
+/// under a Wonder. Seeds alternate between the two start-choice rules; the promo Wonders are switched on per run.
+/// A failure names its seed and rules.
 /// </summary>
 public static class Soak
 {
     /// <summary>No game comes near this many log entries (about 100 is typical); reaching it means the game does not end.</summary>
     public const int MaxLogEntries = 1000;
 
-    public static Ruleset RulesFor(ulong seed) => seed % 2 == 0 ? Ruleset.Default : new Ruleset(StartChoice.Rule2015);
+    /// <summary>The rules a soak seed plays: even seeds the newer start-of-Age rule, odd seeds the 2015 one, with the given promos.</summary>
+    public static Ruleset RulesFor(ulong seed, Promos promos = Promos.None) =>
+        new(seed % 2 == 0 ? StartChoice.New : StartChoice.Rule2015, promos);
 
     /// <summary>Soaks <paramref name="games"/> games from <paramref name="firstSeed"/> on, using every core.</summary>
-    public static SoakReport Run(int games, ulong firstSeed = 0, int? threads = null)
+    public static SoakReport Run(int games, ulong firstSeed = 0, int? threads = null, Promos promos = Promos.None)
     {
         var clock = Stopwatch.StartNew();
         var outcomes = new (VictoryType? Victory, bool Draw, string? Failure)[games];
         var options = new ParallelOptions { MaxDegreeOfParallelism = threads ?? Environment.ProcessorCount };
-        Parallel.For(0, games, options, i => outcomes[i] = CheckGame(firstSeed + (ulong)i));
+        Parallel.For(0, games, options, i => outcomes[i] = CheckGame(firstSeed + (ulong)i, promos));
         var failures = outcomes.Where(o => o.Failure is not null).Select(o => o.Failure!).ToList();
         int Count(VictoryType v) => outcomes.Count(o => o.Victory == v);
         return new SoakReport(games, Count(VictoryType.Civilian), Count(VictoryType.Military), Count(VictoryType.Science),
@@ -45,9 +48,9 @@ public static class Soak
     }
 
     /// <summary>Plays one seeded random game, checking every invariant; returns how it ended, or the first failure.</summary>
-    public static (VictoryType? Victory, bool Draw, string? Failure) CheckGame(ulong seed)
+    public static (VictoryType? Victory, bool Draw, string? Failure) CheckGame(ulong seed, Promos promos = Promos.None)
     {
-        var rules = RulesFor(seed);
+        var rules = RulesFor(seed, promos);
         try
         {
             var result = Play(seed, rules);
@@ -121,7 +124,8 @@ public static class Soak
         }
 
         Check(s.Result is not null, "the game is over without a Result");
-        var taken = game.Log.Count(e => e is MoveEntry { Move.TakesCard: true });
+        // The Messe takes a second card from the structure, without a take-card Move.
+        var taken = game.Log.Count(e => e is MoveEntry { Move.TakesCard: true } or MoveEntry { Move.Kind: MoveKind.Messe });
         Check(taken == s.City(0).Count + s.City(1).Count + s.DiscardPile.Count + s.TotalWondersBuilt,
             "a taken card is not in a city, the discard pile or under a Wonder");
         Check(BitOperations.PopCount((uint)(s.Wonders(0) | s.Wonders(1))) == GameState.DraftSize, "8 Wonders were not drafted");

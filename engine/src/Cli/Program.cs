@@ -4,9 +4,11 @@ using SevenWondersDuel.Engine;
 const string Usage = """
     usage: 7wd <command>
       replay <log-file>                replay a Move Log and print the final Game State
-      random [--seed N]                play one random game and print its Move Log
+      random [--seed N] [--promo P]    play one random game and print its Move Log (P: messe)
       bench [--seconds S]              random games/s on one thread (default 5 s per variant)
-      soak [--games N] [--seed S]      check the random-play invariants over N games (default 100000) from seed S
+      soak [--games N] [--seed S] [--promo P]
+                                       check the random-play invariants over N games (default 100000) from seed S,
+                                       with the promo Wonders P switched on (e.g. messe)
       crosscheck [--games N] [--seed S] [--driver PATH] [--freeze DIR]
                                        compare N random games (default 10000) with indjev99's C++ engine; the driver
                                        comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games
@@ -17,19 +19,15 @@ try
     return args switch
     {
         ["replay", var path] => Replay(path),
-        ["random"] => Random(1),
-        ["random", "--seed", var seed] when ulong.TryParse(seed, out var s) => Random(s),
+        ["random", .. var options] => Random(options),
         ["bench"] => RunBench(5),
         ["bench", "--seconds", var secs] when double.TryParse(secs, out var d) && d > 0 => RunBench(d),
-        ["soak"] => RunSoak(100_000, 0),
-        ["soak", "--games", var n] when int.TryParse(n, out var g) && g > 0 => RunSoak(g, 0),
-        ["soak", "--games", var n, "--seed", var seed] when int.TryParse(n, out var g) && g > 0 && ulong.TryParse(seed, out var s) => RunSoak(g, s),
-        ["soak", "--seed", var seed] when ulong.TryParse(seed, out var s) => RunSoak(100_000, s),
+        ["soak", .. var options] => RunSoak(options),
         ["crosscheck", .. var options] => RunCrossCheck(options),
         _ => Fail(Usage),
     };
 }
-catch (Exception e) when (e is FormatException or IOException or UnauthorizedAccessException)
+catch (Exception e) when (e is FormatException or NotSupportedException or IOException or UnauthorizedAccessException)
 {
     return Fail(e.Message);
 }
@@ -41,11 +39,26 @@ static int Replay(string path)
     return 0;
 }
 
-static int Random(ulong seed)
+static int Random(string[] options)
 {
-    Console.Write(GameRunner.PlayRandom(seed).WriteLog());
+    ulong seed = 1;
+    var promos = Promos.None;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--seed" when ulong.TryParse(value, out var s): seed = s; break;
+            case "--promo" when value is not null: promos = ParsePromos(value); break;
+            default: return Fail(Usage);
+        }
+    }
+    Console.Write(GameRunner.PlayRandom(seed, new Ruleset(Promos: promos)).WriteLog());
     return 0;
 }
+
+/// <summary>"messe" or "messe,liberty", as the rules header's promo= list.</summary>
+static Promos ParsePromos(string value) => Ruleset.Parse($"rules base promo={value}").Promos;
 
 static int RunBench(double seconds)
 {
@@ -55,10 +68,25 @@ static int RunBench(double seconds)
     return 0;
 }
 
-static int RunSoak(int games, ulong firstSeed)
+static int RunSoak(string[] options)
 {
-    Console.WriteLine($"7wd soak: {games:N0} random games from seed {firstSeed}, on {Environment.ProcessorCount} threads");
-    var report = Soak.Run(games, firstSeed);
+    var games = 100_000;
+    ulong firstSeed = 0;
+    var promos = Promos.None;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--games" when int.TryParse(value, out var g) && g > 0: games = g; break;
+            case "--seed" when ulong.TryParse(value, out var s): firstSeed = s; break;
+            case "--promo" when value is not null: promos = ParsePromos(value); break;
+            default: return Fail(Usage);
+        }
+    }
+    var with = promos == Promos.None ? "" : $" ({new Ruleset(Promos: promos).ToString()["rules base start-choice=new ".Length..]})";
+    Console.WriteLine($"7wd soak: {games:N0} random games{with} from seed {firstSeed}, on {Environment.ProcessorCount} threads");
+    var report = Soak.Run(games, firstSeed, promos: promos);
     Console.WriteLine(report);
     foreach (var failure in report.Failures.Take(20)) Console.WriteLine("  " + failure);
     return report.Passed ? 0 : 1;

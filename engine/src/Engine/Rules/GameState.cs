@@ -39,6 +39,10 @@ public sealed class GameState
     static readonly uint[][] CoveredByMask = GameData.Layouts
         .Select(l => l.Slots.Select(s => s.CoveredBy.Aggregate(0u, (m, c) => m | 1u << c)).ToArray())
         .ToArray();
+    /// <summary>Per Age: the top row (row 0, farthest from the players, under every other row), as a bitmask.</summary>
+    static readonly uint[] TopRowMask = GameData.Layouts
+        .Select(l => l.Slots.Where(s => s.Row == 0).Aggregate(0u, (m, s) => m | 1u << s.Index))
+        .ToArray();
     /// <summary>Per Age: the slots laid face up, as a bitmask.</summary>
     static readonly uint[] FaceUpMask = GameData.Layouts
         .Select(l => l.Slots.Where(s => s.FaceUp).Aggregate(0u, (m, s) => m | 1u << s.Index))
@@ -83,9 +87,9 @@ public sealed class GameState
     /// <summary>A new game before any Reveal: the first Reveal names the first player.</summary>
     public static GameState New(Ruleset rules)
     {
-        // The promo= grammar parses (ticket 09); the promo Wonders' rules arrive with tickets 12-13.
-        if (rules.Promos != Promos.None)
-            throw new NotSupportedException($"Promo Wonders ({rules}) are not supported by the Engine yet");
+        // The Messe is supported; the Statue of Liberty's rules arrive with ticket 13.
+        if (rules.HasPromo(Promos.Liberty))
+            throw new NotSupportedException($"The Statue of Liberty ({rules}) is not supported by the Engine yet");
         var s = new GameState(rules) { FirstPlayer = -1 };
         s._coins[0] = s._coins[1] = StartingCoins;
         s._militaryTokens = (1 << MilitaryTokenCount) - 1;
@@ -186,9 +190,25 @@ public sealed class GameState
     /// <summary>Only 7 Wonders can be built in a game: once the 7th is built the last unbuilt one leaves the game.</summary>
     public const int MaxWondersBuilt = 7;
 
-    /// <summary>The Wonders this game drafts from: the 12 base Wonders (the promo switches arrive in tickets 12-13).</summary>
-    public ushort WonderPool => BaseWonderPool;
-    static readonly ushort BaseWonderPool = (ushort)GameData.Wonders.Where(w => !w.IsPromo).Aggregate(0, (m, w) => m | 1 << w.Index);
+    /// <summary>
+    /// The Wonders this game drafts from (spec A4): the 12 base Wonders plus each promo Wonder switched on in
+    /// <see cref="Ruleset.Promos"/>, so 12, 13 or 14. The draft itself is the same for every pool.
+    /// </summary>
+    public ushort WonderPool => PoolFor(Rules.Promos);
+
+    /// <summary>The Wonder pool for a set of promo switches.</summary>
+    public static ushort PoolFor(Promos promos) => PoolByPromos[(int)promos];
+    static readonly ushort[] PoolByPromos = Enumerable.Range(0, (int)(Promos.Messe | Promos.Liberty) + 1)
+        .Select(p => (ushort)GameData.Wonders
+            .Where(w => !w.IsPromo || ((Promos)p & PromoOf(w)) != 0)
+            .Aggregate(0, (m, w) => m | 1 << w.Index))
+        .ToArray();
+    static Promos PromoOf(WonderDef w) => w.Effect switch
+    {
+        WonderEffect.Messe => Promos.Messe,
+        WonderEffect.Liberty => Promos.Liberty,
+        _ => throw new InvalidOperationException($"Promo Wonder '{w.Id}' has no Ruleset switch"),
+    };
 
     /// <summary>True during setup when the next draft round's 4 Wonders must be revealed.</summary>
     public bool AwaitingDraftOffer => _tokensSetOut != 0 && Age == 0 && _draftOffer == 0 && _draftPicks < DraftSize;
@@ -260,6 +280,12 @@ public sealed class GameState
         _queueCount > 0 && _queue[0].Kind == DecisionKind.Destroy ? DestroyColorOf(_queue[0].Wonder) : null;
     static CardColor DestroyColorOf(int wonder) =>
         GameData.Wonders[wonder].Effect == WonderEffect.DestroyBrown ? CardColor.Brown : CardColor.Grey;
+
+    /// <summary>
+    /// The occupied slots of the current Age's top row: what the Messe may take, covered or not (promo-wonders §2).
+    /// The top row is face up in every Age, so these cards are always known. It empties only with the whole structure.
+    /// </summary>
+    public uint TopRowSlots => Age == 0 ? 0 : _occupied & TopRowMask[Age - 1];
 
     /// <summary>The Wonders in a mask, in index order.</summary>
     public static Bits WondersIn(ushort mask) => new(mask);
@@ -335,6 +361,10 @@ public sealed class GameState
             case DecisionKind.Library:
                 foreach (var t in ProgressTokens.In(LibraryOptions)) buffer[n++] = Move.Library(t);
                 break;
+            case DecisionKind.Messe:
+                for (var s = 0; s < SlotCount; s++)
+                    if ((TopRowSlots & 1u << s) != 0) buffer[n++] = Move.Messe(_slots[s]);
+                break;
             default:
                 // Which Wonders the player can afford does not depend on the card taken.
                 Span<int> wonders = stackalloc int[DraftOfferSize];
@@ -398,6 +428,14 @@ public sealed class GameState
                 : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
                 : (LibraryOptions & 1 << move.Token) == 0 ? $"{GameData.Tokens[move.Token].Id} is not in the Great Library draw"
                 : null;
+        if (decision.Kind == DecisionKind.Messe)
+        {
+            if (move.Kind != MoveKind.Messe) return "the decision is which top-row card the Messe builds";
+            if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
+            var top = SlotOf(move.Card);
+            return top >= 0 && (TopRowSlots & 1u << top) != 0 ? null
+                : $"{GameData.Cards[move.Card].Id} is not in the top row of the Age {Age} structure";
+        }
         if (!move.TakesCard) return "the decision is which card to take";
 
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
@@ -477,6 +515,14 @@ public sealed class GameState
                 Build(player, move.Card, free: true);
                 FinishDecision();
                 return;
+            case MoveKind.Messe:
+                // No card lies under a top-row card, so taking one uncovers nothing and no Reveal follows.
+                var top = SlotOf(move.Card);
+                _slots[top] = Empty;
+                _occupied &= ~(1u << top);
+                Build(player, move.Card, free: true);
+                FinishDecision();
+                return;
         }
 
         if (move.Kind == MoveKind.Draft)
@@ -525,7 +571,7 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Puts a card into a player's city with all its effects. A <paramref name="free"/> build (the Mausoleum) pays
+    /// Puts a card into a player's city with all its effects. A <paramref name="free"/> build (the Mausoleum, the Messe) pays
     /// nothing and earns no Urbanism coins (rules-reference §12 mistake 4); everything else applies as usual,
     /// including a science pair or win.
     /// </summary>
@@ -567,7 +613,7 @@ public sealed class GameState
     /// applies its coins, the opponent's coin loss and its shields. Once the 7th Wonder of the game is built, the
     /// last unbuilt one leaves the game. "Play again" (printed, or from Theology) is granted only if the game goes on;
     /// it takes effect when the turn ends, after the Reveals of newly accessible cards.
-    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library) then queue their decision.
+    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library, the Messe) then queue their decision.
     /// </summary>
     void BuildWonder(int player, int card, int wonder)
     {
@@ -605,6 +651,10 @@ public sealed class GameState
                 // The draw itself is a private Reveal (AwaitingLibraryDraw); the box always holds 5 tokens.
                 if (System.Numerics.BitOperations.PopCount((uint)TokensSetAside) >= LibraryDrawSize)
                     PushDecision(new PendingDecision(DecisionKind.Library, player, wonder));
+                break;
+            case WonderEffect.Messe:
+                // Empty only when the Messe's own Age card was the Age's last (then the effect does nothing).
+                if (TopRowSlots != 0) PushDecision(new PendingDecision(DecisionKind.Messe, player, wonder));
                 break;
         }
     }

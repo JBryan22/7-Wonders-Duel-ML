@@ -17,6 +17,39 @@ public class SoakAndBenchTests
     }
 
     [Fact]
+    public void Every_invariant_holds_over_3k_soaked_games_with_the_messe()
+    {
+        var report = Soak.Run(3000, firstSeed: 1_000_000, promos: Engine.Promos.Messe);
+        Assert.True(report.Passed, string.Join('\n', report.Failures.Take(10)));
+        Assert.Equal(3000, report.Civilian + report.Military + report.Science);
+        Assert.Equal("rules base start-choice=2015 promo=messe", Soak.RulesFor(1, Engine.Promos.Messe).ToString());
+    }
+
+    [Fact]
+    public void The_messe_is_drafted_built_and_resolved_in_random_promo_games()
+    {
+        var messe = Engine.Data.GameData.WonderIndex("messe");
+        int drafted = 0, built = 0, choices = 0;
+        for (ulong seed = 0; seed < 1000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed, new Engine.Ruleset(Promos: Engine.Promos.Messe));
+            var s = game.State;
+            if (((s.Wonders(0) | s.Wonders(1)) & 1 << messe) != 0) drafted++;
+            if (s.IsWonderBuilt(messe)) built++;
+            for (var i = 0; i < game.Log.Count; i++)
+            {
+                if (game.Log[i] is not Engine.MoveEntry { Move.Kind: Engine.MoveKind.Messe } m) continue;
+                choices++;
+                // The choice follows the Messe's own build by the same player (after any flips it caused).
+                var wonder = game.Log.Take(i).OfType<Engine.MoveEntry>().Last();
+                Assert.Equal((m.Player, Engine.MoveKind.Wonder, messe), (wonder.Player, wonder.Move.Kind, wonder.Move.Wonder));
+            }
+        }
+        Assert.InRange(drafted, 500, 750); // 8 of 13 Wonders are drafted: ~615
+        Assert.True(built > 0 && choices > 0 && choices <= built, $"built {built}, choices {choices}");
+    }
+
+    [Fact]
     public void A_soaked_game_is_the_same_game_on_any_thread_count()
     {
         var one = Soak.Run(200, firstSeed: 500, threads: 1);
