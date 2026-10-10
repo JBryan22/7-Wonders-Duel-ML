@@ -7,6 +7,9 @@ const string Usage = """
       random [--seed N]                play one random game and print its Move Log
       bench [--seconds S]              random games/s on one thread (default 5 s per variant)
       soak [--games N] [--seed S]      check the random-play invariants over N games (default 100000) from seed S
+      crosscheck [--games N] [--seed S] [--driver PATH] [--freeze DIR]
+                                       compare N random games (default 10000) with indjev99's C++ engine; the driver
+                                       comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games
     """;
 
 try
@@ -22,6 +25,7 @@ try
         ["soak", "--games", var n] when int.TryParse(n, out var g) && g > 0 => RunSoak(g, 0),
         ["soak", "--games", var n, "--seed", var seed] when int.TryParse(n, out var g) && g > 0 && ulong.TryParse(seed, out var s) => RunSoak(g, s),
         ["soak", "--seed", var seed] when ulong.TryParse(seed, out var s) => RunSoak(100_000, s),
+        ["crosscheck", .. var options] => RunCrossCheck(options),
         _ => Fail(Usage),
     };
 }
@@ -57,6 +61,40 @@ static int RunSoak(int games, ulong firstSeed)
     var report = Soak.Run(games, firstSeed);
     Console.WriteLine(report);
     foreach (var failure in report.Failures.Take(20)) Console.WriteLine("  " + failure);
+    return report.Passed ? 0 : 1;
+}
+
+static int RunCrossCheck(string[] options)
+{
+    var games = 10_000;
+    ulong seed = 0;
+    string? driver = null, freeze = null;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--games" when int.TryParse(value, out var g) && g > 0: games = g; break;
+            case "--seed" when ulong.TryParse(value, out var s): seed = s; break;
+            case "--driver" when value is not null: driver = value; break;
+            case "--freeze" when value is not null: freeze = value; break;
+            default: return Fail(Usage);
+        }
+    }
+    driver ??= CppDriver.DefaultPath();
+    Console.WriteLine($"7wd crosscheck: {games:N0} random games from seed {seed} against {driver}");
+    var report = CrossCheck.Run(driver, games, seed);
+    Console.WriteLine(report);
+    foreach (var d in report.Disagreements.Take(20)) Console.WriteLine("  " + d);
+    if (freeze is not null && report.Passed)
+    {
+        Directory.CreateDirectory(freeze);
+        foreach (var f in report.Frozen)
+        {
+            File.WriteAllText(Path.Combine(freeze, f.FileName), f.ToText());
+            Console.WriteLine($"  froze {f.FileName}: {f.Expected}");
+        }
+    }
     return report.Passed ? 0 : 1;
 }
 

@@ -1,0 +1,99 @@
+# Frozen by `7wd crosscheck` (ticket 11): `7wd random --seed 2548`, cross-checked against indjev99's C++ engine
+# (MIT, @01ed7a5f): every legal-Move set, coins and pawn agreed. The expect line is the C++ engine's result.
+# expect P2 science 47 24
+7wd-log v1
+rules base start-choice=new
+reveal first P1
+reveal tokens architecture law philosophy strategy urbanism
+reveal draft appian-way colossus piraeus statue-of-zeus
+P1 draft statue-of-zeus
+P2 draft colossus
+P2 draft piraeus
+P1 draft appian-way
+reveal draft circus-maximus hanging-gardens pyramids temple-of-artemis
+P2 draft hanging-gardens
+P1 draft pyramids
+P1 draft circus-maximus
+P2 draft temple-of-artemis
+reveal age1 0.0 stable 0.1 wood-reserve 2.0 tavern 2.1 clay-reserve 2.2 apothecary 2.3 guard-tower 4.0 glassworks 4.1 clay-pool 4.2 press 4.3 theater 4.4 garrison 4.5 altar
+P1 discard garrison
+P2 discard clay-pool
+P1 discard altar
+reveal 3.4 lumber-yard
+P2 wonder press piraeus
+reveal 3.1 clay-pit
+P2 build clay-pit
+P1 build lumber-yard
+P2 build theater
+reveal 3.2 scriptorium 3.3 quarry
+P1 wonder scriptorium pyramids
+P2 discard quarry
+P1 build clay-reserve
+P2 build apothecary
+reveal 1.1 pharmacist
+P1 build guard-tower
+reveal 1.2 workshop
+P2 build glassworks
+reveal 3.0 palisade
+P1 discard palisade
+P2 build workshop
+P1 discard tavern
+reveal 1.0 stone-pit
+P2 build stone-pit
+P1 build pharmacist
+P2 discard stable
+P1 discard wood-reserve
+reveal age2 0.0 horse-breeders 0.1 rostrum 0.2 shelf-quarry 0.3 laboratory 0.4 customs-house 0.5 sawmill 2.0 brewery 2.1 library 2.2 brickyard 2.3 dispensary 4.0 glass-blower 4.1 forum
+P2 start opponent
+P1 build forum
+reveal 3.2 courthouse
+P2 build glass-blower
+reveal 3.0 archery-range 3.1 parade-ground
+P1 discard courthouse
+P2 discard parade-ground
+P1 wonder archery-range statue-of-zeus
+P1 destroy stone-pit
+P2 discard brickyard
+P1 build dispensary
+reveal 1.3 barracks 1.4 drying-room
+P1 token urbanism
+P2 build library
+reveal 1.2 walls
+P1 wonder brewery circus-maximus
+reveal 1.0 aqueduct 1.1 school
+P1 destroy glass-blower
+P2 discard school
+P1 build drying-room
+P2 discard barracks
+P1 discard customs-house
+P2 discard sawmill
+P1 wonder walls appian-way
+P1 build shelf-quarry
+P2 build laboratory
+P2 token law
+P1 build aqueduct
+P2 discard horse-breeders
+P1 build rostrum
+reveal guilds 2.2 4.2 5.2
+reveal age3 0.0 gardens 0.1 chamber-of-commerce 2.0 arena 2.1 university 2.2 builders-guild 2.3 study 4.0 port 4.1 armory 4.2 moneylenders-guild 4.3 palace 6.0 lighthouse 6.1 circus
+P2 start me
+P2 discard lighthouse
+reveal 5.0 observatory
+P1 build observatory
+P2 discard circus
+reveal 5.1 fortifications 5.2 scientists-guild
+P1 discard port
+P2 discard fortifications
+P1 discard scientists-guild
+P2 wonder palace temple-of-artemis
+P2 wonder moneylenders-guild hanging-gardens
+reveal 3.1 pantheon
+P2 build pantheon
+P1 build armory
+reveal 3.0 arsenal
+P2 build study
+P1 discard builders-guild
+reveal 1.2 town-hall
+P2 discard town-hall
+P1 build arsenal
+P2 build university

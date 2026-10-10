@@ -12,3 +12,7 @@ obj/
 .venv/
 __pycache__/
 .pytest_cache/
+
+# C++ cross-check: third-party checkout, driver binary, results (ticket 11)
+tools/crosscheck/.cache/
+crosscheck-out/

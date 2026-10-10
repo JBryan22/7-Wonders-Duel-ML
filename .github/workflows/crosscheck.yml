@@ -1,0 +1,55 @@
+name: Cross-check (C++ engine)
+
+# The cross-check against indjev99's C++ engine (spec A11 item 5, ticket 11). Opt-in, never on ordinary pushes: run
+# it from the Actions tab ("Run workflow"), or push a branch named crosscheck/<anything>. A branch run also commits
+# its report and frozen games back to that branch (crosscheck-out/), so the result can be read with git alone.
+on:
+  workflow_dispatch:
+    inputs:
+      games:
+        description: Random games to compare
+        default: "10000"
+  push:
+    branches: ["crosscheck/**"]
+
+permissions:
+  contents: write
+
+jobs:
+  crosscheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build the C++ driver (pinned indjev99 checkout)
+        run: sh tools/crosscheck/build.sh
+
+      - name: Cross-check
+        run: |
+          mkdir -p crosscheck-out
+          set +e
+          dotnet run --project engine/src/Cli -c Release -- crosscheck --games "${{ inputs.games || '10000' }}" \
+            --freeze crosscheck-out/frozen > crosscheck-out/report.txt 2>&1
+          echo $? > crosscheck-out/exit-code
+          cat crosscheck-out/report.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crosscheck-out
+          path: crosscheck-out/
+
+      - name: Commit the results back to a crosscheck/ branch
+        if: github.event_name == 'push'
+        run: |
+          git config user.name "crosscheck bot"
+          git config user.email "crosscheck@users.noreply.github.com"
+          git add -f crosscheck-out
+          git commit -m "Cross-check results for ${GITHUB_SHA::7}"
+          git push
+
+      - name: Fail on any disagreement
+        run: exit "$(cat crosscheck-out/exit-code)"

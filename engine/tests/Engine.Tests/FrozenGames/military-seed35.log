@@ -1,0 +1,92 @@
+# Frozen by `7wd crosscheck` (ticket 11): `7wd random --seed 35`, cross-checked against indjev99's C++ engine
+# (MIT, @01ed7a5f): every legal-Move set, coins and pawn agreed. The expect line is the C++ engine's result.
+# expect P1 military 25 29
+7wd-log v1
+rules base start-choice=new
+reveal first P2
+reveal tokens architecture economy philosophy theology urbanism
+reveal draft colossus great-library great-lighthouse temple-of-artemis
+P2 draft great-lighthouse
+P1 draft colossus
+P1 draft great-library
+P2 draft temple-of-artemis
+reveal draft hanging-gardens mausoleum sphinx statue-of-zeus
+P1 draft statue-of-zeus
+P2 draft hanging-gardens
+P2 draft sphinx
+P1 draft mausoleum
+reveal age1 0.0 press 0.1 workshop 2.0 glassworks 2.1 tavern 2.2 stable 2.3 stone-reserve 4.0 garrison 4.1 theater 4.2 clay-reserve 4.3 pharmacist 4.4 clay-pit 4.5 wood-reserve
+P2 build pharmacist
+P1 build theater
+P2 discard garrison
+reveal 3.0 palisade
+P1 discard palisade
+P2 build clay-pit
+reveal 3.3 lumber-yard
+P1 build clay-reserve
+reveal 3.1 guard-tower 3.2 apothecary
+P2 build apothecary
+P1 discard lumber-yard
+P2 build wood-reserve
+reveal 3.4 baths
+P1 build guard-tower
+P2 build stable
+P1 wonder tavern mausoleum
+reveal 1.1 scriptorium
+P1 mausoleum lumber-yard
+P2 discard glassworks
+reveal 1.0 stone-pit
+P1 build stone-pit
+P2 build scriptorium
+P1 discard baths
+P2 discard press
+P1 discard stone-reserve
+reveal 1.2 clay-pool
+P2 build clay-pool
+P1 wonder workshop colossus
+reveal age2 0.0 library 0.1 horse-breeders 0.2 dispensary 0.3 drying-room 0.4 brewery 0.5 laboratory 2.0 barracks 2.1 shelf-quarry 2.2 rostrum 2.3 statue 4.0 parade-ground 4.1 customs-house
+P2 start opponent
+P1 discard parade-ground
+reveal 3.0 temple
+P2 build temple
+P1 discard customs-house
+reveal 3.1 glass-blower 3.2 caravansery
+P2 build glass-blower
+P1 build barracks
+reveal 1.0 brickyard
+P2 discard brickyard
+P1 discard caravansery
+P2 discard shelf-quarry
+reveal 1.1 archery-range
+P1 wonder rostrum statue-of-zeus
+reveal 1.2 walls
+P1 destroy clay-pool
+P2 wonder walls hanging-gardens
+P2 discard library
+P1 build archery-range
+P2 build statue
+reveal 1.3 school 1.4 aqueduct
+P1 discard horse-breeders
+P2 build dispensary
+P2 token theology
+P1 discard aqueduct
+P2 discard school
+P1 discard laboratory
+P2 wonder brewery temple-of-artemis
+P2 discard drying-room
+reveal guilds 2.1 5.0 6.0
+reveal age3 0.0 siege-workshop 0.1 palace 2.0 arsenal 2.1 moneylenders-guild 2.2 arena 2.3 pretorium 4.0 port 4.1 fortifications 4.2 lighthouse 4.3 observatory 6.0 shipowners-guild 6.1 pantheon
+P2 start opponent
+P1 discard shipowners-guild
+reveal 5.0 merchants-guild
+P2 build pantheon
+reveal 5.1 circus 5.2 chamber-of-commerce
+P1 build circus
+P2 wonder merchants-guild sphinx
+P2 build fortifications
+P1 discard chamber-of-commerce
+P2 discard port
+reveal 3.0 university
+P1 build lighthouse
+P2 build university
+P1 build arsenal

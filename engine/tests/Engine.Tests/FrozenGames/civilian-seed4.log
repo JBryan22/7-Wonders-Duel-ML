@@ -1,0 +1,106 @@
+# Frozen by `7wd crosscheck` (ticket 11): `7wd random --seed 4`, cross-checked against indjev99's C++ engine
+# (MIT, @01ed7a5f): every legal-Move set, coins and pawn agreed. The expect line is the C++ engine's result.
+# expect P2 civilian 31 42
+7wd-log v1
+rules base start-choice=new
+reveal first P1
+reveal tokens architecture economy law mathematics strategy
+reveal draft circus-maximus mausoleum piraeus sphinx
+P1 draft mausoleum
+P2 draft sphinx
+P2 draft circus-maximus
+P1 draft piraeus
+reveal draft appian-way great-library pyramids statue-of-zeus
+P2 draft appian-way
+P1 draft pyramids
+P1 draft statue-of-zeus
+P2 draft great-library
+reveal age1 0.0 logging-camp 0.1 tavern 2.0 clay-reserve 2.1 scriptorium 2.2 palisade 2.3 altar 4.0 stone-pit 4.1 clay-pool 4.2 press 4.3 glassworks 4.4 baths 4.5 garrison
+P1 discard baths
+P2 discard stone-pit
+P1 wonder clay-pool pyramids
+reveal 3.0 wood-reserve
+P2 discard wood-reserve
+P1 discard garrison
+reveal 3.4 quarry
+P2 wonder glassworks appian-way
+reveal 3.3 clay-pit
+P2 build press
+reveal 3.1 guard-tower 3.2 workshop
+P1 build quarry
+P2 build guard-tower
+P1 discard clay-pit
+P2 build clay-reserve
+P1 discard workshop
+P2 discard palisade
+P1 discard altar
+reveal 1.2 apothecary
+P2 build scriptorium
+reveal 1.0 stable 1.1 theater
+P1 build stable
+P2 build theater
+P1 build apothecary
+P2 build tavern
+P1 build logging-camp
+reveal age2 0.0 shelf-quarry 0.1 horse-breeders 0.2 school 0.3 caravansery 0.4 parade-ground 0.5 brickyard 2.0 dispensary 2.1 aqueduct 2.2 customs-house 2.3 temple 4.0 walls 4.1 forum
+P1 start opponent
+P2 discard walls
+reveal 3.0 library
+P1 discard forum
+reveal 3.1 archery-range 3.2 sawmill
+P2 build sawmill
+P1 build archery-range
+P2 wonder temple great-library
+reveal 1.4 drying-room
+reveal P2 library agriculture masonry philosophy
+P2 library masonry
+P1 build drying-room
+P2 discard library
+P1 discard dispensary
+reveal 1.0 courthouse
+P2 build customs-house
+reveal 1.3 rostrum
+P1 build brickyard
+P2 build rostrum
+P1 discard parade-ground
+P2 discard aqueduct
+reveal 1.1 laboratory 1.2 statue
+P1 discard courthouse
+P2 wonder shelf-quarry sphinx
+P2 build statue
+P1 build laboratory
+P2 build school
+P1 discard horse-breeders
+P2 discard caravansery
+reveal guilds 2.3 4.3 6.1
+reveal age3 0.0 lighthouse 0.1 gardens 2.0 arena 2.1 town-hall 2.2 armory 2.3 shipowners-guild 4.0 pretorium 4.1 circus 4.2 obelisk 4.3 tacticians-guild 6.0 university 6.1 builders-guild
+P2 start me
+P2 discard university
+reveal 5.0 chamber-of-commerce
+P1 discard builders-guild
+reveal 5.1 senate 5.2 siege-workshop
+P2 discard siege-workshop
+P1 build senate
+P2 discard obelisk
+P1 wonder tacticians-guild mausoleum
+reveal 3.1 observatory
+P1 mausoleum aqueduct
+P2 wonder chamber-of-commerce circus-maximus
+P2 destroy drying-room
+P1 discard observatory
+P2 discard armory
+P1 discard circus
+P2 build pretorium
+reveal 3.0 academy
+P1 discard shipowners-guild
+reveal 1.2 port
+P2 build academy
+P1 discard port
+P2 discard town-hall
+reveal 1.1 arsenal
+P1 wonder arsenal piraeus
+P1 build gardens
+P2 discard arena
+reveal 1.0 pantheon
+P1 discard pantheon
+P2 build lighthouse

@@ -1,0 +1,99 @@
+# Frozen by `7wd crosscheck` (ticket 11): `7wd random --seed 0`, cross-checked against indjev99's C++ engine
+# (MIT, @01ed7a5f): every legal-Move set, coins and pawn agreed. The expect line is the C++ engine's result.
+# expect P1 military 34 32
+7wd-log v1
+rules base start-choice=new
+reveal first P1
+reveal tokens agriculture economy mathematics strategy theology
+reveal draft circus-maximus colossus great-library temple-of-artemis
+P1 draft circus-maximus
+P2 draft great-library
+P2 draft colossus
+P1 draft temple-of-artemis
+reveal draft great-lighthouse mausoleum sphinx statue-of-zeus
+P2 draft mausoleum
+P1 draft great-lighthouse
+P1 draft statue-of-zeus
+P2 draft sphinx
+reveal age1 0.0 clay-pool 0.1 scriptorium 2.0 quarry 2.1 tavern 2.2 stable 2.3 press 4.0 theater 4.1 workshop 4.2 guard-tower 4.3 lumber-yard 4.4 logging-camp 4.5 altar
+P1 discard theater
+P2 build altar
+P1 wonder workshop temple-of-artemis
+reveal 3.0 stone-pit
+P1 wonder guard-tower statue-of-zeus
+reveal 3.1 stone-reserve
+P2 build stone-pit
+P1 build lumber-yard
+reveal 3.2 apothecary
+P2 wonder stone-reserve sphinx
+P2 discard logging-camp
+reveal 3.3 pharmacist 3.4 wood-reserve
+P1 build wood-reserve
+P2 discard pharmacist
+P1 build quarry
+P2 discard apothecary
+P1 discard press
+P2 discard stable
+reveal 1.2 baths
+P1 discard tavern
+reveal 1.0 glassworks 1.1 garrison
+P2 build glassworks
+P1 build baths
+P2 build garrison
+P1 build clay-pool
+P2 build scriptorium
+reveal age2 0.0 horse-breeders 0.1 brickyard 0.2 sawmill 0.3 school 0.4 rostrum 0.5 dispensary 2.0 walls 2.1 caravansery 2.2 parade-ground 2.3 forum 4.0 brewery 4.1 customs-house
+P2 start opponent
+P1 wonder brewery great-lighthouse
+reveal 3.0 aqueduct
+P2 discard customs-house
+reveal 3.1 barracks 3.2 archery-range
+P1 discard archery-range
+P2 discard barracks
+P1 build forum
+reveal 1.4 shelf-quarry
+P2 build shelf-quarry
+P1 discard dispensary
+P2 build aqueduct
+P1 build walls
+reveal 1.0 library
+P2 build caravansery
+reveal 1.1 statue
+P1 wonder parade-ground circus-maximus
+reveal 1.2 laboratory 1.3 drying-room
+P1 destroy glassworks
+P2 discard library
+P1 discard statue
+P2 build brickyard
+P1 build horse-breeders
+P2 build drying-room
+P1 discard rostrum
+P2 discard laboratory
+P1 discard sawmill
+P2 wonder school mausoleum
+P2 mausoleum glassworks
+reveal guilds 1.1 2.1 5.2
+reveal age3 0.0 palace 0.1 pantheon 2.0 gardens 2.1 shipowners-guild 2.2 circus 2.3 port 4.0 academy 4.1 observatory 4.2 fortifications 4.3 siege-workshop 6.0 armory 6.1 pretorium
+P2 start opponent
+P1 build pretorium
+reveal 5.2 tacticians-guild
+P2 discard armory
+reveal 5.0 obelisk 5.1 chamber-of-commerce
+P1 discard obelisk
+P2 build chamber-of-commerce
+P1 build observatory
+P2 wonder academy great-library
+reveal 3.0 lighthouse
+reveal P2 library law masonry urbanism
+P2 library law
+P1 discard lighthouse
+P2 discard tacticians-guild
+P1 discard gardens
+P2 build fortifications
+P1 build siege-workshop
+reveal 3.1 town-hall
+P2 build shipowners-guild
+reveal 1.0 university
+P1 build town-hall
+P2 discard university
+P1 build circus

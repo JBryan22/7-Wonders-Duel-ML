@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Move Logs cross-checked against the C++ engine (ticket 11). -->
+    <None Include="FrozenGames\*.log" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Engine.csproj" />
   </ItemGroup>
 

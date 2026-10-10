@@ -1,0 +1,106 @@
+# Frozen by `7wd crosscheck` (ticket 11): `7wd random --seed 2`, cross-checked against indjev99's C++ engine
+# (MIT, @01ed7a5f): every legal-Move set, coins and pawn agreed. The expect line is the C++ engine's result.
+# expect P1 civilian 46 35
+7wd-log v1
+rules base start-choice=new
+reveal first P1
+reveal tokens agriculture architecture masonry philosophy strategy
+reveal draft circus-maximus colossus pyramids temple-of-artemis
+P1 draft colossus
+P2 draft circus-maximus
+P2 draft pyramids
+P1 draft temple-of-artemis
+reveal draft appian-way great-library mausoleum statue-of-zeus
+P2 draft appian-way
+P1 draft great-library
+P1 draft statue-of-zeus
+P2 draft mausoleum
+reveal age1 0.0 glassworks 0.1 logging-camp 2.0 apothecary 2.1 palisade 2.2 baths 2.3 lumber-yard 4.0 clay-pool 4.1 stable 4.2 clay-reserve 4.3 guard-tower 4.4 quarry 4.5 garrison
+P1 build stable
+P2 build quarry
+P1 build clay-pool
+reveal 3.0 clay-pit
+P2 wonder guard-tower circus-maximus
+reveal 3.3 tavern
+P1 discard clay-pit
+P2 discard clay-reserve
+reveal 3.1 theater 3.2 pharmacist
+P1 discard garrison
+reveal 3.4 wood-reserve
+P2 build wood-reserve
+P1 wonder tavern colossus
+P2 discard pharmacist
+P1 discard baths
+P2 build theater
+P1 discard palisade
+reveal 1.1 workshop
+P2 discard workshop
+P1 build lumber-yard
+reveal 1.2 stone-pit
+P2 build apothecary
+reveal 1.0 press
+P1 discard press
+P2 build glassworks
+P1 wonder stone-pit temple-of-artemis
+P1 wonder logging-camp statue-of-zeus
+P1 destroy quarry
+reveal age2 0.0 parade-ground 0.1 barracks 0.2 archery-range 0.3 library 0.4 brewery 0.5 rostrum 2.0 dispensary 2.1 walls 2.2 glass-blower 2.3 horse-breeders 4.0 temple 4.1 brickyard
+P2 start me
+P2 discard brickyard
+reveal 3.2 customs-house
+P1 build customs-house
+P2 discard temple
+reveal 3.0 aqueduct 3.1 courthouse
+P1 discard aqueduct
+P2 discard dispensary
+reveal 1.0 caravansery
+P1 discard caravansery
+P2 wonder courthouse pyramids
+P1 wonder walls great-library
+reveal 1.1 statue
+reveal P1 library economy mathematics theology
+P1 library mathematics
+P2 discard horse-breeders
+reveal 1.4 laboratory
+P1 discard statue
+P2 discard parade-ground
+P1 build glass-blower
+reveal 1.2 forum 1.3 shelf-quarry
+P2 build barracks
+P1 discard shelf-quarry
+P2 discard laboratory
+P1 build forum
+P2 discard rostrum
+P1 discard library
+P2 discard archery-range
+P1 discard brewery
+reveal guilds 1.0 2.3 4.3
+reveal age3 0.0 pantheon 0.1 university 2.0 observatory 2.1 arena 2.2 academy 2.3 merchants-guild 4.0 siege-workshop 4.1 senate 4.2 gardens 4.3 moneylenders-guild 6.0 study 6.1 arsenal
+P2 start opponent
+P1 build arsenal
+reveal 5.2 town-hall
+P2 discard town-hall
+P1 discard moneylenders-guild
+P2 discard study
+reveal 5.0 pretorium 5.1 armory
+P1 discard pretorium
+P2 build armory
+P1 discard senate
+P2 wonder siege-workshop mausoleum
+reveal 3.0 palace
+P2 mausoleum pharmacist
+P1 build gardens
+reveal 3.1 obelisk
+P2 discard palace
+P1 build obelisk
+P2 discard academy
+P1 discard observatory
+P2 discard arena
+reveal 1.0 builders-guild 1.1 chamber-of-commerce
+P1 build merchants-guild
+reveal 1.2 port
+P2 build port
+P1 build builders-guild
+P2 build chamber-of-commerce
+P1 discard university
+P2 build pantheon
