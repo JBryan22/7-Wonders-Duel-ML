@@ -18,8 +18,9 @@ public static class GameRunner
                     game.Apply(chance.Next(game.State));
                     break;
                 default:
-                    var agent = game.State.PlayerToDecide == 0 ? p1 : p2;
-                    game.Apply(agent.ChooseMove(game.State));
+                    var player = game.State.PlayerToDecide;
+                    var agent = player == 0 ? p1 : p2;
+                    game.Apply(agent.ChooseMove(game.State.Observe(player)));
                     break;
             }
         }

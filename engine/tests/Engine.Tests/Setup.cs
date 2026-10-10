@@ -35,6 +35,17 @@ internal static class Setup
         ];
     }
 
+    static readonly string[] BaseWonders = Data.GameData.Wonders.Where(w => !w.IsPromo).Select(w => w.Id).ToArray();
+
+    /// <summary>A draft (P1 first) giving P1 <paramref name="p1"/> plus fillers and P2 the next base Wonders, so 8 differ.</summary>
+    internal static string[] DraftFor(params string[] p1)
+    {
+        var rest = BaseWonders.Except(p1).ToArray();
+        var mine = p1.Concat(rest).Take(4).ToArray();
+        var theirs = rest.Except(mine).Take(4).ToArray();
+        return Draft(0, mine, theirs);
+    }
+
     /// <summary>Applies <see cref="Draft"/> to a game waiting for its first draft offer.</summary>
     internal static void ApplyDraft(Game game)
     {

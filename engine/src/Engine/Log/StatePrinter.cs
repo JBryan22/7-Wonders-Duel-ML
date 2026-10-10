@@ -57,6 +57,10 @@ public static class StatePrinter
                         : s.IsWonderRemoved(w) ? " (removed)" : ""))));
             sb.Append('\n');
         }
+        if (s.LibraryDraw != 0)
+            sb.Append($"Great Library draw (P{s.PlayerToDecide + 1} only): {ProgressTokens.Names(s.LibraryDraw)}\n");
+        if (s.LibraryDrawHidden) sb.Append($"Great Library draw: P{s.PlayerToDecide + 1} drew 3 hidden tokens\n");
+        if (s.DestroyColor is { } color) sb.Append($"P{s.PlayerToDecide + 1} destroys one of P{2 - s.PlayerToDecide}'s {color.ToString().ToLowerInvariant()} cards\n");
         if (s.DraftOffer != 0)
             sb.Append($"Draft offer: {string.Join(' ', GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonders[w].Id))}\n");
         if (s.PlayAgain) sb.Append($"P{s.CurrentPlayer + 1} plays again after this turn\n");

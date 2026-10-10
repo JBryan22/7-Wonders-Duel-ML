@@ -19,6 +19,13 @@ namespace SevenWondersDuel.Engine;
 /// P2 wonder baths piraeus
 /// ...
 /// P2 token law
+/// P1 wonder temple great-library
+/// reveal P1 library architecture masonry philosophy   (private to P1)
+/// P1 library masonry
+/// P2 wonder senate statue-of-zeus
+/// P2 destroy quarry
+/// P1 wonder arsenal mausoleum
+/// P1 mausoleum quarry
 /// P2 start opponent
 /// reveal guilds 0.1 3.0 5.2
 /// reveal age3 0.0 palace 0.1 senate ...
@@ -47,6 +54,7 @@ public static class MoveLog
         DraftReveal d => "reveal draft " + string.Join(' ', d.Wonders.Select(WonderSlug)),
         SlotReveal r => FormatSlotReveal(r),
         GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
+        LibraryReveal l => $"reveal {PlayerName(l.Player)} library " + string.Join(' ', l.Tokens.Select(TokenSlug)),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
     };
 
@@ -59,6 +67,9 @@ public static class MoveLog
         MoveKind.Token => $"token {TokenSlug(move.Token)}",
         MoveKind.Draft => $"draft {WonderSlug(move.Wonder)}",
         MoveKind.Wonder => $"wonder {CardSlug(move.Card)} {WonderSlug(move.Wonder)}",
+        MoveKind.Destroy => $"destroy {CardSlug(move.Card)}",
+        MoveKind.Mausoleum => $"mausoleum {CardSlug(move.Card)}",
+        MoveKind.Library => $"library {TokenSlug(move.Token)}",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -113,6 +124,9 @@ public static class MoveLog
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));
             if (t.Length > 1 && t[1] == "tokens") return new TokenReveal(t.Skip(2).Select(GameData.TokenIndex).ToArray());
             if (t.Length > 1 && t[1] == "draft") return new DraftReveal(t.Skip(2).Select(GameData.WonderIndex).ToArray());
+            // "reveal 1.0 library" names the green card Library in a slot; the Great Library's draw names a player.
+            if (t.Length > 2 && t[1] is "P1" or "P2" && t[2] == "library")
+                return new LibraryReveal(ParsePlayer(t[1]), t.Skip(3).Select(GameData.TokenIndex).ToArray());
             if (t.Length > 1 && t[1] == "guilds")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
@@ -157,6 +171,9 @@ public static class MoveLog
                 _ => throw new FormatException($"Expected 'start me' or 'start opponent', got 'start {t[2]}'"),
             },
             "token" => Move.PickToken(GameData.TokenIndex(t[2])),
+            "destroy" => Move.Destroy(GameData.CardIndex(t[2])),
+            "mausoleum" => Move.Mausoleum(GameData.CardIndex(t[2])),
+            "library" => Move.Library(GameData.TokenIndex(t[2])),
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);

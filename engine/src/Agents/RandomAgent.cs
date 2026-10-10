@@ -7,10 +7,10 @@ public sealed class RandomAgent(ulong seed) : IAgent
 {
     readonly Rng _rng = new(seed);
 
-    public Move ChooseMove(GameState state)
+    public Move ChooseMove(Observation observation)
     {
         Span<Move> moves = stackalloc Move[GameState.MaxMoves];
-        var n = state.LegalMoves(moves);
+        var n = observation.LegalMoves(moves);
         if (n == 0) throw new InvalidOperationException("No legal Move");
         return moves[_rng.Next(n)];
     }

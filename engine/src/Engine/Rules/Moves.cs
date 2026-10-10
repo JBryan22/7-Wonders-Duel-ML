@@ -1,11 +1,12 @@
 namespace SevenWondersDuel.Engine;
 
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder }
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
 /// the Engine always pays the cheapest way (spec A4). <see cref="Card"/> is -1 for Moves that name no card;
-/// for a <see cref="MoveKind.Token"/> Move it holds the Progress token index instead (see <see cref="Token"/>).
+/// for a <see cref="MoveKind.Token"/> or <see cref="MoveKind.Library"/> Move it holds the Progress token index
+/// instead (see <see cref="Token"/>).
 /// <see cref="Wonder"/> is the Wonder a <see cref="MoveKind.Draft"/> Move drafts or a <see cref="MoveKind.Wonder"/>
 /// Move builds (the tucked Age card is then in <see cref="Card"/>); -1 for every other Move.
 /// </summary>
@@ -23,9 +24,15 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     public static readonly Move StartOpponent = new(MoveKind.StartOpponent, -1);
     /// <summary>"token law": take a Progress token from the board after a science pair.</summary>
     public static Move PickToken(int token) => new(MoveKind.Token, token);
+    /// <summary>"destroy lumber-yard": the Statue of Zeus / Circus Maximus sends an opponent's brown / grey card to the discard pile.</summary>
+    public static Move Destroy(int card) => new(MoveKind.Destroy, card);
+    /// <summary>"mausoleum baths": build a card of the discard pile for free.</summary>
+    public static Move Mausoleum(int card) => new(MoveKind.Mausoleum, card);
+    /// <summary>"library law": keep one of the 3 Progress tokens the Great Library drew.</summary>
+    public static Move Library(int token) => new(MoveKind.Library, token);
 
-    /// <summary>The Progress token a <see cref="MoveKind.Token"/> Move takes, or -1.</summary>
-    public int Token => Kind == MoveKind.Token ? Card : -1;
+    /// <summary>The Progress token a <see cref="MoveKind.Token"/> or <see cref="MoveKind.Library"/> Move takes, or -1.</summary>
+    public int Token => Kind is MoveKind.Token or MoveKind.Library ? Card : -1;
 
     /// <summary>True for the Moves that answer a take-card decision: build, discard, or build a Wonder.</summary>
     public bool TakesCard => Kind is MoveKind.Build or MoveKind.Discard or MoveKind.Wonder;
@@ -43,10 +50,22 @@ public enum DecisionKind : byte
     ChooseToken,
     /// <summary>Take a Wonder from the draft offer (picks A-B-B-A, rules-reference §1). The last Wonder is still a Move.</summary>
     DraftWonder,
+    /// <summary>
+    /// The Statue of Zeus (brown) or Circus Maximus (grey): send one of the opponent's cards of that colour to the
+    /// discard pile. Compulsory; never pushed when the opponent has no card of the colour.
+    /// </summary>
+    Destroy,
+    /// <summary>The Mausoleum: build one card of the discard pile for free. Compulsory; never pushed on an empty pile.</summary>
+    Mausoleum,
+    /// <summary>The Great Library: keep 1 of the 3 Progress tokens drawn privately from the box (a Reveal comes first).</summary>
+    Library,
 }
 
-/// <summary>A choice the Game State is waiting on, owned by the player who must make it.</summary>
-public readonly record struct PendingDecision(DecisionKind Kind, int Player);
+/// <summary>
+/// A choice the Game State is waiting on, owned by the player who must make it. <see cref="Wonder"/> is the Wonder
+/// whose power asked for it (Destroy, Mausoleum, Library), or -1.
+/// </summary>
+public readonly record struct PendingDecision(DecisionKind Kind, int Player, int Wonder = -1);
 
 /// <summary>What the Game State needs next.</summary>
 public enum StepKind : byte { Reveal, Decision, GameOver }
@@ -108,5 +127,16 @@ public sealed record GuildPatternReveal(int[] Slots) : Reveal
 /// </summary>
 public sealed record SlotReveal(int Age, bool Opening, (int Slot, int Card)[] Cards) : Reveal
 {
+    public override string ToString() => MoveLog.Format(this);
+}
+
+/// <summary>
+/// The Great Library's draw ("reveal P1 library law strategy theology"): 3 of the 5 Progress tokens left in the
+/// box at setup. Private: only <see cref="Player"/> sees it (spec A4), so <see cref="GameState.Observe"/> hides it
+/// from the opponent.
+/// </summary>
+public sealed record LibraryReveal(int Player, int[] Tokens) : Reveal
+{
+    public override int Audience => Player;
     public override string ToString() => MoveLog.Format(this);
 }

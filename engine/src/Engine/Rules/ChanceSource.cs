@@ -24,6 +24,13 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
             return new DraftReveal(Pick(unseen.Length, GameState.DraftOfferSize).Select(i => unseen[i]).ToArray());
         }
         if (state.AwaitingGuildPattern) return new GuildPatternReveal(Pick(GameState.SlotCount, GameState.GuildsPerGame));
+        if (state.SlotsToReveal == 0 && state.AwaitingLibraryDraw)
+        {
+            // 3 of the tokens left in the box, uniformly; the flips of uncovered cards came first.
+            var box = ProgressTokens.In(state.TokensSetAside).ToArray();
+            return new LibraryReveal(state.PlayerToDecide,
+                Pick(box.Length, GameState.LibraryDrawSize).Select(i => box[i]).ToArray());
+        }
 
         var slots = state.SlotsToReveal;
         var named = CardSet.Empty;

@@ -121,16 +121,72 @@ public class RandomPlayTests
             // 5 tokens set out; every one is on the board or owned by exactly one player.
             Assert.Equal(ProgressTokens.OnBoard, System.Numerics.BitOperations.PopCount(s.TokensSetOut));
             Assert.Equal(0, s.Tokens(0) & s.Tokens(1));
-            Assert.Equal(s.TokensSetOut, (ushort)(s.BoardTokens | s.Tokens(0) | s.Tokens(1)));
-            // Every pick was a pair: no more picks than pairs, and fewer only when the board ran out.
+            var owned = (ushort)(s.Tokens(0) | s.Tokens(1));
+            Assert.Equal(s.TokensSetOut, (ushort)(s.BoardTokens | (owned & s.TokensSetOut)));
+            // A token from the box is owned only through the Great Library's one pick, from its own draw.
+            var libraryPicks = game.Log.OfType<MoveEntry>().Where(m => m.Move.Kind == MoveKind.Library).ToList();
+            Assert.True(libraryPicks.Count <= 1, $"seed {seed}");
+            Assert.Equal(libraryPicks.Count, System.Numerics.BitOperations.PopCount((uint)(owned & s.TokensSetAside)));
+            if (libraryPicks.Count == 1)
+            {
+                var draw = game.Log.OfType<LibraryReveal>().Single();
+                Assert.Equal(draw.Player, libraryPicks[0].Player);
+                Assert.Contains(libraryPicks[0].Move.Token, draw.Tokens);
+            }
+            // Every board pick was a pair: no more picks than pairs, and fewer only when the board ran out.
             var picks = game.Log.OfType<MoveEntry>().Count(m => m.Move.Kind == MoveKind.Token);
-            Assert.Equal(s.TokenCount(0) + s.TokenCount(1), picks);
+            Assert.Equal(s.TokenCount(0) + s.TokenCount(1) - libraryPicks.Count, picks);
             var pairs = Enumerable.Range(0, 2).Sum(p =>
                 Enum.GetValues<SevenWondersDuel.Engine.Data.ScienceSymbol>().Count(sym => s.SymbolCount(p, sym) >= 2));
             if (s.BoardTokens != 0) Assert.Equal(pairs, picks);
             else Assert.True(picks <= pairs, $"seed {seed}");
             Assert.Equal(Scoring.ProgressPoints(s, 0), s.Result!.P1[ScoreCategory.Progress]);
         }
+    }
+
+    [Fact]
+    public void Choice_wonders_resolve_and_the_observation_never_holds_the_opponents_library_draw_over_2k_random_games()
+    {
+        int destroys = 0, mausoleums = 0, libraries = 0;
+        for (ulong seed = 0; seed < 2000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed);
+            var replay = GameState.New(game.Rules);
+            foreach (var entry in game.Log)
+            {
+                if (entry is MoveEntry m)
+                {
+                    // A choice power is only ever asked with something to choose.
+                    if (m.Move.Kind is MoveKind.Destroy or MoveKind.Mausoleum or MoveKind.Library)
+                        Assert.Equal(m.Move.Kind.ToString(), replay.Pending(0).Kind.ToString());
+                    if (m.Move.Kind == MoveKind.Destroy) destroys++;
+                    if (m.Move.Kind == MoveKind.Mausoleum) mausoleums++;
+                    if (m.Move.Kind == MoveKind.Library) libraries++;
+                    replay.Apply(m.Move);
+                }
+                else replay.Apply((Reveal)entry);
+
+                for (var p = 0; p < 2; p++)
+                {
+                    var o = replay.Observe(p);
+                    var drawer = replay.LibraryDraw != 0 ? replay.PlayerToDecide : -1;
+                    if (drawer >= 0 && drawer != p)
+                    {
+                        Assert.Equal(0, o.State.LibraryDraw);
+                        Assert.True(o.State.LibraryDrawHidden, $"seed {seed}");
+                    }
+                    else Assert.True(o.State.SameAs(replay), $"seed {seed}");
+                }
+            }
+            // Destroys move cards from cities to the discard pile: the cached production still matches the city.
+            for (var p = 0; p < 2; p++)
+                foreach (var r in Enum.GetValues<SevenWondersDuel.Engine.Data.Resource>())
+                    Assert.Equal(replay.City(p).Cards().Sum(c => SevenWondersDuel.Engine.Data.GameData.Cards[c].Produce[(int)r]),
+                        replay.Production(p, r));
+        }
+        Assert.True(destroys > 0, "no random game destroyed a card");
+        Assert.True(mausoleums > 0, "no random game built from the discard pile");
+        Assert.True(libraries > 0, "no random game kept a Great Library token");
     }
 
     [Fact]
@@ -193,7 +249,7 @@ public class RandomPlayTests
             while (s.Step != StepKind.GameOver)
             {
                 if (s.Step == StepKind.Reveal) s.Apply(chance.Next(s));
-                else s.Apply(agents[s.PlayerToDecide].ChooseMove(s));
+                else s.Apply(agents[s.PlayerToDecide].ChooseMove(s.Observe(s.PlayerToDecide)));
                 if (s.Coins(0) < 0 || s.Coins(1) < 0) Assert.Fail($"negative coins, seed {seed}");
             }
         }
@@ -222,7 +278,7 @@ public class RandomPlayTests
             var copy = replay.State.Clone();
             while (copy.Step != StepKind.GameOver)
                 if (copy.Step == StepKind.Reveal) copy.Apply(chance.Next(copy));
-                else copy.Apply(agent.ChooseMove(copy));
+                else copy.Apply(agent.ChooseMove(copy.Observe(copy.PlayerToDecide)));
             Assert.True(before.SameAs(replay.State));
 
             replay.Apply(entry);
@@ -243,7 +299,7 @@ public class RandomPlayTests
                 if (s.Step == StepKind.Reveal) { s.Apply(chance.Next(s)); continue; }
                 Assert.NotEmpty(s.LegalMoves());
                 Assert.All(s.LegalMoves(), m => Assert.True(s.IsLegal(m)));
-                s.Apply(agent.ChooseMove(s));
+                s.Apply(agent.ChooseMove(s.Observe(s.PlayerToDecide)));
             }
         }
     }

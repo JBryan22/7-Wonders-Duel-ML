@@ -74,6 +74,9 @@ public sealed class GameState
     readonly sbyte[] _wonderCard = new sbyte[GameData.Wonders.Length];
     /// <summary>The player whose turn it is gets another turn once the current one ends (a Wonder's "play again").</summary>
     bool _playAgain;
+    /// <summary>The Great Library's private draw while its pick is pending (one bit per token), and whether this copy only knows that it was drawn.</summary>
+    ushort _libraryDraw;
+    bool _libraryDrawHidden;
 
     GameState(Ruleset rules) => Rules = rules;
 
@@ -234,6 +237,27 @@ public sealed class GameState
     /// </summary>
     public bool PlayAgain => _playAgain;
 
+    /// <summary>Progress tokens the Great Library draws from the box (rules-reference §7).</summary>
+    public const int LibraryDrawSize = 3;
+    /// <summary>
+    /// The Great Library's draw while its pick is pending, one bit per token: the 3 tokens its owner (the player to
+    /// decide) chooses from. 0 before the draw's Reveal, after the pick, and in the opponent's Observation.
+    /// </summary>
+    public ushort LibraryDraw => _libraryDraw;
+    /// <summary>
+    /// True when the Great Library's draw happened but this state does not know it: the opponent's Observation
+    /// (<see cref="Observe"/>). Its owner may then pick any token left in the box, as far as this state can tell.
+    /// </summary>
+    public bool LibraryDrawHidden => _libraryDrawHidden;
+    /// <summary>True when the Great Library was just built and its private draw must be revealed (after any flips).</summary>
+    public bool AwaitingLibraryDraw =>
+        _queueCount > 0 && _queue[0].Kind == DecisionKind.Library && _libraryDraw == 0 && !_libraryDrawHidden;
+    /// <summary>The colour the pending Destroy decision targets (brown for Zeus, grey for Circus Maximus), or null.</summary>
+    public CardColor? DestroyColor =>
+        _queueCount > 0 && _queue[0].Kind == DecisionKind.Destroy ? DestroyColorOf(_queue[0].Wonder) : null;
+    static CardColor DestroyColorOf(int wonder) =>
+        GameData.Wonders[wonder].Effect == WonderEffect.DestroyBrown ? CardColor.Brown : CardColor.Grey;
+
     /// <summary>The Wonders in a mask, in index order.</summary>
     public static IEnumerable<int> WondersIn(ushort mask)
     {
@@ -274,7 +298,8 @@ public sealed class GameState
 
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
-        : FirstPlayer < 0 || AwaitingTokens || AwaitingDraftOffer || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
+        : FirstPlayer < 0 || AwaitingTokens || AwaitingDraftOffer || _awaitingGuildPattern || SlotsToReveal != 0
+            || AwaitingLibraryDraw ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -301,6 +326,15 @@ public sealed class GameState
                 break;
             case DecisionKind.DraftWonder:
                 foreach (var w in WondersIn(_draftOffer)) buffer[n++] = Move.Draft(w);
+                break;
+            case DecisionKind.Destroy:
+                foreach (var c in DestroyTargets(player, _queue[0].Wonder).Cards()) buffer[n++] = Move.Destroy(c);
+                break;
+            case DecisionKind.Mausoleum:
+                foreach (var c in _discard.Cards()) buffer[n++] = Move.Mausoleum(c);
+                break;
+            case DecisionKind.Library:
+                foreach (var t in ProgressTokens.In(LibraryOptions)) buffer[n++] = Move.Library(t);
                 break;
             default:
                 // Which Wonders the player can afford does not depend on the card taken.
@@ -346,6 +380,25 @@ public sealed class GameState
                 : move.Wonder < 0 || move.Wonder >= GameData.Wonders.Length ? "unknown Wonder"
                 : (_draftOffer & 1 << move.Wonder) == 0 ? $"{GameData.Wonders[move.Wonder].Id} is not in the draft offer"
                 : null;
+        if (decision.Kind == DecisionKind.Destroy)
+        {
+            var color = DestroyColorOf(decision.Wonder);
+            return move.Kind != MoveKind.Destroy ? $"the decision is which {color.ToString().ToLowerInvariant()} card to destroy"
+                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
+                : !DestroyTargets(decision.Player, decision.Wonder).Contains(move.Card)
+                    ? $"{GameData.Cards[move.Card].Id} is not a {color.ToString().ToLowerInvariant()} card in P{2 - decision.Player}'s city"
+                : null;
+        }
+        if (decision.Kind == DecisionKind.Mausoleum)
+            return move.Kind != MoveKind.Mausoleum ? "the decision is which discarded card the Mausoleum builds"
+                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
+                : !_discard.Contains(move.Card) ? $"{GameData.Cards[move.Card].Id} is not in the discard pile"
+                : null;
+        if (decision.Kind == DecisionKind.Library)
+            return move.Kind != MoveKind.Library ? "the decision is which Great Library token to keep"
+                : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
+                : (LibraryOptions & 1 << move.Token) == 0 ? $"{GameData.Tokens[move.Token].Id} is not in the Great Library draw"
+                : null;
         if (!move.TakesCard) return "the decision is which card to take";
 
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
@@ -376,6 +429,17 @@ public sealed class GameState
     bool CanAffordBuild(int player, int card) => Payment.Quote(this, player, card).Total <= _coins[player];
     bool CanAffordWonder(int player, int wonder) => Payment.QuoteWonder(this, player, wonder).Total <= _coins[player];
 
+    /// <summary>The opponent's cards a destroying Wonder can send to the discard pile.</summary>
+    CardSet DestroyTargets(int player, int wonder) => _city[1 - player] & CardSets.OfColor[(int)DestroyColorOf(wonder)];
+
+    /// <summary>
+    /// The tokens the pending Great Library pick may keep: the draw, or (when this state does not know the draw) any
+    /// token left in the box that nobody owns.
+    /// </summary>
+    ushort LibraryOptions => _libraryDrawHidden
+        ? (ushort)(TokensSetAside & ~_tokens[0] & ~_tokens[1])
+        : _libraryDraw;
+
     int SlotOf(int card)
     {
         for (var s = 0; s < SlotCount; s++)
@@ -391,12 +455,29 @@ public sealed class GameState
         var player = _queue[0].Player;
         PopDecision();
 
-        if (move.Kind == MoveKind.Token)
+        switch (move.Kind)
         {
-            TakeToken(player, move.Token);
-            if (IsOver) _queueCount = 0;
-            else if (_queueCount == 0) EndTurn();
-            return;
+            case MoveKind.Token:
+                TakeToken(player, move.Token);
+                FinishDecision();
+                return;
+            case MoveKind.Library:
+                // The other 2 tokens go back to the box unseen by the opponent.
+                _libraryDraw = 0;
+                _libraryDrawHidden = false;
+                TakeToken(player, move.Token);
+                FinishDecision();
+                return;
+            case MoveKind.Destroy:
+                RemoveFromCity(1 - player, move.Card);
+                _discard = _discard.With(move.Card);
+                FinishDecision();
+                return;
+            case MoveKind.Mausoleum:
+                _discard = _discard.Without(move.Card);
+                Build(player, move.Card, free: true);
+                FinishDecision();
+                return;
         }
 
         if (move.Kind == MoveKind.Draft)
@@ -437,17 +518,33 @@ public sealed class GameState
         if (_queueCount == 0) EndTurn();
     }
 
-    void Build(int player, int card)
+    /// <summary>After a decision a Wonder or a science pair asked for: a win clears the queue, an empty queue ends the turn.</summary>
+    void FinishDecision()
+    {
+        if (IsOver) _queueCount = 0;
+        else if (_queueCount == 0) EndTurn();
+    }
+
+    /// <summary>
+    /// Puts a card into a player's city with all its effects. A <paramref name="free"/> build (the Mausoleum) pays
+    /// nothing and earns no Urbanism coins (rules-reference §12 mistake 4); everything else applies as usual,
+    /// including a science pair or win.
+    /// </summary>
+    void Build(int player, int card, bool free = false)
     {
         var def = GameData.Cards[card];
         var opponent = 1 - player;
-        var chained = Payment.IsChained(this, player, card);
-        var quote = Payment.Quote(this, player, card);
-        _coins[player] -= quote.Total;
-        // Economy: the opponent's trading coins (after discounts, not printed costs) go to its owner.
-        if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
-        AddToCity(player, card);
-        if (chained && HasToken(player, ProgressTokens.Urbanism)) _coins[player] += ProgressTokens.UrbanismChainCoins;
+        if (!free)
+        {
+            var chained = Payment.IsChained(this, player, card);
+            var quote = Payment.Quote(this, player, card);
+            _coins[player] -= quote.Total;
+            // Economy: the opponent's trading coins (after discounts, not printed costs) go to its owner.
+            if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
+            AddToCity(player, card);
+            if (chained && HasToken(player, ProgressTokens.Urbanism)) _coins[player] += ProgressTokens.UrbanismChainCoins;
+        }
+        else AddToCity(player, card);
         // One-time coins, counted with the new card already in the city (the Lighthouse counts itself).
         _coins[player] += def.Coins + def.CoinsPerAmount * def.CoinsPer switch
         {
@@ -471,7 +568,7 @@ public sealed class GameState
     /// applies its coins, the opponent's coin loss and its shields. Once the 7th Wonder of the game is built, the
     /// last unbuilt one leaves the game. "Play again" (printed, or from Theology) is granted only if the game goes on;
     /// it takes effect when the turn ends, after the Reveals of newly accessible cards.
-    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library) arrive in ticket 08.
+    /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library) then queue their decision.
     /// </summary>
     void BuildWonder(int player, int card, int wonder)
     {
@@ -491,7 +588,26 @@ public sealed class GameState
         _coins[opponent] = Math.Max(0, _coins[opponent] - def.OpponentLoses);
         // Wonder shields never get Strategy's bonus (rules-reference §12 mistake 9).
         if (def.Shields > 0) AddShields(player, def.Shields);
-        if (!IsOver && WonderPlaysAgain(player, wonder)) _playAgain = true;
+        if (IsOver) return;
+        if (WonderPlaysAgain(player, wonder)) _playAgain = true;
+
+        // The choice powers: queued before the turn ends, so they come after the flips and before any play-again.
+        // A power with nothing to choose from does nothing (rules-reference §13), without a decision.
+        switch (def.Effect)
+        {
+            case WonderEffect.DestroyBrown or WonderEffect.DestroyGrey:
+                if (!DestroyTargets(player, wonder).IsEmpty)
+                    PushDecision(new PendingDecision(DecisionKind.Destroy, player, wonder));
+                break;
+            case WonderEffect.Mausoleum:
+                if (!_discard.IsEmpty) PushDecision(new PendingDecision(DecisionKind.Mausoleum, player, wonder));
+                break;
+            case WonderEffect.Library:
+                // The draw itself is a private Reveal (AwaitingLibraryDraw); the box always holds 5 tokens.
+                if (System.Numerics.BitOperations.PopCount((uint)TokensSetAside) >= LibraryDrawSize)
+                    PushDecision(new PendingDecision(DecisionKind.Library, player, wonder));
+                break;
+        }
     }
 
     /// <summary>Takes a Wonder from the offer; the next pick, the next round's Reveal, or Age I follows.</summary>
@@ -528,8 +644,7 @@ public sealed class GameState
     }
 
     /// <summary>
-    /// Gives a player a Progress token: from the board after a pair, or (ticket 08) the Great Library's pick from the
-    /// box. Applies the immediate effects: coins (Agriculture, Urbanism) and Law's symbol, which can win by science.
+    /// Gives a player a Progress token: from the board after a pair, or the Great Library's pick from the box. Applies the immediate effects: coins (Agriculture, Urbanism) and Law's symbol, which can win by science.
     /// </summary>
     internal void TakeToken(int player, int token)
     {
@@ -596,9 +711,36 @@ public sealed class GameState
                 ApplySlotReveal(r);
                 break;
 
+            case LibraryReveal l:
+                ApplyLibraryReveal(l);
+                break;
+
             default:
                 throw new InvalidOperationException($"Unsupported Reveal {reveal.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// The Great Library's private draw: 3 different tokens of the 5 left in the box. It comes after the Reveals of
+    /// cards the Wonder's Age card uncovered, so every log orders them the same way.
+    /// </summary>
+    void ApplyLibraryReveal(LibraryReveal l)
+    {
+        if (!AwaitingLibraryDraw) throw new InvalidOperationException("The game is not waiting for a Great Library draw");
+        if (SlotsToReveal != 0) throw new InvalidOperationException("Newly accessible cards are revealed before the Great Library draw");
+        if (l.Player != _queue[0].Player)
+            throw new InvalidOperationException($"The Great Library draw is P{_queue[0].Player + 1}'s, not P{l.Player + 1}'s");
+        if (l.Tokens.Length != LibraryDrawSize || l.Tokens.Distinct().Count() != LibraryDrawSize)
+            throw new InvalidOperationException($"The Great Library draws {LibraryDrawSize} different tokens");
+        ushort mask = 0;
+        foreach (var token in l.Tokens)
+        {
+            if (token < 0 || token >= ProgressTokens.Count) throw new InvalidOperationException($"Unknown Progress token {token}");
+            if ((TokensSetAside & 1 << token) == 0)
+                throw new InvalidOperationException($"{GameData.Tokens[token].Id} was set out on the board, not left in the box");
+            mask |= (ushort)(1 << token);
+        }
+        _libraryDraw = mask;
     }
 
     /// <summary>One draft round's 4 Wonders, drawn from the unseen Wonders of the pool; the round's first pick follows.</summary>
@@ -758,7 +900,18 @@ public sealed class GameState
         for (var r = 0; r < Resources.Count; r++) _production[player * Resources.Count + r] += produce[r];
     }
 
+    /// <summary>Takes a card out of a city (a Zeus / Circus Maximus destroy) and updates the cached production.</summary>
+    void RemoveFromCity(int player, int card)
+    {
+        _city[player] = _city[player].Without(card);
+        var produce = GameData.Cards[card].Produce;
+        for (var r = 0; r < Resources.Count; r++) _production[player * Resources.Count + r] -= produce[r];
+    }
+
     internal void SetCoins(int player, int coins) => _coins[player] = coins;
+
+    /// <summary>Test setup: puts a card in the discard pile.</summary>
+    internal void AddToDiscard(int card) => _discard = _discard.With(card);
 
     /// <summary>Test setup: puts the pawn on a space without looting.</summary>
     internal void SetConflictPawn(int position) => ConflictPawn = position;
@@ -768,6 +921,26 @@ public sealed class GameState
 
     /// <summary>Test setup: gives a player a Wonder, unbuilt, outside the draft.</summary>
     internal void GiveWonder(int player, int wonder) => _wonders[player] |= (ushort)(1 << wonder);
+
+    // ---------------------------------------------------------------- observing
+
+    /// <summary>
+    /// What <paramref name="player"/> may see (spec A4, honesty rule): a copy of this state with every Reveal whose
+    /// audience excludes that player hidden. In the base game that is only the opponent's pending Great Library draw,
+    /// which becomes <see cref="LibraryDrawHidden"/>. Everything else the Game State holds is public, because hidden
+    /// identities are never stored (ADR 0002): unknown cards, unused tokens and unseen Wonders appear only as pools.
+    /// </summary>
+    public Observation Observe(int player)
+    {
+        if (player is not (0 or 1)) throw new ArgumentOutOfRangeException(nameof(player));
+        var copy = Clone();
+        if (copy._libraryDraw != 0 && copy._queue[0].Player != player)
+        {
+            copy._libraryDraw = 0;
+            copy._libraryDrawHidden = true;
+        }
+        return new Observation(copy, player);
+    }
 
     // ---------------------------------------------------------------- copying and comparing
 
@@ -809,6 +982,8 @@ public sealed class GameState
         other._wondersBuilt.CopyTo(_wondersBuilt, 0);
         other._wonderCard.CopyTo(_wonderCard, 0);
         _playAgain = other._playAgain;
+        _libraryDraw = other._libraryDraw;
+        _libraryDrawHidden = other._libraryDrawHidden;
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
@@ -820,6 +995,7 @@ public sealed class GameState
         && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
         && _draftOffer == o._draftOffer && _wondersSeen == o._wondersSeen && _wondersRemoved == o._wondersRemoved
         && _draftPicks == o._draftPicks && _playAgain == o._playAgain
+        && _libraryDraw == o._libraryDraw && _libraryDrawHidden == o._libraryDrawHidden
         && _wonders.AsSpan().SequenceEqual(o._wonders) && _wondersBuilt.AsSpan().SequenceEqual(o._wondersBuilt)
         && _wonderCard.AsSpan().SequenceEqual(o._wonderCard)
         && _queueCount == o._queueCount

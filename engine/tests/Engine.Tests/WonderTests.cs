@@ -17,16 +17,7 @@ public class WonderTests
     static int C(string slug) => GameData.CardIndex(slug);
     static int W(string slug) => GameData.WonderIndex(slug);
 
-    static readonly string[] BaseWonders = GameData.Wonders.Where(w => !w.IsPromo).Select(w => w.Id).ToArray();
-
-    /// <summary>A draft giving P1 <paramref name="p1"/> plus fillers and P2 the next base Wonders, so 8 differ.</summary>
-    static string[] DraftFor(params string[] p1)
-    {
-        var rest = BaseWonders.Except(p1).ToArray();
-        var mine = p1.Concat(rest).Take(4).ToArray();
-        var theirs = rest.Except(mine).Take(4).ToArray();
-        return Setup.Draft(0, mine, theirs);
-    }
+    static string[] DraftFor(params string[] p1) => Setup.DraftFor(p1);
 
     /// <summary>A game with P1 first, the given draft and the Age I opening, then <paramref name="lines"/>. Both players get 50 coins.</summary>
     static Game Start(string[] draft, params string[] lines)
