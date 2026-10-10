@@ -14,6 +14,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Tiny ONNX models for the neural tests (training/sevenwd/test_models.py). -->
+  <ItemGroup>
+    <None Include="Models\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\src\Agents\Agents.csproj" />

@@ -19,7 +19,11 @@ const string Usage = """
                                        finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
                                        Agents: random, heuristic[:science|military|civilian|balanced] (default balanced),
                                        pimc[:samples=50,playouts=1,margin=0.02], mcts[:sims=1000,c=0.7,margin=0.02]
-                                       (the Anchor). The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
+                                       (the Anchor), neural:<onnx>[,sims=800,c=1.25,noise=0,alpha=0.3,temp=0,device=cpu,threads=4]
+                                       (classic PUCT search; neural:uniform and neural:playout are built-in references).
+                                       The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
+      netbench <onnx> [--device auto|cpu|cuda] [--threads N] [--seconds S]
+                                       network inference speed per batch size (N: CPU threads, default all cores)
       manifest [--out PATH]            print the Encoding manifest (spec A6), or write it to PATH; the committed copy is
                                        data/encoding/v1.json (regenerate it with --out after an Encoding change)
     """;
@@ -37,6 +41,7 @@ try
         ["manifest"] => Manifest(null),
         ["manifest", "--out", var path] => Manifest(path),
         ["match", var a, var b, .. var options] when !a.StartsWith("--") && !b.StartsWith("--") => RunMatch(a, b, options),
+        ["netbench", var model, .. var options] when !model.StartsWith("--") => NetBench(model, options),
         _ => Fail(Usage),
     };
 }
@@ -192,6 +197,10 @@ static int RunMatch(string a, string b, string[] options)
         if (n % step == 0) Console.Error.WriteLine($"  {n} more pairs finished");
     });
     Console.WriteLine(report);
+    foreach (var batcher in LoadedNetworks.All)
+        Console.WriteLine($"network {batcher.Network}: {batcher.Positions:N0} positions in {batcher.Batches:N0} calls "
+            + $"(mean batch {(batcher.Batches == 0 ? 0 : (double)batcher.Positions / batcher.Batches):0.0})"
+            + (batcher.Network.FallbackReason is { } why ? $"; CUDA unavailable: {why}" : ""));
     return report.Complete ? 0 : 2;
 }
 
@@ -199,4 +208,28 @@ static int Fail(string message)
 {
     Console.Error.WriteLine(message);
     return 1;
+}
+
+static int NetBench(string model, string[] options)
+{
+    var device = InferenceDevice.Auto;
+    var threads = 0;
+    var seconds = 2.0;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--device" when Enum.TryParse<InferenceDevice>(value, true, out var d): device = d; break;
+            case "--threads" when int.TryParse(value, out var t) && t > 0: threads = t; break;
+            case "--seconds" when double.TryParse(value, CultureInfo.InvariantCulture, out var s) && s > 0: seconds = s; break;
+            default: return Fail(Usage);
+        }
+    }
+    using var network = NeuralNetwork.Load(model, device, threads);
+    Console.WriteLine($"7wd netbench: {network}" + (network.FallbackReason is { } why ? $" (CUDA unavailable: {why})" : "")
+        + $", {(threads == 0 ? "default" : threads.ToString())} CPU threads, {seconds:0.#} s per batch size");
+    foreach (var result in NetworkBench.Run(network, NetworkBench.DefaultBatches, TimeSpan.FromSeconds(seconds)))
+        Console.WriteLine("  " + result);
+    return 0;
 }

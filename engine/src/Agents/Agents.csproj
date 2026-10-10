@@ -1,10 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\Engine\Engine.csproj" />
   </ItemGroup>
 
-  <PropertyGroup>
-  </PropertyGroup>
+  <!--
+    ONNX Runtime (spec A2): CUDA build on Windows (the training desktop's NVIDIA GPU; it still runs on CPU without one,
+    e.g. on the CI runner), CPU build elsewhere (the Linux laptop has no NVIDIA GPU). Only the current OS's native
+    libraries are pulled in, which keeps the Linux build ~500 MB lighter. The CUDA provider needs CUDA 13 and cuDNN 9;
+    NeuralNetwork finds them in the training venv's PyTorch (training/.venv), so no separate CUDA install is needed.
+  -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu.Windows" Version="1.31.0" />
+  </ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.0" />
+  </ItemGroup>
 
 </Project>
