@@ -35,6 +35,10 @@ The ranked series of progressively stronger Agents used to measure strength, eac
 A fixed set of games between two Agents, played in seed-paired games with seats swapped so luck cancels out, used to compare their strength.
 _Avoid_: Series, tournament, benchmark
 
+**Anchor**:
+The fixed non-neural Agent that neural networks are periodically matched against, so their strength stays on the shared Agent Ladder scale.
+_Avoid_: Baseline, reference agent
+
 **Encoding**:
 The versioned mapping between an Observation or a Move and the numbers a neural network reads and outputs.
 _Avoid_: Featurization, tensor format
@@ -45,6 +49,10 @@ Games in which Agents play against themselves to generate training data.
 **Generation**:
 One trip around the training loop: the current network plays a batch of Self-Play games, a new network is trained on recent games, and it is measured in Matches.
 _Avoid_: Iteration, epoch, round
+
+**Run**:
+One training effort from one frozen setup, made of successive Generations; it can be paused and continued, and a changed setup is a new Run, never an edit.
+_Avoid_: Experiment (when the whole effort is meant), session
 
 **Game Record**:
 The permanent record of one Self-Play game: its Move Log, the search's preferred Moves at each searched decision, and the result.

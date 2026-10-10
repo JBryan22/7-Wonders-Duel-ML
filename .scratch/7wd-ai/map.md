@@ -39,10 +39,11 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel AI (base game
 - [Pantheon and Agora rules that affect the Engine's design](issues/17-pantheon-agora-rules-for-extension-points.md): Pantheon adds slightly hidden Divinities, a new action for activating Pantheon cards, Offering-token payment choices and Moves that name a slot. Agora adds long-lived private Conspiracies (clearly not perfect information), Political Supremacy (9 outcome classes), duplicate cards, Senate actions on the opponent's turn and larger Ages. Encoding growth is roughly +450/+250 for Pantheon and +1,200/+800 for Agora (inputs/policy).
 - [Advice presentation: reasons and the principal line](issues/19-advice-presentation.md): a compare table won. Each top Move gets its win % with error bars, "≈ same" when it is within noise of the best, a bar showing how the game is likely to end, and every reason tag. The expected line is numbered on the board for whichever row is hovered. Other Pending Decisions use the same table with option tiles above the board.
 - [Expansion extension points](issues/18-expansion-extension-points.md): v1 builds only the cheap seams and names the rest. Expansions are Ruleset switches, each its own module, and v1 rejects them. Reveals carry an audience (used for the Great Library). Moves can name a slot. A uniform Determinizer is built. Layouts, victory types and outcome classes come from data. Payment choices become a follow-up Pending Decision (named only).
+- [Training compute budget and v1 stopping rule](issues/20-compute-budget-and-stopping-rule.md): v1 succeeds when the best network passes the Anchor (MCTS at 1,000 simulations), aiming for +200 Elo. The Run stops at a plateau (20 Generations) or a 300 desktop-hour cap, and the experiments get 150 hours of pilots run first. A calibration run sizes Generations to about 1 hour. The Advisor uses 800 simulations (3,200 to think longer). The warm-start trigger is <1% science wins in Generations 6–10. Training is started and paused only by hand (shortcuts or `7wd train`), with pause losing at most a minute. The Run stops itself only when there's no reason to continue.
 
 ## Not yet specified
 
-_Nothing for now: the earlier fog became "Pantheon and Agora rules that affect the Engine's design", "Expansion extension points", "Advice presentation: reasons and the principal line" and "Training compute budget and v1 stopping rule"._
+_Nothing: every open question is settled. Only "Assemble the v1 spec and phased build plan" remains._
 
 ## Out of scope
 
