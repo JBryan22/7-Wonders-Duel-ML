@@ -39,9 +39,7 @@ A build-ready **v1 spec + phased build plan** for a 7 Wonders Duel AI (base game
 
 ## Not yet specified
 
-- **Expansion extension points**: where Pantheon (gods, divinities, mythology/offering tokens) and Agora (senators, conspiracies, decrees) hook into the Game State, Move set and network encoding. Decided so far: expansions arrive as a new Encoding version that adds input and policy blocks, with no reserved slots (see "Neural network input and output encoding"). Still open: the Game State and Move hooks; may need its own rules research.
-- **Advice presentation**: how a recommendation is shown and how much "why" comes with it (top-N moves with win %, principal line, explanations). The Gumbel AlphaZero Agent can expose per-Move visit shares, a value (win %), the expected victory type (from the outcome-class head) and a principal line; shown in the Advisor Window as % badges on cards plus a top-3 panel with win % and a short reason (see "Manual-entry Adapter: how it looks and behaves"). Still open: what the short reason is built from, and whether the principal line is shown.
-- **Compute budget and stopping rule for training**: how many Self-Play games / GPU-hours, and how we decide the network is "good enough" for v1. The algorithm and the loop are now fixed (Gumbel, 64 simulations, synchronous Generations with starting defaults of 2,000 games (always with both promo Wonders) and a ~1M-position window; see "Training pipeline and two-machine workflow"), so this means tuning those defaults against measured Engine and network speed (`7wd bench`, target at least 10k random games/s; see "Solution structure and Engine testing strategy"). Also open: the exact Advisor simulation counts, and when the heuristic warm start kicks in.
+_Nothing for now: the earlier fog became "Pantheon and Agora rules that affect the Engine's design", "Expansion extension points", "Advice presentation: reasons and the principal line" and "Training compute budget and v1 stopping rule"._
 
 ## Out of scope
 
