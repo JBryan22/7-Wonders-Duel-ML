@@ -57,6 +57,10 @@ public sealed class GameState
     bool _awaitingGuildPattern;
     /// <summary>Military tokens still on the board, one bit per <see cref="MilitaryToken"/> index.</summary>
     byte _militaryTokens;
+    /// <summary>Progress tokens set out at setup (0 until their Reveal), still on the board, and owned per player: one bit per token.</summary>
+    ushort _tokensSetOut;
+    ushort _boardTokens;
+    readonly ushort[] _tokens = new ushort[2];
 
     GameState(Ruleset rules) => Rules = rules;
 
@@ -100,6 +104,49 @@ public sealed class GameState
     public static int MilitaryTokenZone(int token) => (token & 1) != 0 ? 6 : 3;
     public bool MilitaryTokenLeft(int token) => (_militaryTokens & 1 << token) != 0;
     public int MilitaryTokensLeft => System.Numerics.BitOperations.PopCount((uint)_militaryTokens);
+
+    /// <summary>Cards built showing at least this many different scientific symbols win at once (rules-reference §6).</summary>
+    public const int ScienceSupremacySymbols = 6;
+
+    /// <summary>True after the first player is known and before the Progress tokens on the board are revealed.</summary>
+    public bool AwaitingTokens => FirstPlayer >= 0 && _tokensSetOut == 0;
+    /// <summary>Progress tokens still on the board, one bit per token index.</summary>
+    public ushort BoardTokens => _boardTokens;
+    public bool TokenOnBoard(int token) => (_boardTokens & 1 << token) != 0;
+    /// <summary>The 5 tokens set out at setup (0 until revealed).</summary>
+    public ushort TokensSetOut => _tokensSetOut;
+    /// <summary>The tokens left in the box at setup, never named: what the Great Library draws from (once set out).</summary>
+    public ushort TokensSetAside => (ushort)(ProgressTokens.All & ~_tokensSetOut);
+    /// <summary>The Progress tokens a player owns, one bit per token index.</summary>
+    public ushort Tokens(int player) => _tokens[player];
+    public bool HasToken(int player, int token) => (_tokens[player] & 1 << token) != 0;
+    public int TokenCount(int player) => System.Numerics.BitOperations.PopCount((uint)_tokens[player]);
+
+    /// <summary>How many times a player shows a scientific symbol: green cards in the city plus tokens (Law).</summary>
+    public int SymbolCount(int player, ScienceSymbol symbol)
+    {
+        var n = (_city[player] & CardSets.OfSymbol[(int)symbol]).Count;
+        if (_tokens[player] != 0)
+            foreach (var t in ProgressTokens.In(_tokens[player]))
+                if (GameData.Tokens[t].Science == symbol) n++;
+        return n;
+    }
+
+    /// <summary>Different scientific symbols a player shows, Law included (rules-reference §6).</summary>
+    public int DistinctSymbols(int player)
+    {
+        var n = 0;
+        for (var sym = 0; sym < CardSets.OfSymbol.Length; sym++)
+            if (SymbolCount(player, (ScienceSymbol)sym) > 0) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// True if this Wonder gives its owner another turn: printed "play again", or any Wonder once Theology is owned
+    /// (never twice). Ticket 07 calls it when a Wonder is built.
+    /// </summary>
+    public bool WonderPlaysAgain(int player, int wonder) =>
+        GameData.Wonders[wonder].PlayAgain || HasToken(player, ProgressTokens.Theology);
 
     public AgeLayout Layout => GameData.Layout(Age);
     public int Coins(int player) => _coins[player];
@@ -146,7 +193,7 @@ public sealed class GameState
 
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
-        : FirstPlayer < 0 || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
+        : FirstPlayer < 0 || AwaitingTokens || _awaitingGuildPattern || SlotsToReveal != 0 ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -167,6 +214,9 @@ public sealed class GameState
             case DecisionKind.ChooseStarter:
                 buffer[n++] = Move.StartMe;
                 buffer[n++] = Move.StartOpponent;
+                break;
+            case DecisionKind.ChooseToken:
+                foreach (var t in ProgressTokens.In(_boardTokens)) buffer[n++] = Move.PickToken(t);
                 break;
             default:
                 for (var s = 0; s < SlotCount; s++)
@@ -196,6 +246,11 @@ public sealed class GameState
         var decision = _queue[0];
         if (decision.Kind == DecisionKind.ChooseStarter)
             return move.Kind is MoveKind.StartMe or MoveKind.StartOpponent ? null : "the decision is who starts the Age";
+        if (decision.Kind == DecisionKind.ChooseToken)
+            return move.Kind != MoveKind.Token ? "the decision is which Progress token to take (it cannot be declined)"
+                : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
+                : !TokenOnBoard(move.Token) ? $"{GameData.Tokens[move.Token].Id} is not on the board"
+                : null;
         if (!move.TakesCard) return "the decision is which card to take";
 
         if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
@@ -226,6 +281,14 @@ public sealed class GameState
         if (WhyIllegal(move) is { } why) throw new InvalidOperationException($"Illegal move '{move}': {why}");
         var player = _queue[0].Player;
         PopDecision();
+
+        if (move.Kind == MoveKind.Token)
+        {
+            TakeToken(player, move.Token);
+            if (IsOver) _queueCount = 0;
+            else if (_queueCount == 0) EndTurn();
+            return;
+        }
 
         if (!move.TakesCard)
         {
@@ -261,8 +324,14 @@ public sealed class GameState
     void Build(int player, int card)
     {
         var def = GameData.Cards[card];
-        _coins[player] -= Payment.Quote(this, player, card).Total;
+        var opponent = 1 - player;
+        var chained = Payment.IsChained(this, player, card);
+        var quote = Payment.Quote(this, player, card);
+        _coins[player] -= quote.Total;
+        // Economy: the opponent's trading coins (after discounts, not printed costs) go to its owner.
+        if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
         AddToCity(player, card);
+        if (chained && HasToken(player, ProgressTokens.Urbanism)) _coins[player] += ProgressTokens.UrbanismChainCoins;
         // One-time coins, counted with the new card already in the city (the Lighthouse counts itself).
         _coins[player] += def.Coins + def.CoinsPerAmount * def.CoinsPer switch
         {
@@ -274,7 +343,39 @@ public sealed class GameState
             _ => 0,
         };
         if (def.IsGuild) _coins[player] += Scoring.GuildCoins(this, def.Guild);
-        if (def.Shields > 0) AddShields(player, def.Shields);
+        // Strategy adds a shield to red cards built after it is taken, never to Wonders.
+        if (def.Shields > 0)
+            AddShields(player, def.Shields + (def.Color == CardColor.Red && HasToken(player, ProgressTokens.Strategy) ? 1 : 0));
+        if (def.Science is { } symbol && !IsOver) GainSymbol(player, symbol);
+    }
+
+    /// <summary>
+    /// A player has just gained a scientific symbol (a green card entering the city by any route, or Law). Six
+    /// different symbols win at once; otherwise a completed pair asks for a Progress token while any remain on the
+    /// board (compulsory, spec A3). Each symbol exists twice, so a pair forms at most once (rules-reference §6).
+    /// </summary>
+    void GainSymbol(int player, ScienceSymbol symbol)
+    {
+        if (DistinctSymbols(player) >= ScienceSupremacySymbols)
+        {
+            Result = Scoring.Supremacy(this, player, VictoryType.Science);
+            return;
+        }
+        if (SymbolCount(player, symbol) == 2 && _boardTokens != 0)
+            PushDecision(new PendingDecision(DecisionKind.ChooseToken, player));
+    }
+
+    /// <summary>
+    /// Gives a player a Progress token: from the board after a pair, or (ticket 07) the Great Library's pick from the
+    /// box. Applies the immediate effects: coins (Agriculture, Urbanism) and Law's symbol, which can win by science.
+    /// </summary>
+    internal void TakeToken(int player, int token)
+    {
+        var def = GameData.Tokens[token];
+        _boardTokens &= (ushort)~(1 << token);
+        _tokens[player] |= (ushort)(1 << token);
+        _coins[player] += def.Coins;
+        if (def.Science is { } symbol) GainSymbol(player, symbol);
     }
 
     /// <summary>
@@ -282,7 +383,7 @@ public sealed class GameState
     /// (rules-reference §8). Entering a zone that still holds a military token loots it: the opponent loses that many
     /// coins (all they have if fewer) to the bank, and the token leaves the game. Reaching the capital ends the game
     /// at once with a military victory. Retreating never loots, so each token triggers at most once.
-    /// Wonders (ticket 07) and Strategy (ticket 06) feed it too.
+    /// Red cards (with Strategy's extra shield already added by the caller) and Wonders (ticket 07) feed it.
     /// </summary>
     internal void AddShields(int player, int shields)
     {
@@ -315,7 +416,10 @@ public sealed class GameState
                 if (FirstPlayer >= 0) throw new InvalidOperationException("The first player is already known");
                 if (f.Player is not (0 or 1)) throw new InvalidOperationException("The first player must be P1 or P2");
                 FirstPlayer = CurrentPlayer = f.Player;
-                StartAge(1);
+                break;
+
+            case TokenReveal t:
+                ApplyTokenReveal(t);
                 break;
 
             case GuildPatternReveal g:
@@ -329,6 +433,25 @@ public sealed class GameState
             default:
                 throw new InvalidOperationException($"Unsupported Reveal {reveal.GetType().Name}");
         }
+    }
+
+    /// <summary>The Progress tokens set out at setup. Age I starts right after (ticket 07 puts the Wonder draft in between).</summary>
+    void ApplyTokenReveal(TokenReveal t)
+    {
+        if (!AwaitingTokens)
+            throw new InvalidOperationException(FirstPlayer < 0
+                ? "The first player must be revealed before the Progress tokens"
+                : "The Progress tokens are already set out");
+        if (t.Tokens.Length != ProgressTokens.OnBoard || t.Tokens.Distinct().Count() != ProgressTokens.OnBoard)
+            throw new InvalidOperationException($"The Progress token Reveal names {ProgressTokens.OnBoard} different tokens");
+        ushort mask = 0;
+        foreach (var token in t.Tokens)
+        {
+            if (token < 0 || token >= ProgressTokens.Count) throw new InvalidOperationException($"Unknown Progress token {token}");
+            mask |= (ushort)(1 << token);
+        }
+        _tokensSetOut = _boardTokens = mask;
+        StartAge(1);
     }
 
     void ApplyGuildPattern(GuildPatternReveal g)
@@ -443,6 +566,9 @@ public sealed class GameState
     /// <summary>Test setup: puts the pawn on a space without looting.</summary>
     internal void SetConflictPawn(int position) => ConflictPawn = position;
 
+    /// <summary>Test setup: replaces the tokens on the board.</summary>
+    internal void SetBoardTokens(ushort mask) => _boardTokens = mask;
+
     // ---------------------------------------------------------------- copying and comparing
 
     public GameState Clone()
@@ -472,6 +598,9 @@ public sealed class GameState
         _discard = other._discard;
         _awaitingGuildPattern = other._awaitingGuildPattern;
         _militaryTokens = other._militaryTokens;
+        _tokensSetOut = other._tokensSetOut;
+        _boardTokens = other._boardTokens;
+        other._tokens.CopyTo(_tokens, 0);
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
@@ -479,6 +608,7 @@ public sealed class GameState
         Rules == o.Rules && FirstPlayer == o.FirstPlayer && Age == o.Age && CurrentPlayer == o.CurrentPlayer
         && Equals(Result, o.Result) && ConflictPawn == o.ConflictPawn && _awaitingGuildPattern == o._awaitingGuildPattern
         && _militaryTokens == o._militaryTokens
+        && _tokensSetOut == o._tokensSetOut && _boardTokens == o._boardTokens && _tokens.AsSpan().SequenceEqual(o._tokens)
         && _occupied == o._occupied && _seen == o._seen && _discard == o._discard
         && _queueCount == o._queueCount
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)

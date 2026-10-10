@@ -9,10 +9,12 @@ namespace SevenWondersDuel.Engine;
 /// 7wd-log v1
 /// rules base start-choice=new
 /// reveal first P1
+/// reveal tokens agriculture economy law strategy urbanism
 /// reveal age1 0.0 theater 0.1 altar 2.0 ...
 /// P1 build lumber-yard
 /// reveal 3.1 baths
 /// ...
+/// P2 token law
 /// P2 start opponent
 /// reveal guilds 0.1 3.0 5.2
 /// reveal age3 0.0 palace 0.1 senate ...
@@ -37,6 +39,7 @@ public static class MoveLog
     {
         MoveEntry m => $"{PlayerName(m.Player)} {FormatMove(m.Move)}",
         FirstPlayerReveal f => $"reveal first {PlayerName(f.Player)}",
+        TokenReveal t => "reveal tokens " + string.Join(' ', t.Tokens.Select(TokenSlug)),
         SlotReveal r => FormatSlotReveal(r),
         GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
         _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
@@ -48,6 +51,7 @@ public static class MoveLog
         MoveKind.Discard => $"discard {CardSlug(move.Card)}",
         MoveKind.StartMe => "start me",
         MoveKind.StartOpponent => "start opponent",
+        MoveKind.Token => $"token {TokenSlug(move.Token)}",
         _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
@@ -62,6 +66,7 @@ public static class MoveLog
 
     static string PlayerName(int player) => $"P{player + 1}";
     static string CardSlug(int card) => card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : $"#{card}";
+    static string TokenSlug(int token) => token >= 0 && token < GameData.Tokens.Length ? GameData.Tokens[token].Id : $"#{token}";
 
     /// <summary>Parses a Move Log and replays it, checking every entry. Errors name the offending line.</summary>
     public static Game Parse(string text)
@@ -98,6 +103,7 @@ public static class MoveLog
         if (t[0] == "reveal")
         {
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));
+            if (t.Length > 1 && t[1] == "tokens") return new TokenReveal(t.Skip(2).Select(GameData.TokenIndex).ToArray());
             if (t.Length > 1 && t[1] == "guilds")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
@@ -135,6 +141,7 @@ public static class MoveLog
                 "opponent" => Move.StartOpponent,
                 _ => throw new FormatException($"Expected 'start me' or 'start opponent', got 'start {t[2]}'"),
             },
+            "token" => Move.PickToken(GameData.TokenIndex(t[2])),
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);

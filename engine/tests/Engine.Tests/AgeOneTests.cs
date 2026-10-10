@@ -8,18 +8,26 @@ public class AgeOneTests
     const string Opening =
         "reveal age1 0.0 palisade 0.1 tavern 2.0 guard-tower 2.1 altar 2.2 lumber-yard 2.3 pharmacist "
         + "4.0 apothecary 4.1 baths 4.2 logging-camp 4.3 quarry 4.4 glassworks 4.5 stone-reserve";
+    const string Tokens = "reveal tokens agriculture economy law strategy urbanism";
 
     static int C(string slug) => GameData.CardIndex(slug);
 
     static Game Play(params string[] lines) =>
-        MoveLog.Parse(string.Join('\n', ["7wd-log v1", "rules base start-choice=new", "reveal first P1", Opening, .. lines]));
+        MoveLog.Parse(string.Join('\n', ["7wd-log v1", "rules base start-choice=new", "reveal first P1", Tokens, Opening, .. lines]));
 
     [Fact]
-    public void A_new_game_waits_for_the_first_player_then_the_face_up_cards()
+    public void A_new_game_waits_for_the_first_player_then_the_progress_tokens_then_the_face_up_cards()
     {
         var game = new Game(Ruleset.Default);
         Assert.Equal(StepKind.Reveal, game.State.Step);
         game.Apply(new FirstPlayerReveal(1));
+        Assert.Equal(StepKind.Reveal, game.State.Step);
+        Assert.True(game.State.AwaitingTokens);
+        Assert.Equal(0, game.State.Age);
+        Assert.Equal(0u, game.State.SlotsToReveal);
+        game.Apply(MoveLog.ParseEntry(Tokens, game.State));
+        Assert.False(game.State.AwaitingTokens);
+        Assert.Equal(1, game.State.Age);
         Assert.Equal(StepKind.Reveal, game.State.Step);
         Assert.Equal(12, System.Numerics.BitOperations.PopCount(game.State.SlotsToReveal));
         Assert.Empty(game.State.LegalMoves());
@@ -101,7 +109,7 @@ public class AgeOneTests
     [Fact]
     public void Tavern_gives_four_coins()
     {
-        var game = MoveLog.Parse("7wd-log v1\nrules base\nreveal first P2\n"
+        var game = MoveLog.Parse("7wd-log v1\nrules base\nreveal first P2\n" + Tokens + "\n"
             + "reveal age1 0.0 palisade 0.1 altar 2.0 guard-tower 2.1 baths 2.2 lumber-yard 2.3 pharmacist "
             + "4.0 apothecary 4.1 tavern 4.2 logging-camp 4.3 quarry 4.4 glassworks 4.5 stone-reserve\n"
             + "P2 build tavern\n");
@@ -118,7 +126,7 @@ public class AgeOneTests
     {
         var e = Assert.Throws<FormatException>(() => Play("P1 build apothecary", "P2 discard baths", reveal));
         Assert.Contains(reason, e.Message);
-        Assert.Contains("line 7", e.Message);
+        Assert.Contains("line 8", e.Message);
     }
 
     [Fact]

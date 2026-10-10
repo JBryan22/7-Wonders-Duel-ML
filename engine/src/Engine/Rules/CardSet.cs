@@ -58,6 +58,8 @@ public static class CardSets
     public static readonly CardSet ChoiceProducers;
     /// <summary>Cards that fix a resource's trading price at 1 coin, indexed by <see cref="Resource"/>.</summary>
     public static readonly CardSet[] FixedPrice;
+    /// <summary>Green cards showing each scientific symbol, indexed by <see cref="ScienceSymbol"/> (Law's set is empty).</summary>
+    public static readonly CardSet[] OfSymbol;
 
     static CardSets()
     {
@@ -68,5 +70,6 @@ public static class CardSets
         OfColor = Enum.GetValues<CardColor>().Select(col => Where(c => c.Color == col)).ToArray();
         ChoiceProducers = Where(c => c.ProduceChoice.Length > 0);
         FixedPrice = Enum.GetValues<Resource>().Select(r => Where(c => c.FixedPrice.Contains(r))).ToArray();
+        OfSymbol = Enum.GetValues<ScienceSymbol>().Select(sym => Where(c => c.Science == sym)).ToArray();
     }
 }

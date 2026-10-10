@@ -10,8 +10,9 @@ public readonly record struct PaymentQuote(int CardCoins, int TradeCoins)
 
 /// <summary>
 /// The cheapest automatic payment (spec A4: payment is never part of a Move). Rules: rules-reference §3 and
-/// common mistakes 1 and 3. Trading coins are kept apart from printed coins because Economy (ticket 06)
-/// redirects only the trading part.
+/// common mistakes 1 and 3. Trading coins are kept apart from printed coins because Economy redirects only the
+/// trading part. Masonry (blue cards) and Architecture (Wonders) waive 2 resources of the payer's choice, which
+/// the search places on the most expensive missing resources.
 /// </summary>
 public static class Payment
 {
@@ -31,21 +32,43 @@ public static class Payment
     {
         var def = GameData.Cards[card];
         // A chain makes the card free, printed coins included.
-        if (def.FreeIf >= 0 && s.City(player).Contains(def.FreeIf)) return default;
+        if (IsChained(s, player, card)) return default;
+        var discount = def.Color == CardColor.Blue && s.HasToken(player, ProgressTokens.Masonry) ? ProgressTokens.Discount : 0;
+        return QuoteCost(s, player, def.Cost, discount);
+    }
 
+    /// <summary>
+    /// What building a Wonder costs, with the Architecture discount. Ticket 07 adds the Wonders' own choice
+    /// production (Piraeus, the Great Lighthouse) to <see cref="QuoteCost"/>'s units.
+    /// </summary>
+    public static PaymentQuote QuoteWonder(GameState s, int player, int wonder)
+    {
+        var discount = s.HasToken(player, ProgressTokens.Architecture) ? ProgressTokens.Discount : 0;
+        return QuoteCost(s, player, GameData.Wonders[wonder].Cost, discount);
+    }
+
+    /// <summary>True if <paramref name="player"/> owns the card that chains into <paramref name="card"/> (it is built free).</summary>
+    public static bool IsChained(GameState s, int player, int card)
+    {
+        var freeIf = GameData.Cards[card].FreeIf;
+        return freeIf >= 0 && s.City(player).Contains(freeIf);
+    }
+
+    /// <summary>A cost paid from the player's production, choice production, <paramref name="discount"/> free resources and trading.</summary>
+    static PaymentQuote QuoteCost(GameState s, int player, Cost cost, int discount)
+    {
         Span<int> need = stackalloc int[Resources.Count];
         Span<int> price = stackalloc int[Resources.Count];
         var anyNeed = false;
         for (var r = 0; r < Resources.Count; r++)
         {
-            need[r] = Math.Max(0, def.Cost.Resources[r] - s.Production(player, (Resource)r));
+            need[r] = Math.Max(0, cost.Resources[r] - s.Production(player, (Resource)r));
             price[r] = TradingPrice(s, player, (Resource)r);
             anyNeed |= need[r] > 0;
         }
-        if (!anyNeed) return new PaymentQuote(def.Cost.Coins, 0);
+        if (!anyNeed) return new PaymentQuote(cost.Coins, 0);
 
-        // Each choice producer covers one unit of one of its resources. Wonder producers join in ticket 07,
-        // and the Architecture/Masonry discounts become extra units in ticket 06.
+        // Each choice producer covers one unit of one of its resources. Wonder producers join in ticket 07.
         Span<byte> units = stackalloc byte[8];
         var unitCount = 0;
         var producers = s.City(player) & CardSets.ChoiceProducers;
@@ -53,20 +76,34 @@ public static class Payment
             foreach (var c in producers.Cards())
                 units[unitCount++] = ChoiceMask[c];
 
-        return new PaymentQuote(def.Cost.Coins, Cheapest(need, price, units[..unitCount]));
+        return new PaymentQuote(cost.Coins, Cheapest(need, price, units[..unitCount], discount));
     }
 
     /// <summary>
-    /// The least trading cost for <paramref name="need"/>, trying every way to place each choice unit.
-    /// There are at most a handful of units, so exhaustive search is cheap and, unlike a fixed priority order,
-    /// always finds the optimum (rules-reference mistake 3).
+    /// The least trading cost for <paramref name="need"/>, trying every way to place each choice unit, then
+    /// waiving <paramref name="free"/> units of whatever is still missing, most expensive first. There are at most
+    /// a handful of choice units, so exhaustive search is cheap and, unlike a fixed priority order, always finds the
+    /// optimum (rules-reference mistake 3). Once the choice units are placed, a free unit can cover any resource, so
+    /// taking the dearest remaining one is optimal.
     /// </summary>
-    internal static int Cheapest(Span<int> need, ReadOnlySpan<int> price, ReadOnlySpan<byte> units)
+    internal static int Cheapest(Span<int> need, ReadOnlySpan<int> price, ReadOnlySpan<byte> units, int free = 0)
     {
         if (units.IsEmpty)
         {
             var total = 0;
             for (var r = 0; r < need.Length; r++) total += need[r] * price[r];
+            if (free == 0) return total;
+            Span<int> left = stackalloc int[need.Length];
+            need.CopyTo(left);
+            for (var k = 0; k < free; k++)
+            {
+                var dearest = -1;
+                for (var r = 0; r < left.Length; r++)
+                    if (left[r] > 0 && (dearest < 0 || price[r] > price[dearest])) dearest = r;
+                if (dearest < 0) break;
+                total -= price[dearest];
+                left[dearest]--;
+            }
             return total;
         }
 
@@ -77,9 +114,9 @@ public static class Payment
             if ((units[0] & 1 << r) == 0 || need[r] == 0) continue;
             used = true;
             need[r]--;
-            best = Math.Min(best, Cheapest(need, price, units[1..]));
+            best = Math.Min(best, Cheapest(need, price, units[1..], free));
             need[r]++;
         }
-        return used ? best : Cheapest(need, price, units[1..]);
+        return used ? best : Cheapest(need, price, units[1..], free);
     }
 }

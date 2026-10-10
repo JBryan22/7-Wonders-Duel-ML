@@ -48,8 +48,13 @@ public static class StatePrinter
                 .Select(r => $"{Resources.Letter(r)}{s.Production(p, r)}"));
             sb.Append($"P{p + 1}{(p == s.FirstPlayer ? " (first)" : "")}: {s.Coins(p)} coins")
               .Append($" | production: {(production.Length > 0 ? production : "none")}")
-              .Append($" | city: {(s.City(p).IsEmpty ? "empty" : s.City(p).ToString())}\n");
+              .Append($" | city: {(s.City(p).IsEmpty ? "empty" : s.City(p).ToString())}");
+            if (s.Tokens(p) != 0) sb.Append($" | tokens: {ProgressTokens.Names(s.Tokens(p))}");
+            if (s.DistinctSymbols(p) > 0) sb.Append($" | science symbols: {s.DistinctSymbols(p)}");
+            sb.Append('\n');
         }
+        if (s.TokensSetOut != 0)
+            sb.Append($"Progress tokens on the board: {(s.BoardTokens != 0 ? ProgressTokens.Names(s.BoardTokens) : "none")}\n");
         if (s.Age > 0)
         {
             var tokens = string.Join(' ', Enumerable.Range(0, GameState.MilitaryTokenCount).Where(s.MilitaryTokenLeft)

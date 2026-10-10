@@ -86,10 +86,24 @@ public static class Scoring
                 case CardColor.Purple: points[(int)ScoreCategory.Guilds] += GuildPoints(s, def.Guild); break;
             }
         }
-        // Wonder VP arrive with Wonders (ticket 07), Progress token VP with the tokens (ticket 06).
+        // Wonder VP arrive with Wonders (ticket 07).
+        points[(int)ScoreCategory.Progress] = ProgressPoints(s, player);
         points[(int)ScoreCategory.Coins] = s.Coins(player) / 3;
         points[(int)ScoreCategory.Military] = MilitaryPoints(s.MilitaryLead(player));
         return new ScoreSheet(points);
+    }
+
+    /// <summary>
+    /// Progress token VP (rules-reference §6): printed VP (Agriculture 4, Philosophy 7) plus Mathematics' 3 VP per
+    /// token owned, itself included.
+    /// </summary>
+    public static int ProgressPoints(GameState s, int player)
+    {
+        var points = 0;
+        foreach (var t in ProgressTokens.In(s.Tokens(player))) points += GameData.Tokens[t].VictoryPoints;
+        if (s.HasToken(player, ProgressTokens.Mathematics))
+            points += ProgressTokens.MathematicsPointsPerToken * s.TokenCount(player);
+        return points;
     }
 
     /// <summary>Military VP for a pawn this many spaces toward the opponent's capital (rules-reference §8).</summary>

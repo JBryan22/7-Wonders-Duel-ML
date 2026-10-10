@@ -16,7 +16,8 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
     {
         if (state.Step != StepKind.Reveal) throw new InvalidOperationException("The game is not waiting for a Reveal");
         if (state.FirstPlayer < 0) return new FirstPlayerReveal(_rng.Next(2));
-        if (state.AwaitingGuildPattern) return new GuildPatternReveal(GuildPattern());
+        if (state.AwaitingTokens) return new TokenReveal(Pick(ProgressTokens.Count, ProgressTokens.OnBoard));
+        if (state.AwaitingGuildPattern) return new GuildPatternReveal(Pick(GameState.SlotCount, GameState.GuildsPerGame));
 
         var slots = state.SlotsToReveal;
         var named = CardSet.Empty;
@@ -33,21 +34,22 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
     }
 
     /// <summary>
-    /// 3 distinct slots, uniformly. The 20 shuffled Age III cards are 17 Age cards and 3 Guilds, so every
-    /// set of 3 slots is equally likely to hold the Guilds.
+    /// <paramref name="count"/> distinct values below <paramref name="n"/>, uniformly, sorted: the Progress tokens
+    /// set out, or the Guild back pattern (the 20 shuffled Age III cards are 17 Age cards and 3 Guilds, so every
+    /// set of 3 slots is equally likely to hold the Guilds).
     /// </summary>
-    int[] GuildPattern()
+    int[] Pick(int n, int count)
     {
-        Span<int> slots = stackalloc int[GameState.SlotCount];
-        for (var i = 0; i < slots.Length; i++) slots[i] = i;
-        var pattern = new int[GameState.GuildsPerGame];
-        for (var i = 0; i < pattern.Length; i++)
+        Span<int> values = stackalloc int[n];
+        for (var i = 0; i < values.Length; i++) values[i] = i;
+        var picked = new int[count];
+        for (var i = 0; i < picked.Length; i++)
         {
-            var j = i + _rng.Next(slots.Length - i);
-            (slots[i], slots[j]) = (slots[j], slots[i]);
-            pattern[i] = slots[i];
+            var j = i + _rng.Next(values.Length - i);
+            (values[i], values[j]) = (values[j], values[i]);
+            picked[i] = values[i];
         }
-        Array.Sort(pattern);
-        return pattern;
+        Array.Sort(picked);
+        return picked;
     }
 }

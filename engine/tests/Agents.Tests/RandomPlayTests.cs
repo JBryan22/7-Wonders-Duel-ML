@@ -9,6 +9,7 @@ public class RandomPlayTests
     public void Random_full_games_always_end_with_a_result_after_all_60_cards_or_a_military_victory()
     {
         var military = 0;
+        var science = 0;
         foreach (var rules in new[] { Ruleset.Default, new Ruleset(StartChoice.Rule2015) })
             for (ulong seed = 0; seed < 1000; seed++)
             {
@@ -17,7 +18,7 @@ public class RandomPlayTests
                 Assert.True(s.IsOver, $"seed {seed}");
                 Assert.NotNull(s.Result);
                 var taken = game.Log.OfType<MoveEntry>().Count(m => m.Move.TakesCard);
-                var choices = game.Log.OfType<MoveEntry>().Count(m => !m.Move.TakesCard);
+                var choices = game.Log.OfType<MoveEntry>().Count(m => m.Move.Kind is MoveKind.StartMe or MoveKind.StartOpponent);
                 Assert.Equal(taken, s.City(0).Count + s.City(1).Count + s.DiscardPile.Count);
                 if (s.Result.Victory == VictoryType.Military)
                 {
@@ -29,7 +30,17 @@ public class RandomPlayTests
                     Assert.True(choices <= s.Age - 1, $"seed {seed}");
                     continue;
                 }
+                if (s.Result.Victory == VictoryType.Science)
+                {
+                    // The winner shows 6 different symbols; the loser could not have reached 6 first.
+                    science++;
+                    Assert.True(s.DistinctSymbols(s.Result.Winner) >= GameState.ScienceSupremacySymbols, $"seed {seed}");
+                    Assert.True(s.DistinctSymbols(1 - s.Result.Winner) < GameState.ScienceSupremacySymbols, $"seed {seed}");
+                    Assert.Equal(0, s.PendingCount);
+                    continue;
+                }
                 Assert.Equal(VictoryType.Civilian, s.Result.Victory);
+                Assert.All(new[] { 0, 1 }, p => Assert.True(s.DistinctSymbols(p) < GameState.ScienceSupremacySymbols));
                 Assert.True(Math.Abs(s.ConflictPawn) < GameState.CapitalDistance);
                 Assert.Equal(3, s.Age);
                 Assert.Equal(0, s.CardsLeftInAge);
@@ -47,6 +58,29 @@ public class RandomPlayTests
                 Assert.Equal(expected, s.Result.Winner);
             }
         Assert.True(military > 0, "no random game ended in a military victory");
+        Assert.True(science > 0, "no random game ended in a science victory");
+    }
+
+    [Fact]
+    public void Progress_tokens_are_conserved_and_each_pick_follows_a_science_pair_over_2k_random_games()
+    {
+        for (ulong seed = 0; seed < 2000; seed++)
+        {
+            var game = GameRunner.PlayRandom(seed);
+            var s = game.State;
+            // 5 tokens set out; every one is on the board or owned by exactly one player.
+            Assert.Equal(ProgressTokens.OnBoard, System.Numerics.BitOperations.PopCount(s.TokensSetOut));
+            Assert.Equal(0, s.Tokens(0) & s.Tokens(1));
+            Assert.Equal(s.TokensSetOut, (ushort)(s.BoardTokens | s.Tokens(0) | s.Tokens(1)));
+            // Every pick was a pair: no more picks than pairs, and fewer only when the board ran out.
+            var picks = game.Log.OfType<MoveEntry>().Count(m => m.Move.Kind == MoveKind.Token);
+            Assert.Equal(s.TokenCount(0) + s.TokenCount(1), picks);
+            var pairs = Enumerable.Range(0, 2).Sum(p =>
+                Enum.GetValues<SevenWondersDuel.Engine.Data.ScienceSymbol>().Count(sym => s.SymbolCount(p, sym) >= 2));
+            if (s.BoardTokens != 0) Assert.Equal(pairs, picks);
+            else Assert.True(picks <= pairs, $"seed {seed}");
+            Assert.Equal(Scoring.ProgressPoints(s, 0), s.Result!.P1[ScoreCategory.Progress]);
+        }
     }
 
     [Fact]
