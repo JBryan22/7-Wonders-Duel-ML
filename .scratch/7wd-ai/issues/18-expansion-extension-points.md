@@ -2,6 +2,7 @@
 
 Type: grilling
 Status: open
+Assignee: Jesse Bryan
 Blocked by: 17
 
 ## Question
