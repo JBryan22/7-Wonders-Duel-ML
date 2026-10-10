@@ -1,3 +1,4 @@
+using System.Globalization;
 using SevenWondersDuel.Agents;
 using SevenWondersDuel.Engine;
 
@@ -12,6 +13,11 @@ const string Usage = """
       crosscheck [--games N] [--seed S] [--driver PATH] [--freeze DIR]
                                        compare N random games (default 10000) with indjev99's C++ engine; the driver
                                        comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games
+      match <agent-a> <agent-b> [--pairs N] [--seed S] [--promo P] [--out DIR] [--threads T] [--elo-a X] [--elo-b X]
+                                       play N seed pairs (default 200 = 400 games) with seats swapped; report the win
+                                       rate with its 95% CI, Elo (Random = 0) and the victory types. With --out, each
+                                       finished pair is saved and rerunning the same command resumes. Ctrl+C stops.
+                                       Agents: random
     """;
 
 try
@@ -24,6 +30,7 @@ try
         ["bench", "--seconds", var secs] when double.TryParse(secs, out var d) && d > 0 => RunBench(d),
         ["soak", .. var options] => RunSoak(options),
         ["crosscheck", .. var options] => RunCrossCheck(options),
+        ["match", var a, var b, .. var options] when !a.StartsWith("--") && !b.StartsWith("--") => RunMatch(a, b, options),
         _ => Fail(Usage),
     };
 }
@@ -124,6 +131,49 @@ static int RunCrossCheck(string[] options)
         }
     }
     return report.Passed ? 0 : 1;
+}
+
+static int RunMatch(string a, string b, string[] options)
+{
+    var settings = new MatchSettings(a, b);
+    string? directory = null;
+    int? threads = null;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--pairs" when int.TryParse(value, out var n) && n > 0: settings = settings with { Pairs = n }; break;
+            case "--seed" when ulong.TryParse(value, out var s): settings = settings with { FirstSeed = s }; break;
+            case "--promo" when value is not null: settings = settings with { Promos = ParsePromos(value) }; break;
+            case "--out" when value is not null: directory = value; break;
+            case "--threads" when int.TryParse(value, out var t) && t > 0: threads = t; break;
+            case "--elo-a" when double.TryParse(value, CultureInfo.InvariantCulture, out var e): settings = settings with { EloA = e }; break;
+            case "--elo-b" when double.TryParse(value, CultureInfo.InvariantCulture, out var e): settings = settings with { EloB = e }; break;
+            default: return Fail(Usage);
+        }
+    }
+
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        if (stop.IsCancellationRequested) return;
+        Console.Error.WriteLine("stopping: finished pairs are kept, pairs in progress are dropped");
+        stop.Cancel();
+    };
+
+    Console.WriteLine($"7wd match: {a} vs {b}, {settings.Pairs} seed pairs from seed {settings.FirstSeed} ({settings.Rules})"
+        + (directory is null ? "" : $", saved in {directory}"));
+    var finished = 0;
+    var step = Math.Max(1, settings.Pairs / 10);
+    var report = Match.Run(settings, directory, stop.Token, threads, onPair: _ =>
+    {
+        var n = Interlocked.Increment(ref finished);
+        if (n % step == 0) Console.Error.WriteLine($"  {n} more pairs finished");
+    });
+    Console.WriteLine(report);
+    return report.Complete ? 0 : 2;
 }
 
 static int Fail(string message)
