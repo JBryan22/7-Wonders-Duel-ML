@@ -62,6 +62,14 @@ _Avoid_: Dashboard, board (when the screen is meant)
 A plug-in that connects a place where the game is played (manual entry, Tabletop Simulator) to the canonical Game State and Move Log.
 _Avoid_: Bridge, integration, connector
 
+**Table Snapshot**:
+What an Adapter reads from a physical or virtual table at one moment: where each piece lies by place (pyramid slot, city, Wonder, discard pile, …), already stripped of anything the owner may not see. Evidence about the table, not a Game State.
+_Avoid_: Board state, table state, snapshot (alone)
+
+**Desync**:
+The condition in which a Table Snapshot cannot be explained from the Move Log; it is flagged until the table or the Move Log is corrected.
+_Avoid_: Conflict, mismatch, error (when this condition is meant)
+
 **Reveal**:
 A Move-Log entry recording a chance outcome at the moment it becomes known, such as the identity of a card flipped face up, the progress tokens set out, the Wonders offered in the draft, or who plays first.
 _Avoid_: Draw, deal, flip (when the logged outcome is meant)

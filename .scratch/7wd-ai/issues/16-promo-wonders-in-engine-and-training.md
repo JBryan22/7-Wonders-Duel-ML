@@ -30,3 +30,8 @@ The owner sometimes plays with the promo Wonders (Statue of Liberty, The Messe),
   - the non-active player can win immediately.
 - **Ruleset:** one flag per promo is recommended. The Go engine uses one switch for both.
 - **TTS:** the mod's Statue button cannot be trusted. The Adapter must see the 3 revealed cards some other way, or have them named in the picker.
+
+## Context from "Tabletop Simulator Adapter architecture"
+
+- The Lua filter reports a card's name only if it is face up or in the discard pile. Once the players flip the Statue of Liberty's 3 removed cards face up, they appear in the Table Snapshot, so the mod's Statue button isn't needed. If nobody flips them, the Advisor Window's picker asks.
+- Reconciliation looks for a short chain of legal Moves and Reveals. The `liberty` and `messe` Moves and the `reveal returned` Reveal must therefore be expressible as table changes in the expected-table projection.
