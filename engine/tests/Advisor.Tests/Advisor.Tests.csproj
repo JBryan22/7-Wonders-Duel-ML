@@ -6,6 +6,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <!-- The Lua interpreter TTS is built on: runs tts/snapshot.lua against fake tables (ticket 32). -->
+    <PackageReference Include="MoonSharp" Version="2.0.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
@@ -17,6 +19,9 @@
   <ItemGroup>
     <!-- The tiny test network (ticket 20), for advice from a network instead of MCTS. -->
     <None Include="..\Agents.Tests\Models\tiny.onnx" Link="Models\tiny.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The mid-game Age II TTS save (research ticket 03) and the snapshot it gives (ticket 32). -->
+    <None Include="..\..\..\docs\research\tts-mod\ml-practice.json" Link="Tts\ml-practice.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\tts\fixtures\*.json" Link="Tts\fixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

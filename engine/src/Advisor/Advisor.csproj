@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The TTS Adapter's files (spec A2: tts/ holds the read-only Lua snapshot script and the name table), embedded. -->
+    <EmbeddedResource Include="..\..\..\tts\*.lua;..\..\..\tts\*.json" LogicalName="tts.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Advisor.Tests" />
   </ItemGroup>
 

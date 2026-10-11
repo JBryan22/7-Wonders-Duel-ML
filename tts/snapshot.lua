@@ -1,0 +1,158 @@
+-- 7wd Table Snapshot (spec A9, ADR 0004, ticket 32).
+--
+-- The Advisor sends this script to Tabletop Simulator about once a second through the External Editor API
+-- ("Execute Lua Code" against Global, guid "-1"). It reports every game piece on the table and sends the result back
+-- with sendExternalMessage as ONE JSON STRING: TTS silently drops nested tables in that message, and Execute Lua's
+-- return value never comes back (probe, research ticket 03).
+--
+-- READ-ONLY. This script must never move, flip, lock, spawn, destroy, shuffle, deal, highlight or otherwise change
+-- anything on the table, and must never set a global variable (it runs inside the mod's Global script). Everything
+-- below is local, and only getters are called. Advisor.Tests runs it against a fake table that fails on any other
+-- call (TtsSnapshotScriptTests).
+--
+-- HIDDEN INFORMATION IS FILTERED HERE, so a hidden name never leaves TTS:
+--   * a card is named only if it lies face up, or lies in the discard pile (public by the rules, though the mod
+--     stacks discards face down);
+--   * a deck is named card by card only in the discard pile; any other deck (removed cards, undealt Ages, Guilds,
+--     unused Wonders) is reported as a count;
+--   * a Progress token is named only if face up and not in a Great Library draw strip (the mod's button deals the
+--     3 drawn tokens face up there, but the draw is private to its drawer);
+--   * anything in a player's hand is never named;
+--   * no GUIDs are reported: the mod file fixes each card's GUID, so a GUID would name a face-down card.
+-- Face-down cards still report their back ("age", "guild" or "wonder"), which every player can see.
+--
+-- Coordinates are sent as integer hundredths ("x":-5065 is -50.65) so the text never depends on the PC's locale.
+-- Pieces are sorted, so two snapshots of an unchanged table are identical strings (settled-table detection).
+
+do
+  local REQUEST = "@REQUEST@"
+
+  -- The discard pile: one face-down deck on a locked tile at about (-50.6, 2.3). Same rectangle as tts/places.json.
+  local DISCARD = { x1 = -54, x2 = -47, z1 = -1.2, z2 = 5.8 }
+  -- The Great Library draw strips: the mod's button deals the 3 tokens at x = -/+12, 8, 4 and z = -24.
+  local LIBRARY = {
+    { x1 = -14, x2 = -2, z1 = -26, z2 = -22 },
+    { x1 = 2, x2 = 14, z1 = -26, z2 = -22 },
+  }
+  local HAND_COLORS = { "White", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Teal", "Brown" }
+
+  local function inRect(p, r)
+    return p.x >= r.x1 and p.x <= r.x2 and p.z >= r.z1 and p.z <= r.z2
+  end
+
+  local function inLibrary(p)
+    for _, r in ipairs(LIBRARY) do
+      if inRect(p, r) then return true end
+    end
+    return false
+  end
+
+  local function num(v)
+    return string.format("%d", math.floor(v * 100 + 0.5))
+  end
+
+  local function str(s)
+    s = string.gsub(tostring(s), '[%c"\\]', function(c)
+      if c == '"' then return '\\"' end
+      if c == "\\" then return "\\\\" end
+      return string.format("\\u%04x", string.byte(c))
+    end)
+    return '"' .. s .. '"'
+  end
+
+  local function hasTag(o, tag)
+    local ok, r = pcall(function() return o.hasTag(tag) end)
+    return ok and r == true
+  end
+
+  local function main()
+    local inHand = {}
+    for _, color in ipairs(HAND_COLORS) do
+      local ok, objects = pcall(function() return Player[color].getHandObjects() end)
+      if ok and type(objects) == "table" then
+        for _, o in ipairs(objects) do inHand[o.getGUID()] = true end
+      end
+    end
+
+    local pieces = {}
+    for _, o in ipairs(getObjects()) do
+      -- Explicit nils: MoonSharp (TTS's Lua) can leave a bare "local x" in a loop holding a value from an earlier pass.
+      local kind, value = nil, nil
+      local objectType = o.type
+      local name = o.getName() or ""
+      if objectType == "Card" then
+        if not hasTag(o, "color card") then kind = "card" end
+      elseif objectType == "Deck" then
+        kind = "deck"
+      elseif hasTag(o, "progress token") then
+        kind = "token"
+      elseif hasTag(o, "conflict pawn") then
+        kind = "pawn"
+      elseif hasTag(o, "military token") then
+        kind = "military"
+        value = tonumber(string.match(o.getDescription() or "", "loses (%d+)"))
+      elseif objectType == "Bag" and name == "Progress tokens" then
+        kind = "bag"
+      else
+        local gold = string.match(name, "^(%d+) Gold$")
+        if gold then
+          kind = "coin"
+          value = tonumber(gold)
+        end
+      end
+
+      if kind then
+        local p = o.getPosition()
+        local down = o.is_face_down == true
+        local public = not inHand[o.getGUID()]
+        local f = { '"kind":' .. str(kind), '"x":' .. num(p.x), '"y":' .. num(p.y), '"z":' .. num(p.z) }
+        if down then table.insert(f, '"down":true') end
+        if o.held_by_color then table.insert(f, '"held":true') end
+        if o.resting == false then table.insert(f, '"moving":true') end
+        if not public then table.insert(f, '"hand":true') end
+
+        if kind == "card" then
+          local back = "age"
+          if hasTag(o, "wonder") then back = "wonder" elseif hasTag(o, "purple") then back = "guild" end
+          table.insert(f, '"back":' .. str(back))
+          if public and (not down or inRect(p, DISCARD)) then table.insert(f, '"name":' .. str(name)) end
+        elseif kind == "deck" then
+          local contents = o.getObjects() or {}
+          table.insert(f, '"count":' .. #contents)
+          if public and inRect(p, DISCARD) then
+            local names = {}
+            for _, c in ipairs(contents) do table.insert(names, str(c.name or "")) end
+            table.insert(f, '"names":[' .. table.concat(names, ",") .. ']')
+          end
+        elseif kind == "token" then
+          if public and not down and not inLibrary(p) then table.insert(f, '"name":' .. str(name)) end
+        elseif kind == "bag" then
+          table.insert(f, '"count":' .. #(o.getObjects() or {}))
+        elseif value then
+          table.insert(f, '"value":' .. value)
+        end
+        table.insert(pieces, "{" .. table.concat(f, ",") .. "}")
+      end
+    end
+    table.sort(pieces)
+
+    local players = {}
+    for _, pl in ipairs(Player.getPlayers()) do
+      table.insert(players, '{"color":' .. str(pl.color) .. ',"host":' .. tostring(pl.host == true) .. '}')
+    end
+    table.sort(players)
+
+    local age = "None"
+    if type(current_age) == "string" then age = current_age end
+
+    return '{"v":1,"age":' .. str(age) .. ',"players":[' .. table.concat(players, ",") ..
+        '],"pieces":[' .. table.concat(pieces, ",") .. ']}'
+  end
+
+  local ok, result = pcall(main)
+  if ok then
+    sendExternalMessage({ tts7wd = "snapshot", request = REQUEST, snapshot = result })
+  else
+    sendExternalMessage({ tts7wd = "error", request = REQUEST, error = tostring(result) })
+  end
+end

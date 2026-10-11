@@ -1,0 +1,58 @@
+{
+  "about": "Where things sit on the table of the mod '7 Wonders Duel [ULTIMATE ed.]' (Workshop 3368311210), in TTS world units (x to the right as the players see it, z away from them). Measured from the Age II save docs/research/tts-mod/ml-practice.json and the mod's own setup scripts (Age I/II/III deal positions, Deal Wonders, Great Library and Progress token buttons). Red sits left (x < 0), White right. Rectangles are x1..x2 by z1..z2. The table snapshot (snapshot.lua) reports raw positions; TableView turns them into places with this file.",
+  "pyramid": {
+    "about": "Slot centres: x = xStep * (column - centre column of that Age's layout), z = zTop - zStep * row (layout columns are in half-card units, data/base/layouts.json). Same in all three Ages (mod scripts: Age I/II rows z 10..0, Age III z 10..-5). Covering cards lie higher (y).",
+    "xStep": 2,
+    "zTop": 10,
+    "zStep": 2.5,
+    "snap": 1.0,
+    "area": { "x1": -14, "x2": 14, "z1": -6.5, "z2": 11.5 }
+  },
+  "discard": { "x1": -54, "x2": -47, "z1": -1.2, "z2": 5.8 },
+  "cities": {
+    "Red": { "x1": -26.5, "x2": -3, "z1": -30, "z2": -8.5 },
+    "White": { "x1": 3, "x2": 26.5, "z1": -30, "z2": -8.5 }
+  },
+  "wonders": {
+    "about": "Wonder cards stand in a column per player; rows 1..4 run from the board outwards (the mod's leftPlayerWonder1..4 zones). A built Wonder has its Age card tucked face down about 3 units inwards on the same row.",
+    "x": { "Red": -39.9, "White": 40.0 },
+    "tuckInwards": 3.0,
+    "rows": [-15.6, -21.2, -27.0, -32.8],
+    "snap": 1.6
+  },
+  "offers": {
+    "about": "The Deal Wonders button lays the 4 offered Wonders face up here (each of the two draft rounds).",
+    "spots": [ { "x": -4.5, "z": -7 }, { "x": -4.5, "z": -13 }, { "x": 4.5, "z": -7 }, { "x": 4.5, "z": -13 } ],
+    "snap": 1.5
+  },
+  "progressBoard": { "x1": -12.5, "x2": 12.5, "z1": 22, "z2": 26.5 },
+  "libraryDraw": {
+    "about": "The Great Library button deals the 3 drawn tokens face up at z = -24, x = -/+12, 8, 4. snapshot.lua never names a token here (the draw is private).",
+    "Red": { "x1": -14, "x2": -2, "z1": -26, "z2": -22 },
+    "White": { "x1": 2, "x2": 14, "z1": -26, "z2": -22 }
+  },
+  "sides": {
+    "about": "Each player's own area, for taken Progress tokens and coins.",
+    "Red": { "x1": -36, "x2": -0.5, "z1": -42, "z2": -1 },
+    "White": { "x1": 0.5, "x2": 36, "z1": -42, "z2": -1 }
+  },
+  "table": {
+    "about": "The playing area. Pieces outside it (the box area on the left: undealt and removed decks, unused Wonders, promo Wonders at x = -76.7) are storage, never game input.",
+    "x1": -44, "x2": 44, "z1": -50, "z2": 30
+  },
+  "track": {
+    "about": "Conflict Pawn space = round((x - centre) / step), positive towards White's capital. Approximate (fitted to the mod's 2/5/10 VP zones); a soft check only (spec A12).",
+    "centre": -0.15,
+    "step": 2.2
+  },
+  "military": {
+    "about": "Home spots of the 4 looting tokens; a token is still on the board when one with the same value lies within snap of its home. 'side' is the player who loses the coins.",
+    "tokens": [
+      { "side": "Red", "value": 5, "x": -15.63, "z": 16.01 },
+      { "side": "Red", "value": 2, "x": -8.98, "z": 15.95 },
+      { "side": "White", "value": 2, "x": 8.73, "z": 15.99 },
+      { "side": "White", "value": 5, "x": 15.31, "z": 15.9 }
+    ],
+    "snap": 1.5
+  }
+}

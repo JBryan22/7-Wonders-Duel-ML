@@ -3,9 +3,11 @@ using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using SevenWondersDuel.Advisor;
+using SevenWondersDuel.Advisor.Tts;
 
 const string Usage = """
     usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--sims N] [--no-browser]
+           7wd-advisor tts-snapshot [options]   reads the Tabletop Simulator table (tts-snapshot --help)
       Starts the Advisor Window on http://localhost:N (default 7700) and opens it in the browser.
       --data DIR    where the game in progress and earlier games are saved
                     (default: %LOCALAPPDATA%\7wd\advisor on Windows, ~/.local/share/7wd/advisor on Linux)
@@ -14,6 +16,8 @@ const string Usage = """
       --no-browser  only start the server (open the address yourself)
     Stop it with Ctrl+C or by closing this window; the game is saved after every entry.
     """;
+
+if (args is ["tts-snapshot", .. var ttsArgs]) return await TtsCommand.Run(ttsArgs, Console.Out);
 
 var port = AdvisorServer.DefaultPort;
 var data = AdvisorStore.DefaultFolder;
