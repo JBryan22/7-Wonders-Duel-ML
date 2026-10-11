@@ -94,7 +94,28 @@ public static class ShardWriter
         }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
 
         if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
-        Directory.Move(temp, full);
+        MoveWithRetries(temp, full);
         return positions;
+    }
+
+    /// <summary>
+    /// Renames the finished temp directory into place, retrying for a few seconds: a sync client (OneDrive on the
+    /// desktop) briefly holds freshly written files open and the rename is then refused ("access denied"), which
+    /// otherwise failed the whole Self-Play step (ticket 25: twice in 24 Generations).
+    /// </summary>
+    static void MoveWithRetries(string from, string to)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                Directory.Move(from, to);
+                return;
+            }
+            catch (Exception e) when (attempt < 20 && e is IOException or UnauthorizedAccessException)
+            {
+                Thread.Sleep(250 * Math.Min(attempt, 4));
+            }
+        }
     }
 }

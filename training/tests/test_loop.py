@@ -171,3 +171,43 @@ def test_smoke_run_continues_without_redoing_work(manifest, tiny_run):
                       encoding="utf-8")
     assert main([str(edited), "--generations", "3"]) == 1
     assert len(read_rows(Run(edited, load_config(TINY), manifest))) == 3
+
+
+# --- the laptop learning check (ticket 25) ------------------------------------------------------------------------------
+
+def test_laptop_configs_differ_only_in_the_search_mode():
+    gumbel, classic = load_config(CONFIGS / "laptop-gumbel.yaml"), load_config(CONFIGS / "laptop-classic.yaml")
+    assert (gumbel.selfplay.mode, gumbel.matches.mode) == ("gumbel", "gumbel")
+    assert (classic.selfplay.mode, classic.matches.mode) == ("classic", "classic")
+    assert "temp=1" in classic.selfplay.search and classic.matches.search == ""  # exploration only in Self-Play
+    for c in (gumbel, classic):
+        assert c.selfplay.device == c.training.device == c.matches.device == "cpu"
+    same = lambda c: (c.network, c.training, c.stop, c.seed, c.generations, c.selfplay.games,  # noqa: E731
+                      c.selfplay.simulations, c.matches.pairs, c.matches.simulations, c.matches.anchor)
+    assert same(gumbel) == same(classic)
+
+
+def test_curve_rises_only_beyond_both_error_bars():
+    from sevenwd.curve import rises, slope
+    row = lambda g, s, lo, hi, elo: dict(generation=g, score=s, score_low=lo, score_high=hi, elo=elo)  # noqa: E731
+    assert rises([row(0, .45, .38, .52, -35), row(5, .70, .63, .76, 147)])
+    assert not rises([row(0, .45, .38, .52, -35), row(5, .55, .48, .62, 35)])  # overlapping intervals
+    assert not rises([row(0, .45, .38, .52, -35)])
+    assert slope([row(0, .5, 0, 1, 0), row(1, .5, 0, 1, 100), row(2, .5, 0, 1, 200)]) == pytest.approx(100)
+
+
+def test_curve_plays_every_generation_against_random(tiny_run):
+    from sevenwd.curve import main as curve
+    assert curve([str(tiny_run), "--pairs", "2"]) in (0, 3)  # 0 rises / 3 doesn't: tiny says nothing about strength
+    with open(tiny_run / "curve-vs-random.csv", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert [int(r["generation"]) for r in rows] == [0, 1, 2]
+    assert all(int(r["games"]) == 4 for r in rows)
+    first = json.loads((tiny_run / "curve" / "gen-0000-vs-random" / "summary.json").read_text(encoding="utf-8"))
+    assert first["b"] == "random" and first["firstSeed"] == 1 and "sims=8" in first["a"]
+    # Rerunning reuses the finished Matches; --every keeps the last Generation.
+    before = (tiny_run / "curve" / "gen-0001-vs-random" / "summary.json").stat().st_mtime_ns
+    assert curve([str(tiny_run), "--pairs", "2", "--every", "2"]) in (0, 3)
+    with open(tiny_run / "curve-vs-random.csv", newline="", encoding="utf-8") as f:
+        assert [int(r["generation"]) for r in csv.DictReader(f)] == [0, 2]
+    assert (tiny_run / "curve" / "gen-0001-vs-random" / "summary.json").stat().st_mtime_ns == before

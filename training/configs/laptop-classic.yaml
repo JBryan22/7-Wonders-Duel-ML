@@ -1,0 +1,47 @@
+# The laptop learning check (ticket 25, spec P7): a short CPU-only Run that should show Elo against Random rising over
+# its Generations. Sized for a 4-core / 8-thread laptop without an NVIDIA GPU: on 4 desktop cores a Generation took
+# 40-70 s and the 12 Generations ~10 minutes (expect up to ~2x on a laptop). Its twin laptop-gumbel.yaml differs only in the search mode (classic Self-Play explores with Dirichlet noise and temperature 1).
+#   uv run sevenwd-loop ../runs/laptop-classic --config configs/laptop-classic.yaml
+#   uv run python -m sevenwd.curve ../runs/laptop-classic        # each Generation against Random, directly
+encoding_version: 1
+seed: 0
+generations: 12
+
+network:
+  width: 128
+  blocks: 2
+
+selfplay:
+  games: 400
+  simulations: 64
+  mode: classic
+  search: "noise=0.25,alpha=0.3,temp=1"  # classic Self-Play explores with root noise and visit-proportional moves
+  device: cpu
+  threads: 2
+  parallel: 128
+  workers: 2
+
+training:
+  window_positions: 100000 # ~4 Generations (~27k positions each)
+  reuse: 4.0
+  batch_size: 512
+  learning_rate: 0.001
+  device: cpu
+  checkpoint_minutes: 5
+
+matches:
+  pairs: 50                # 100 games
+  simulations: 64
+  mode: classic
+  device: cpu
+  threads: 2
+  parallel: 8
+  anchor: heuristic        # Elo 1161: where a learning network should be heading
+  anchor_every: 4
+  generation0_opponent: random
+
+stop:                      # a fixed number of Generations; the main Run's stopping rules are off
+  cap_hours: null
+  plateau_generations: null
+  science_min_share: null
+  progress_by: null
