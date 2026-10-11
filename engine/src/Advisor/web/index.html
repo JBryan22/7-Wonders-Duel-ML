@@ -1,0 +1,28 @@
+<!doctype html>
+<!--
+  The Advisor Window (spec A8). Plain HTML and JS modules, no build step. Everything the page shows comes from the
+  server's /api/state; every click enters a Move Log line, which the server checks and replays.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7WD Advisor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>7WD Advisor</h1>
+  <div id="prompt" class="prompt"></div>
+  <div class="spacer"></div>
+  <button id="undo" class="btn ghost" title="Remove the last Move and the Reveals after it (Ctrl+Z)">↶ Undo</button>
+  <button id="newgame" class="btn ghost">New game</button>
+</header>
+<div id="error" class="bar error" hidden></div>
+<div id="notice" class="bar notice" hidden></div>
+<main id="main"></main>
+<div id="popover" class="popover" hidden></div>
+<div id="modal" class="modal" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

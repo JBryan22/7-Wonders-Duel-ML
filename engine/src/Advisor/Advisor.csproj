@@ -1,11 +1,29 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Advisor Window (spec A8): a small local web server plus a plain HTML/JS page (web/, no build step, no Node.js).
+    Its own program, 7wd-advisor, so it can stay open while the training loop rebuilds the 7wd CLI (ticket 24).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>7wd-advisor</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="web\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Advisor.Tests" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Engine\Engine.csproj" />
     <ProjectReference Include="..\Agents\Agents.csproj" />
   </ItemGroup>
-
-  <PropertyGroup>
-  </PropertyGroup>
 
 </Project>
