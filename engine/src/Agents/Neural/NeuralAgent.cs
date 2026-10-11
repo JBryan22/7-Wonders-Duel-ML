@@ -227,9 +227,10 @@ public sealed class NeuralAgent : IAgent
 
     /// <summary>
     /// Runs <see cref="NeuralSettings.Simulations"/> simulations for the decision at the front of the Observation's
-    /// queue and returns every legal Move's statistics, the chosen Move and the principal line.
+    /// queue and returns every legal Move's statistics, the chosen Move and the principal line. <paramref name="cancel"/>
+    /// stops the search between simulations by throwing <see cref="OperationCanceledException"/>.
     /// </summary>
-    public NeuralResult Search(Observation observation)
+    public NeuralResult Search(Observation observation, CancellationToken cancel = default)
     {
         var root = observation.State;
         var me = observation.Player;
@@ -269,6 +270,7 @@ public sealed class NeuralAgent : IAgent
 
         for (var sim = 0; sim < Settings.Simulations; sim++)
         {
+            cancel.ThrowIfCancellationRequested();
             _simulation = sim;
             var seed = _rng.NextUInt64();
             _determinizer.Reseed(seed);

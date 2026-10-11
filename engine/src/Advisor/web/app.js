@@ -1,5 +1,6 @@
 // The Advisor Window page (spec A8). It holds no game rules: the server sends the whole view (/api/state), and each
-// click posts one Move Log line that the server checks, appends and replays. Advice (ticket 30) plugs into the side panel.
+// click posts one Move Log line that the server checks, appends and replays. Advice is searched on the server in the
+// background; the page polls for it and draws the % badges and the compare table.
 
 const $ = (id) => document.getElementById(id);
 let view = null;          // the last StateResponse
@@ -20,6 +21,109 @@ async function call(method, path, body) {
   view = data.game !== undefined ? data : { ...view, error: data.error };
   render();
   return !data.error;
+}
+
+// ------------------------------------------------------------------ advice (computed in the background on the server)
+
+let advicePoll = null;
+const ADVICE_POLL_MS = 200;
+
+// Shows a fresh advice box; the board is redrawn too, since its % badges come from the same advice.
+function setAdvice(advice) {
+  if (!view) return;
+  const before = adviceSignature(view.advice);
+  view.advice = advice;
+  if (adviceSignature(advice) !== before) render();
+  else watchAdvice();
+}
+const adviceSignature = (a) => a ? `${a.status}|${a.simulations}|${a.rows.length}|${a.auto}|${a.message}|${a.defaultSimulations}` : '';
+
+async function adviceCall(method, path, body) {
+  try {
+    const res = await fetch(path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    setAdvice(await res.json());
+  } catch {
+    setAdvice({ ...view.advice, status: 'failed', message: 'The Advisor server did not answer.' });
+  }
+}
+const askAdvice = (longer) => adviceCall('POST', '/api/advice', { longer });
+
+// While a search runs, ask the server for the advice box every 200 ms (the page never blocks on a search).
+function watchAdvice() {
+  clearTimeout(advicePoll);
+  if (view?.advice?.status === 'thinking') advicePoll = setTimeout(() => adviceCall('GET', '/api/advice'), ADVICE_POLL_MS);
+}
+
+const pct = (x) => `${(x * 100).toFixed(1)}%`;
+const sharePct = (x) => x >= 0.995 ? '100%' : x < 0.005 ? '<1%' : `${Math.round(x * 100)}%`;
+
+// The share of the search for one Move Log line (card menus and tiles), or null without advice.
+function shareOf(line) {
+  const a = view?.advice;
+  if (!a || !a.rows.length || a.shares[line] === undefined) return null;
+  return a.shares[line];
+}
+const isBestLine = (line) => view?.advice?.rows[0]?.line === line;
+
+function advicePanel(a) {
+  const panel = h('div', { class: 'panel advice', id: 'advice' }, h('h2', {}, 'Advice'));
+  if (!a) return panel;
+  const thinking = a.status === 'thinking';
+  const auto = h('label', { class: 'small muted auto' },
+    h('input', { type: 'checkbox', checked: a.auto, onchange: (e) => adviceCall('POST', '/api/advice/auto', { on: e.target.checked }) }),
+    ' Advise by itself on my turns');
+  if (a.notice) panel.append(h('div', { class: 'note small' }, a.notice));
+
+  if (a.status === 'unavailable') {
+    panel.append(h('p', { class: 'muted small' }, a.message), auto);
+    return panel;
+  }
+  const ask = h('button', { class: 'btn', id: 'ask', disabled: thinking || a.rows.length > 0, onclick: () => askAdvice(false) },
+    `Ask for advice (${a.defaultSimulations.toLocaleString('en')} simulations)`);
+  const longer = h('button', {
+    class: 'btn ghost', id: 'longer', disabled: thinking || a.simulations >= a.thinkLongerSimulations,
+    title: `Search ${a.thinkLongerSimulations.toLocaleString('en')} simulations: slower, and the whiskers get narrower`,
+    onclick: () => askAdvice(true),
+  }, `Think longer (${a.thinkLongerSimulations.toLocaleString('en')})`);
+  panel.append(h('div', { class: 'advice-actions' }, a.rows.length ? null : ask, a.rows.length ? longer : null,
+    thinking ? h('span', { class: 'thinking' }, h('span', { class: 'spinner' }), a.message) : null));
+  if (a.status === 'failed') panel.append(h('div', { class: 'small', style: 'color:var(--err)' }, a.message));
+  if (a.rows.length) panel.append(compareTable(a));
+  panel.append(auto);
+  return panel;
+}
+
+// The compare table (spec A8): up to 5 Moves, best first; win % with ±2 standard-error whiskers and a 50% guide;
+// the gap to the best, "≈ same" when inside the combined noise.
+function compareTable(a) {
+  const table = h('table', { class: 'compare' },
+    h('tr', {}, h('th', {}, 'Move'), h('th', {}, 'Win % (±2 SE)'), h('th', {}, 'vs best')));
+  for (const r of a.rows) {
+    const lo = Math.max(0, r.win - 2 * r.stdErr), hi = Math.min(1, r.win + 2 * r.stdErr);
+    const gap = r.best ? h('span', { class: 'muted' }, '—')
+      : r.same ? h('span', { class: 'same', title: `Within the noise: the gap ${pct(Math.abs(r.gap))} is under ${pct(r.noise)}` }, '≈ same')
+      : h('span', { class: 'gap', title: `Outside the noise (${pct(r.noise)})` }, `${r.gap > 0 ? '−' : '+'}${pct(Math.abs(r.gap))}`);
+    table.append(h('tr', { class: r.best ? 'best' : '' },
+      h('td', {}, h('b', {}, r.label), h('br'), h('span', { class: 'muted small' }, `${sharePct(r.share)} of search`)),
+      h('td', { class: 'wincell' },
+        h('div', { class: 'whisk', title: `${pct(r.win)} ± ${pct(2 * r.stdErr)} (${r.visits} simulations)` },
+          h('div', { class: 'fifty' }),
+          h('div', { class: 'bar', style: `width:${r.win * 100}%` }),
+          h('div', { class: 'err', style: `left:${lo * 100}%;width:${(hi - lo) * 100}%` })),
+        h('span', { class: 'winpct' }, pct(r.win))),
+      h('td', {}, gap)));
+  }
+  return h('div', {},
+    table,
+    h('div', { class: 'small muted', style: 'margin-top:6px' },
+      `${a.simulations.toLocaleString('en')} simulations · ${a.seconds.toFixed(2)} s · ${a.agent}`),
+    h('div', { class: 'small muted legend' },
+      'Bar: your chance to win after this Move (a draw counts half); whiskers: ±2 standard errors; dotted line: 50%. ',
+      '"≈ same": the gap to the best Move is inside the noise, so treat them as equally good.'));
 }
 const enter = (line) => { guildPick = []; multiPick = []; return call('POST', '/api/entry', { line }); };
 
@@ -66,7 +170,11 @@ function render() {
   main.append(
     h('section', {}, boardPanel(game)),
     h('aside', {}, sidePanel(game)));
+  watchAdvice();
 }
+
+// A % badge: the Move's (or card's) share of the search; the search's choice in gold.
+const badge = (share, top) => h('span', { class: `badge${top ? ' top' : ''}`, title: 'Share of the search' }, sharePct(share));
 
 function boardPanel(g) {
   const panel = h('div', { class: 'panel' });
@@ -90,8 +198,7 @@ function sidePanel(g) {
       onclick: () => rewind(l.index + 1, l.text),
     }, h('span', { class: 'n' }, l.index + 1), l.text)));
   const panels = [
-    h('div', { class: 'panel' }, h('h2', {}, 'Advice'),
-      h('p', { class: 'muted small' }, 'Advice on request comes in the next build step (ticket 30).')),
+    advicePanel(view.advice),
     h('div', { class: 'panel' }, h('h2', {}, 'Move Log'),
       h('div', { class: 'small muted', style: 'margin-bottom:6px' }, g.rules, ' · click a line to rewind to it'),
       log,
@@ -127,6 +234,8 @@ function pyramid(g) {
       style: `left:${s.col * colStep}px;top:${s.row * rowStep}px;z-index:${s.row + 1}`,
       title: s.card ? s.card.name : `slot ${s.name}`,
     }, h('span', { class: 'slotname' }, s.name), s.card ? s.card.name : '');
+    const b = s.actions.length ? view.advice?.badges.find(x => x.slot === s.slot) : null;
+    if (b) el.append(badge(b.share, b.top));
     if (s.actions.length) el.addEventListener('click', (e) => cardMenu(e, s));
     else if (s.pulse) el.addEventListener('click', () => slotPicker(s));
     else if (guildMode) el.addEventListener('click', () => {
@@ -143,7 +252,9 @@ function cardMenu(event, slot) {
   const pop = $('popover');
   pop.replaceChildren(h('div', { class: 'ptitle' }, slot.card.name));
   for (const a of slot.actions) {
-    pop.append(h('button', { disabled: !a.enabled, onclick: () => enter(a.line) }, a.label));
+    const share = a.enabled ? shareOf(a.line) : null;
+    pop.append(h('button', { disabled: !a.enabled, onclick: () => enter(a.line) }, a.label,
+      share === null ? null : badge(share, isBestLine(a.line))));
     if (!a.enabled && a.reason) pop.append(h('div', { class: 'why' }, a.reason));
   }
   pop.hidden = false;
@@ -196,7 +307,10 @@ function trayFor(g) {
     h('div', { class: 'small muted' }, 'Nothing else can be entered until the pulsing cards are named.'));
   if (g.decision && g.decision.tiles.length) return h('div', { class: 'tray' },
     h('div', { class: 'title' }, g.decision.title),
-    h('div', { class: 'tiles' }, g.decision.tiles.map(t => h('button', { class: 'tile', onclick: () => enter(t.line) }, t.label))));
+    h('div', { class: 'tiles' }, g.decision.tiles.map(t => {
+      const share = shareOf(t.line);
+      return h('button', { class: 'tile', onclick: () => enter(t.line) }, t.label, share === null ? null : badge(share, isBestLine(t.line)));
+    })));
   return null;
 }
 

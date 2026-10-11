@@ -15,6 +15,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The tiny test network (ticket 20), for advice from a network instead of MCTS. -->
+    <None Include="..\Agents.Tests\Models\tiny.onnx" Link="Models\tiny.onnx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Engine\Engine.csproj" />
     <ProjectReference Include="..\..\src\Agents\Agents.csproj" />
     <ProjectReference Include="..\..\src\Advisor\Advisor.csproj" />

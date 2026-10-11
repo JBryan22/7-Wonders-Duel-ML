@@ -1,13 +1,16 @@
 using System.Diagnostics;
 using System.Net.Sockets;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Hosting;
 using SevenWondersDuel.Advisor;
 
 const string Usage = """
-    usage: 7wd-advisor [--port N] [--data DIR] [--no-browser]
+    usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--sims N] [--no-browser]
       Starts the Advisor Window on http://localhost:N (default 7700) and opens it in the browser.
       --data DIR    where the game in progress and earlier games are saved
                     (default: %LOCALAPPDATA%\7wd\advisor on Windows, ~/.local/share/7wd/advisor on Linux)
+      --agent SPEC  the search that gives advice: mcts (default) or neural:<onnx file>[,settings]
+      --sims N      simulations per advice request (default 800; Think longer runs 4x)
       --no-browser  only start the server (open the address yourself)
     Stop it with Ctrl+C or by closing this window; the game is saved after every entry.
     """;
@@ -15,6 +18,8 @@ const string Usage = """
 var port = AdvisorServer.DefaultPort;
 var data = AdvisorStore.DefaultFolder;
 var browser = true;
+var agent = AdviceSettings.DefaultAgent;
+int? sims = null;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -26,6 +31,13 @@ for (var i = 0; i < args.Length; i++)
         case "--data" when i + 1 < args.Length:
             data = args[++i];
             break;
+        case "--agent" when i + 1 < args.Length:
+            agent = args[++i];
+            break;
+        case "--sims" when i + 1 < args.Length && int.TryParse(args[i + 1], out var n) && n > 0:
+            sims = n;
+            i++;
+            break;
         case "--no-browser":
             browser = false;
             break;
@@ -35,7 +47,16 @@ for (var i = 0; i < args.Length; i++)
     }
 }
 
-var app = AdvisorServer.Build(new AdvisorOptions(data, port));
+WebApplication app;
+try
+{
+    app = AdvisorServer.Build(new AdvisorOptions(data, port, Agent: agent, Simulations: sims));
+}
+catch (Exception e) when (e is FormatException or IOException or InvalidOperationException)
+{
+    Console.Error.WriteLine($"Bad --agent: {e.Message}");
+    return 1;
+}
 try
 {
     await app.StartAsync();
@@ -48,6 +69,7 @@ catch (IOException e) when (e.InnerException is SocketException || e.Message.Con
 
 var url = $"http://localhost:{port}/";
 Console.WriteLine($"7wd Advisor Window: {url}");
+Console.WriteLine($"Advice from {agent}");
 Console.WriteLine($"Games are saved in {Path.GetFullPath(data)}");
 Console.WriteLine("Press Ctrl+C to stop.");
 if (browser) OpenBrowser(url);

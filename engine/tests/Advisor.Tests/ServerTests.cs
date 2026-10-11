@@ -139,6 +139,53 @@ public sealed class ServerTests : IDisposable
     }
 
     [Fact]
+    public async Task Advice_is_asked_for_polled_until_ready_and_follows_the_position()
+    {
+        var session = AdviceTests.OwnerDecisions(11, 0, minMoves: 3)
+            .First(p => p.State.Age == 1 && p.State.LegalMoves().All(m => m.TakesCard));
+        new AdvisorStore(_folder).SaveCurrent(session);
+        var (app, http) = await Start(_folder);
+        try
+        {
+            var state = await Json(await http.GetAsync("api/state"));
+            var advice = state.GetProperty("advice");
+            Assert.Equal("idle", advice.GetProperty("status").GetString());
+            Assert.Equal(800, advice.GetProperty("defaultSimulations").GetInt32());
+            Assert.Equal(3200, advice.GetProperty("thinkLongerSimulations").GetInt32());
+
+            advice = await Json(await http.PostAsJsonAsync("api/advice", new { longer = false }));
+            for (var i = 0; i < 200 && advice.GetProperty("status").GetString() == "thinking"; i++)
+            {
+                await Task.Delay(50);
+                advice = await Json(await http.GetAsync("api/advice"));
+            }
+            Assert.Equal("ready", advice.GetProperty("status").GetString());
+            Assert.Equal(800, advice.GetProperty("simulations").GetInt32());
+            var rows = advice.GetProperty("rows");
+            Assert.InRange(rows.GetArrayLength(), 1, 5);
+            Assert.True(rows[0].GetProperty("best").GetBoolean());
+            Assert.Contains(advice.GetProperty("badges").EnumerateArray(), b => b.GetProperty("top").GetBoolean());
+            Assert.Equal(session.State.LegalMoves().Count, advice.GetProperty("shares").EnumerateObject().Count());
+
+            // The state answer carries the same advice; entering the best Move moves on to a position without it.
+            Assert.Equal("ready", (await Json(await http.GetAsync("api/state"))).GetProperty("advice").GetProperty("status").GetString());
+            var line = rows[0].GetProperty("line").GetString();
+            var after = await Json(await http.PostAsJsonAsync("api/entry", new { line }));
+            Assert.NotEqual("ready", after.GetProperty("advice").GetProperty("status").GetString());
+
+            var auto = await Json(await http.PostAsJsonAsync("api/advice/auto", new { on = true }));
+            Assert.True(auto.GetProperty("auto").GetBoolean());
+            Assert.True(new AdvisorStore(_folder).LoadAdvicePrefs().Auto);
+            Assert.Contains("sims=800", File.ReadAllText(Path.Combine(_folder, "advice.log")));
+        }
+        finally
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+        }
+    }
+
+    [Fact]
     public async Task A_broken_saved_game_is_moved_aside_instead_of_stopping_the_Advisor()
     {
         Directory.CreateDirectory(_folder);

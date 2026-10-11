@@ -110,3 +110,29 @@ main.single { grid-template-columns: minmax(0, 640px); justify-content: center; 
 table.score { border-collapse: collapse; margin-top: 6px; }
 table.score td, table.score th { padding: 2px 10px; border-bottom: 1px solid #eee; text-align: right; }
 table.score td:first-child, table.score th:first-child { text-align: left; }
+
+/* advice (spec A8): % badges on cards, menus and tiles; the compare table with whiskers */
+.badge { position: absolute; top: -9px; left: -6px; z-index: 5; background: #fff; color: #111; border: 1px solid #111;
+  border-radius: 10px; padding: 0 6px; font-size: 11px; font-weight: 700; line-height: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.badge.top { background: var(--gold); border-color: #8a6a00; }
+.popover button .badge, .tile .badge { position: static; margin-left: 8px; box-shadow: none; }
+.advice-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.advice .auto { display: block; margin-top: 8px; }
+.advice .note { background: var(--note); border: 1px solid #ecd98a; border-radius: 4px; padding: 4px 8px; margin-bottom: 8px; }
+.thinking { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: #111; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+table.compare { border-collapse: collapse; width: 100%; font-size: 12px; }
+table.compare th { text-align: left; font-size: 10px; color: var(--muted); text-transform: uppercase; padding: 4px; border-bottom: 1px solid var(--line); }
+table.compare td { padding: 5px 4px; border-bottom: 1px solid #eee; vertical-align: middle; }
+table.compare tr.best td { background: #fff7d6; }
+table.compare .wincell { white-space: nowrap; }
+table.compare .winpct { display: inline-block; width: 44px; text-align: right; font-variant-numeric: tabular-nums; vertical-align: middle; }
+.whisk { position: relative; display: inline-block; vertical-align: middle; height: 14px; width: 150px; background: #f1eee6; border-radius: 2px; }
+.whisk .bar { position: absolute; left: 0; top: 3px; height: 8px; background: #555; border-radius: 2px; }
+.whisk .err { position: absolute; top: 1px; height: 12px; border-left: 1px solid #111; border-right: 1px solid #111; }
+.whisk .err::after { content: ''; position: absolute; top: 6px; left: 0; right: 0; border-top: 1px solid #111; }
+.whisk .fifty { position: absolute; left: 50%; top: 0; bottom: 0; border-left: 1px dotted #999; }
+.same { display: inline-block; background: #e8f0e1; color: #2f5d1e; border-radius: 10px; padding: 0 7px; font-weight: 600; white-space: nowrap; }
+.gap { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.legend { margin-top: 4px; font-size: 11px; }

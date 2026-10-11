@@ -131,8 +131,10 @@ public sealed class MctsAgent : IAgent
     /// <summary>
     /// Runs <see cref="MctsSettings.Simulations"/> simulations for the decision at the front of the Observation's
     /// queue ("me" is the player to decide) and returns every legal Move's statistics and the principal line.
+    /// <paramref name="cancel"/> stops the search between simulations (the Advisor Window drops a search when the
+    /// position changes) by throwing <see cref="OperationCanceledException"/>; it never changes a finished result.
     /// </summary>
-    public MctsResult Search(Observation observation)
+    public MctsResult Search(Observation observation, CancellationToken cancel = default)
     {
         var root = observation.State;
         var rootCount = root.LegalMoves(_rootMoves);
@@ -142,6 +144,7 @@ public sealed class MctsAgent : IAgent
 
         for (var sim = 0; sim < Settings.Simulations; sim++)
         {
+            cancel.ThrowIfCancellationRequested();
             var seed = _rng.NextUInt64();
             _determinizer.Reseed(seed);
             _determinizer.Sample(observation, _world);
