@@ -10,6 +10,9 @@ namespace SevenWondersDuel.Agents;
 public interface ILeafEvaluator
 {
     float Evaluate(GameState state, int me, Span<float> policy, Span<float> outcome);
+
+    /// <summary>True when the outcome logits mean something (a trained network's outcome head); the references write zeros.</summary>
+    bool HasOutcomeHead => false;
 }
 
 /// <summary>The network: encodes the position (spec A6) and runs it through the shared <see cref="InferenceBatcher"/>.</summary>
@@ -18,6 +21,8 @@ public sealed class NetworkEvaluator(InferenceBatcher batcher) : ILeafEvaluator
     readonly InferenceBatcher.Request _request = new();
 
     public InferenceBatcher Batcher => batcher;
+
+    public bool HasOutcomeHead => true;
 
     public float Evaluate(GameState state, int me, Span<float> policy, Span<float> outcome)
     {

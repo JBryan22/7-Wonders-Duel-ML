@@ -21,7 +21,8 @@ public sealed record AdvisorOptions(string DataFolder, int Port = AdvisorServer.
 /// <code>
 /// GET  /api/state              the game view (or the new-game screen when there is no game) and the advice box
 /// POST /api/new     {messe, liberty, rule2015, seat}   start a new game (the previous one is archived)
-/// POST /api/entry   {line}     enter one Move Log line ("P1 build baths", "reveal 3.1 baths", ...)
+/// POST /api/entry   {line, then?}  enter one Move Log line ("P1 build baths", "reveal 3.1 baths", ...); with then, two
+///                              lines as one change (a Statue keep/give pair), both or neither
 /// POST /api/undo               remove the last Move and the Reveals after it
 /// POST /api/rewind  {count}    keep only the first count log lines
 /// POST /api/abandon            archive the game and go back to the new-game screen
@@ -96,7 +97,11 @@ public sealed class AdvisorServer : IDisposable
 
         app.MapGet("/api/state", () => Respond(() => { }, save: false));
         app.MapPost("/api/new", (NewGameRequest r) => Respond(() => NewGame(r)));
-        app.MapPost("/api/entry", (EntryRequest r) => Respond(() => Current().Enter(r.Line ?? "")));
+        app.MapPost("/api/entry", (EntryRequest r) => Respond(() =>
+        {
+            if (r.Then is null) Current().Enter(r.Line ?? "");
+            else Current().Enter([r.Line ?? "", r.Then]);
+        }));
         app.MapPost("/api/undo", () => Respond(() => Current().Undo()));
         app.MapPost("/api/rewind", (RewindRequest r) => Respond(() => Current().RewindTo(r.Count)));
         app.MapPost("/api/abandon", () => Respond(() =>
@@ -152,6 +157,11 @@ public sealed class AdvisorServer : IDisposable
             {
                 error = e.Message;
             }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The change stands (the log in memory is the truth); the next change saves it again.
+                _notice = $"Could not save the game to {_store.CurrentPath}: {e.Message} It is saved again after the next entry.";
+            }
             _advice.Sync(_session);
             var view = _session is null ? null : BoardView.Build(_session, _store.CurrentPath);
             var response = new StateResponse(view, view is null ? _store.LoadSettings() : null, error, _notice, _advice.View(_session));
@@ -162,7 +172,7 @@ public sealed class AdvisorServer : IDisposable
 }
 
 public sealed record NewGameRequest(bool Messe, bool Liberty, bool Rule2015, int Seat);
-public sealed record EntryRequest(string? Line);
+public sealed record EntryRequest(string? Line, string? Then = null);
 public sealed record RewindRequest(int Count);
 public sealed record AdviceRequest(bool Longer);
 public sealed record AutoRequest(bool On);

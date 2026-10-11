@@ -208,6 +208,81 @@ public class NeuralTests
         }
     }
 
+    // ---- What the Advisor reads after a search (ticket 31) -------------------------------------------------------
+
+    /// <summary>A fake network sure that the player to decide wins by military, whatever the position.</summary>
+    sealed class MilitaryOptimist : ILeafEvaluator
+    {
+        public float Evaluate(GameState state, int me, Span<float> policy, Span<float> outcome)
+        {
+            policy.Clear();
+            outcome.Fill(-20);
+            outcome[0] = 20;
+            return 0;
+        }
+
+        public bool HasOutcomeHead => true;
+    }
+
+    [Fact]
+    public void Outcome_tracking_leaves_the_search_unchanged_and_averages_the_outcome_head_per_Move()
+    {
+        foreach (var mode in new[] { NeuralMode.Classic, NeuralMode.Gumbel })
+        {
+            var settings = new NeuralSettings(Tiny, Simulations: 150, Mode: mode);
+            var batcher = LoadedNetworks.Get(Tiny, InferenceDevice.Cpu);
+            foreach (var observation in Positions(9, 3, every: 11))
+            {
+                var plain = new NeuralAgent(settings, new NetworkEvaluator(batcher), 3).Search(observation);
+                var agent = new NeuralAgent(settings, new NetworkEvaluator(batcher), 3) { TrackOutcomes = true };
+                var tracked = agent.Search(observation);
+                Assert.Equal(plain.Moves, tracked.Moves);
+                Assert.Equal(plain.Line, tracked.Line);
+                Assert.Equal(plain.Best, tracked.Best);
+                Assert.True(agent.HasOutcomeHead);
+                Assert.Equal(tracked.Line, agent.LineOf([tracked.Best]));
+                foreach (var m in tracked.Moves)
+                {
+                    var p = agent.OutcomeOf([m.Move]);
+                    if (m.Visits == 0) { Assert.Null(p); continue; }
+                    Assert.Equal(1.0, p!.Sum(), 9);
+                    var children = agent.ChildrenOf([m.Move]);
+                    Assert.True(children.Sum(c => c.Visits) < m.Visits);
+                    foreach (var c in children.Where(c => c.Visits > 0))
+                        Assert.Equal(1.0, agent.OutcomeOf([m.Move, c.Move])!.Sum(), 9);
+                }
+            }
+        }
+
+        // The references have no outcome head, so there is nothing to show.
+        var uniform = new NeuralAgent(new NeuralSettings("uniform", Simulations: 50), new UniformEvaluator(), 1) { TrackOutcomes = true };
+        var r = uniform.Search(Positions(9, 1)[0]);
+        Assert.False(uniform.HasOutcomeHead);
+        Assert.Null(uniform.OutcomeOf([r.Best]));
+    }
+
+    [Fact]
+    public void The_outcome_head_is_read_from_the_searching_players_point_of_view()
+    {
+        // Each leaf says "the player to decide wins by military": from the root player's view that is a military win
+        // where they decide and a military loss where the opponent does, so only those two classes get any weight.
+        var settings = new NeuralSettings("fake", Simulations: 200, Mode: NeuralMode.Classic);
+        var lossMilitary = Array.IndexOf(NetworkEncoding.OutcomeClasses, "loss-military");
+        var opponentLeaves = 0.0;
+        foreach (var observation in Positions(10, 2, every: 13).Where(o => o.State.Age is 1 or 2).Take(6))
+        {
+            var agent = new NeuralAgent(settings, new MilitaryOptimist(), 4) { TrackOutcomes = true };
+            var r = agent.Search(observation);
+            foreach (var m in r.Moves.Where(m => m.Visits > 0))
+            {
+                var p = agent.OutcomeOf([m.Move])!;
+                Assert.True(p[0] + p[lossMilitary] > 0.95, string.Join(",", p));
+                opponentLeaves += p[lossMilitary];
+            }
+        }
+        Assert.True(opponentLeaves > 1, "Leaves where the opponent decides count as military losses");
+    }
+
     // ---- Gumbel mode (ticket 21) -------------------------------------------------------------------------------
 
     /// <summary>Sequential Halving's root visit schedule, checked against mctx's get_sequence_of_considered_visits.</summary>

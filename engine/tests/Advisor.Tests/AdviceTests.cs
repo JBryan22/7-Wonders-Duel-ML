@@ -49,6 +49,11 @@ public sealed class AdviceTests(ITestOutputHelper output) : IDisposable
         return new Advice("", agent, outcome.Simulations, 0, AdviceTable.Rank(session.State, outcome), outcome.Line);
     }
 
+    /// <summary>Every row's numbers, tags, line and outcome as text (rows hold lists, which records compare by reference).</summary>
+    internal static string Describe(Advice advice) => string.Join("\n", advice.Rows.Select(r =>
+        $"{r.Key}|{r.Share:R}|{r.Win:R}|{r.StdErr:R}|{r.Same}|{string.Join(";", r.Reasons)}|{string.Join(";", r.Expected)}|" +
+        (r.Outcome is null ? "-" : string.Join(",", r.Outcome.Select(x => x.ToString("R"))))));
+
     [Fact]
     public void The_noise_rule_is_two_combined_standard_errors()
     {
@@ -110,7 +115,7 @@ public sealed class AdviceTests(ITestOutputHelper output) : IDisposable
         var session = OwnerDecisions(4, 0, minMoves: 3)[3];
         var a = Search(session);
         var b = Search(AdvisorSession.Load(session.Write()));
-        Assert.Equal(a.Rows, b.Rows);
+        Assert.Equal(Describe(a), Describe(b));
     }
 
     [Fact]

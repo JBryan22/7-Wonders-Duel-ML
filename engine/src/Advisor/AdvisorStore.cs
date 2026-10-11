@@ -97,12 +97,29 @@ public sealed class AdvisorStore(string folder)
     public void SaveAdvicePrefs(AdvicePrefs prefs) =>
         WriteAtomically(AdvicePrefsPath, JsonSerializer.Serialize(prefs, Json));
 
-    /// <summary>Writes to a temporary file first, so a crash mid-write never leaves a half-written log.</summary>
+    /// <summary>
+    /// Writes to a temporary file first, so a crash mid-write never leaves a half-written log. On Windows the replace
+    /// can fail for a moment while a virus scanner or the search indexer has the file just written open (a sharing
+    /// violation, seen as a rare failed entry), so it is retried for up to about a second.
+    /// </summary>
     void WriteAtomically(string path, string text)
     {
         Directory.CreateDirectory(Folder);
         var temp = path + ".tmp";
-        File.WriteAllText(temp, text);
-        File.Move(temp, path, overwrite: true);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.WriteAllText(temp, text);
+                File.Move(temp, path, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < SaveAttempts)
+            {
+                Thread.Sleep(10 * attempt);
+            }
+        }
     }
+
+    const int SaveAttempts = 12;
 }

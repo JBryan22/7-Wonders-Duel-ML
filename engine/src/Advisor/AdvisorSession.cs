@@ -106,6 +106,21 @@ public sealed class AdvisorSession
         Replay(entries);
     }
 
+    /// <summary>Enters several lines as one change (a Statue keep/give pair): all of them, or none if one is refused.</summary>
+    public void Enter(IReadOnlyList<string> lines)
+    {
+        var before = Game;
+        try
+        {
+            foreach (var line in lines) Enter(line);
+        }
+        catch (EntryException)
+        {
+            Game = before;
+            throw;
+        }
+    }
+
     /// <summary>
     /// Removes the last Move and every Reveal after it (spec A8). Before the first Move it removes the last Reveal.
     /// Returns false when the log is already empty.

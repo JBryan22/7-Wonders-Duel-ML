@@ -32,6 +32,47 @@ public class MctsTests
         Assert.Equal(Ladder.Elo("pimc"), report.EloB);
     }
 
+    /// <summary>After a search the Advisor reads each Move's line and the tree below it (ticket 31).</summary>
+    [Fact]
+    public void Lines_and_children_can_be_read_for_every_root_Move()
+    {
+        var chance = new RandomChanceSource(31);
+        var rng = new Rng(31);
+        var s = GameState.New(Ruleset.Default);
+        var searched = 0;
+        while (!s.IsOver && searched < 6)
+        {
+            if (s.Step == StepKind.Reveal) { s.Apply(chance.Next(s)); continue; }
+            var moves = s.LegalMoves();
+            if (moves.Count > 2 && s.Age > 0)
+            {
+                searched++;
+                var agent = new MctsAgent(MctsSettings.Default with { Simulations = 600 }, 7);
+                var r = agent.Search(s.Observe(s.PlayerToDecide));
+                Assert.Equal(r.Line, agent.LineOf([r.Best]));
+                Assert.Empty(agent.LineOf([]));
+                Assert.Equal(r.Moves.Where(m => m.Visits > 0).Select(m => (m.Move, m.Visits)).OrderBy(x => x.Move.ToString()),
+                    agent.ChildrenOf([]).Select(c => (c.Move, c.Visits)).OrderBy(x => x.Move.ToString()));
+                foreach (var m in r.Moves)
+                {
+                    var line = agent.LineOf([m.Move]);
+                    if (m.Visits < MctsAgent.MinLineVisits) Assert.Empty(line);
+                    else Assert.Equal(m.Move, line[0].Move);
+                    Assert.All(line, step => Assert.True(step.Visits >= MctsAgent.MinLineVisits));
+                    var children = agent.ChildrenOf([m.Move]);
+                    Assert.True(children.Sum(c => c.Visits) <= m.Visits);
+                    if (children.Count > 0 && line.Count > 1)
+                    {
+                        Assert.Equal(line.Skip(1), agent.LineOf([m.Move, line[1].Move]).Skip(1));
+                        Assert.Equal(children.Max(c => c.Visits), children.Single(c => c.Move == line[1].Move).Visits);
+                    }
+                }
+            }
+            s.Apply(moves[rng.Next(moves.Count)]);
+        }
+        Assert.Equal(6, searched);
+    }
+
     [Fact]
     public void The_Anchor_is_the_recorded_top_of_the_classic_Ladder()
     {

@@ -310,6 +310,15 @@ public class SessionTests
                     var options = view.Decision!.Tiles.Length > 0
                         ? view.Decision.Tiles.ToList()
                         : view.Pyramid!.Slots.SelectMany(x => x.Actions).Where(a => a.Enabled).ToList();
+                    if (s.Pending(0).Kind == DecisionKind.LibertyKeep)
+                    {
+                        // The Statue as its 6 keep/give pairs, each entered as one change.
+                        Assert.Equal(s.LegalMoves().Count * 2, options.Count);
+                        Assert.All(options, o => Assert.NotNull(o.Then));
+                        var pair = options[rng.Next(options.Count)];
+                        session.Enter([pair.Line, pair.Then!]);
+                        continue;
+                    }
                     Assert.Equal(s.LegalMoves().Count, options.Count);
                     line = options[rng.Next(options.Count)].Line;
                 }

@@ -61,13 +61,13 @@ function watchAdvice() {
 const pct = (x) => `${(x * 100).toFixed(1)}%`;
 const sharePct = (x) => x >= 0.995 ? '100%' : x < 0.005 ? '<1%' : `${Math.round(x * 100)}%`;
 
-// The share of the search for one Move Log line (card menus and tiles), or null without advice.
+// The share of the search for one option (card menus and tiles) by its key (its Move Log line; a Statue pair: both), or null.
 function shareOf(line) {
   const a = view?.advice;
   if (!a || !a.rows.length || a.shares[line] === undefined) return null;
   return a.shares[line];
 }
-const isBestLine = (line) => view?.advice?.rows[0]?.line === line;
+const isBestKey = (key) => view?.advice?.rows[0]?.key === key;
 
 function advicePanel(a) {
   const panel = h('div', { class: 'panel advice', id: 'advice' }, h('h2', {}, 'Advice'));
@@ -97,35 +97,122 @@ function advicePanel(a) {
   return panel;
 }
 
-// The compare table (spec A8): up to 5 Moves, best first; win % with ±2 standard-error whiskers and a 50% guide;
-// the gap to the best, "≈ same" when inside the combined noise.
+
+// The compare table (spec A8): up to 5 options, best first; win % with ±2 standard-error whiskers and a 50% guide;
+// the gap to the best, "≈ same" when inside the combined noise; the outcome bar (a network with an outcome head only);
+// every reason tag. Hovering a row shows its expected line under the table and as numbered markers on the board;
+// clicking pins it (the best row by default).
+let pinnedRow = null;   // key of the clicked row
+let hoverRow = null;    // key of the hovered row
+
+const OUTCOME_LABELS = {
+  'win-military': 'You win: military', 'win-science': 'You win: science', 'win-civilian': 'You win: civilian', draw: 'Draw',
+  'loss-military': 'They win: military', 'loss-science': 'They win: science', 'loss-civilian': 'They win: civilian',
+};
+
+function shownRow(a) {
+  if (!a?.rows.length) return null;
+  return a.rows.find(r => r.key === hoverRow) ?? a.rows.find(r => r.key === pinnedRow) ?? a.rows[0];
+}
+
+function outcomeBar(a, r) {
+  if (!r.outcome) return h('span', { class: 'muted small' }, '—');
+  const parts = a.outcomeClasses.map((c, i) => ({ c, p: r.outcome[i] }));
+  return h('div', { class: 'outcome', title: parts.filter(x => x.p >= 0.005).map(x => `${OUTCOME_LABELS[x.c] ?? x.c}: ${pct(x.p)}`).join('\n') },
+    parts.map(x => h('span', { class: `oc-${x.c}`, style: `width:${x.p * 100}%` })));
+}
+
 function compareTable(a) {
+  const hasOutcome = a.hasOutcome;
   const table = h('table', { class: 'compare' },
-    h('tr', {}, h('th', {}, 'Move'), h('th', {}, 'Win % (±2 SE)'), h('th', {}, 'vs best')));
+    h('tr', {}, h('th', {}, 'Move'), h('th', {}, 'Win % (±2 SE)'), h('th', {}, 'vs best'), hasOutcome ? h('th', {}, 'How it ends') : null));
+  const shown = shownRow(a);
   for (const r of a.rows) {
     const lo = Math.max(0, r.win - 2 * r.stdErr), hi = Math.min(1, r.win + 2 * r.stdErr);
     const gap = r.best ? h('span', { class: 'muted' }, '—')
       : r.same ? h('span', { class: 'same', title: `Within the noise: the gap ${pct(Math.abs(r.gap))} is under ${pct(r.noise)}` }, '≈ same')
       : h('span', { class: 'gap', title: `Outside the noise (${pct(r.noise)})` }, `${r.gap > 0 ? '−' : '+'}${pct(Math.abs(r.gap))}`);
-    table.append(h('tr', { class: r.best ? 'best' : '' },
-      h('td', {}, h('b', {}, r.label), h('br'), h('span', { class: 'muted small' }, `${sharePct(r.share)} of search`)),
-      h('td', { class: 'wincell' },
-        h('div', { class: 'whisk', title: `${pct(r.win)} ± ${pct(2 * r.stdErr)} (${r.visits} simulations)` },
-          h('div', { class: 'fifty' }),
-          h('div', { class: 'bar', style: `width:${r.win * 100}%` }),
-          h('div', { class: 'err', style: `left:${lo * 100}%;width:${(hi - lo) * 100}%` })),
-        h('span', { class: 'winpct' }, pct(r.win))),
-      h('td', {}, gap)));
+    const select = {
+      'data-key': r.key,
+      onmouseenter: () => { hoverRow = r.key; showLine(); },
+      onmouseleave: () => { hoverRow = null; showLine(); },
+      onclick: () => { pinnedRow = r.key; showLine(); },
+    };
+    const cls = `${r.best ? 'best' : ''}${r === shown ? ' shown' : ''}`;
+    table.append(
+      h('tr', { class: `main ${cls}`, ...select },
+        h('td', {}, h('b', {}, r.label), h('br'), h('span', { class: 'muted small' }, `${sharePct(r.share)} of search`)),
+        h('td', { class: 'wincell' },
+          h('div', { class: 'whisk', title: `${pct(r.win)} ± ${pct(2 * r.stdErr)} (${r.visits} simulations)` },
+            h('div', { class: 'fifty' }),
+            h('div', { class: 'bar', style: `width:${r.win * 100}%` }),
+            h('div', { class: 'err', style: `left:${lo * 100}%;width:${(hi - lo) * 100}%` })),
+          h('span', { class: 'winpct' }, pct(r.win))),
+        h('td', {}, gap),
+        hasOutcome ? h('td', {}, outcomeBar(a, r)) : null),
+      h('tr', { class: `tags ${cls}`, ...select },
+        h('td', { colspan: hasOutcome ? 4 : 3 }, r.reasons.map(t => h('span', { class: 'tag' }, t)))));
   }
   return h('div', {},
     table,
+    hasOutcome ? h('div', { class: 'small outcome-legend' }, a.outcomeClasses.map(c =>
+      h('span', {}, h('i', { class: `oc-${c}` }), OUTCOME_LABELS[c] ?? c))) : null,
+    h('div', { id: 'line', class: 'line' }, expectedLine(shown)),
     h('div', { class: 'small muted', style: 'margin-top:6px' },
       `${a.simulations.toLocaleString('en')} simulations · ${a.seconds.toFixed(2)} s · ${a.agent}`),
     h('div', { class: 'small muted legend' },
       'Bar: your chance to win after this Move (a draw counts half); whiskers: ±2 standard errors; dotted line: 50%. ',
-      '"≈ same": the gap to the best Move is inside the noise, so treat them as equally good.'));
+      '"≈ same": the gap to the best Move is inside the noise, so treat them as equally good. ',
+      hasOutcome ? 'How it ends: the network\'s guess of how the game finishes after this Move. ' : '',
+      'Hover a row to see its expected line; click to keep it.'));
 }
-const enter = (line) => { guildPick = []; multiPick = []; return call('POST', '/api/entry', { line }); };
+
+// The expected line of one row: its own Move(s), then what the search expects next, through chance steps.
+function expectedLine(r) {
+  if (!r) return null;
+  const box = [h('div', { class: 'line-title' }, 'Expected line: ', h('b', {}, r.label))];
+  if (!r.hasLine) {
+    box.push(h('div', { class: 'muted small no-line' },
+      'No line: the search did not look far enough past this Move to show one (Think longer may help).'));
+    return box;
+  }
+  const list = h('ol', { class: 'steps' });
+  let n = 0;
+  for (const s of r.expected) {
+    if (s.afterReveal) list.append(h('li', { class: 'chance' }, 'face-down card revealed'));
+    n++;
+    list.append(h('li', { class: `${s.you ? 'you' : 'them'}${s.own ? ' own' : ''}`, value: n },
+      h('span', { class: `mark ${s.you ? 'you' : 'them'}` }, n),
+      `${s.you ? 'You' : 'They'}: ${s.label}`));
+  }
+  box.push(list);
+  return box;
+}
+
+// Redraws the line list and the board's numbered markers for the shown row (no full render, so hovering stays smooth).
+function showLine() {
+  const a = view?.advice;
+  const r = shownRow(a);
+  document.querySelectorAll('table.compare tr[data-key]').forEach(tr => tr.classList.toggle('shown', tr.dataset.key === r?.key));
+  const line = $('line');
+  if (line) line.replaceChildren(...[expectedLine(r)].flat().filter(Boolean));
+  drawMarkers(r);
+}
+
+function drawMarkers(r) {
+  document.querySelectorAll('.pyramid .mark').forEach(m => m.remove());
+  if (!r?.hasLine) return;
+  r.expected.forEach((s, i) => {
+    if (s.slot == null) return;
+    const card = document.querySelector(`.pyramid .card[data-slot="${s.slot}"]`);
+    if (card) card.append(h('span', { class: `mark ${s.you ? 'you' : 'them'}`, title: `Step ${i + 1}: ${s.you ? 'you' : 'they'}` }, i + 1));
+  });
+}
+
+const enter = (line, then) => {
+  guildPick = []; multiPick = [];
+  return call('POST', '/api/entry', then ? { line, then } : { line });
+};
 
 // ------------------------------------------------------------------ DOM helper
 
@@ -145,6 +232,7 @@ function h(tag, attrs = {}, ...children) {
 // ------------------------------------------------------------------ render
 
 function render() {
+  hoverRow = null; // the hovered row is redrawn, so it no longer has the mouse
   hidePopover();
   const err = $('error');
   err.hidden = !view?.error;
@@ -170,6 +258,7 @@ function render() {
   main.append(
     h('section', {}, boardPanel(game)),
     h('aside', {}, sidePanel(game)));
+  drawMarkers(shownRow(view.advice));
   watchAdvice();
 }
 
@@ -233,6 +322,7 @@ function pyramid(g) {
       class: classes.join(' '),
       style: `left:${s.col * colStep}px;top:${s.row * rowStep}px;z-index:${s.row + 1}`,
       title: s.card ? s.card.name : `slot ${s.name}`,
+      'data-slot': s.slot,
     }, h('span', { class: 'slotname' }, s.name), s.card ? s.card.name : '');
     const b = s.actions.length ? view.advice?.badges.find(x => x.slot === s.slot) : null;
     if (b) el.append(badge(b.share, b.top));
@@ -245,7 +335,9 @@ function pyramid(g) {
     });
     box.append(el);
   }
-  return h('div', { class: 'pyramid-wrap' }, box);
+  // Another Pending Decision (token, draft, destroy, Statue, ...) is answered on the tiles above: the board dims.
+  const dim = g.decision?.tiles.length > 0;
+  return h('div', { class: `pyramid-wrap${dim ? ' dim' : ''}` }, box);
 }
 
 function cardMenu(event, slot) {
@@ -254,7 +346,7 @@ function cardMenu(event, slot) {
   for (const a of slot.actions) {
     const share = a.enabled ? shareOf(a.line) : null;
     pop.append(h('button', { disabled: !a.enabled, onclick: () => enter(a.line) }, a.label,
-      share === null ? null : badge(share, isBestLine(a.line))));
+      share === null ? null : badge(share, isBestKey(a.line))));
     if (!a.enabled && a.reason) pop.append(h('div', { class: 'why' }, a.reason));
   }
   pop.hidden = false;
@@ -308,8 +400,9 @@ function trayFor(g) {
   if (g.decision && g.decision.tiles.length) return h('div', { class: 'tray' },
     h('div', { class: 'title' }, g.decision.title),
     h('div', { class: 'tiles' }, g.decision.tiles.map(t => {
-      const share = shareOf(t.line);
-      return h('button', { class: 'tile', onclick: () => enter(t.line) }, t.label, share === null ? null : badge(share, isBestLine(t.line)));
+      const key = t.then ? `${t.line}\n${t.then}` : t.line;  // a Statue pair: both lines
+      const share = shareOf(key);
+      return h('button', { class: 'tile', onclick: () => enter(t.line, t.then) }, t.label, share === null ? null : badge(share, isBestKey(key)));
     })));
   return null;
 }

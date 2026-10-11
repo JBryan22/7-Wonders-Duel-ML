@@ -8,7 +8,7 @@ namespace SevenWondersDuel.Advisor;
 
 public sealed record CardView(string Id, string Name, string Color, int Age);
 public sealed record OptionView(string Id, string Name, string? Color, bool Enabled, string? Reason);
-public sealed record ActionView(string Label, string Line, bool Enabled, string? Reason, string Kind);
+public sealed record ActionView(string Label, string Line, bool Enabled, string? Reason, string Kind, string? Then = null);
 public sealed record SlotView(
     int Slot, string Name, int Row, int Col, string Face, CardView? Card, bool Accessible,
     bool Pulse, string? RevealPrefix, OptionView[]? Candidates, ActionView[] Actions);
@@ -238,8 +238,16 @@ public static class BoardView
                 [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
             DecisionKind.Messe => new("messe", d.Player, d.Player == session.Seat, $"The Messe: {who} builds a top-row card for free",
                 [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
-            DecisionKind.LibertyKeep => new("liberty-keep", d.Player, d.Player == session.Seat, $"Statue of Liberty: which card does {who} keep?",
-                [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
+            // The keep and the give are entered together, as one of the 6 pairs (spec A8).
+            DecisionKind.LibertyKeep => new("liberty-keep", d.Player, d.Player == session.Seat,
+                $"Statue of Liberty: which card does {who} keep, and which does {who} give to {Who(session, 1 - d.Player)}? (the third is discarded)",
+                [.. moves.SelectMany(keep =>
+                {
+                    var after = s.Clone();
+                    after.Apply(keep);
+                    return after.LegalMoves().Select(give => Tile(keep, $"Keep {GameData.Cards[keep.Card].Name}, give {GameData.Cards[give.Card].Name}")
+                        with { Then = $"{p} {give}" });
+                })]),
             DecisionKind.LibertyGive => new("liberty-give", d.Player, d.Player == session.Seat,
                 $"Statue of Liberty: which card does {who} give to {Who(session, 1 - d.Player)}? (the other is discarded)",
                 [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
@@ -284,7 +292,7 @@ public static class BoardView
             Tokens: [.. ProgressTokens.In(s.Tokens(player)).Select(Token)]);
     }
 
-    static string WonderSummary(WonderDef w)
+    internal static string WonderSummary(WonderDef w)
     {
         var parts = new List<string> { CostText(w.Cost) };
         if (w.VictoryPoints > 0) parts.Add($"{w.VictoryPoints} VP");

@@ -53,6 +53,12 @@ public readonly record struct MctsMoveStat(Move Move, int Visits, double VisitSh
 /// </summary>
 public readonly record struct LineStep(int Player, Move Move, int Visits, double Value, bool AfterReveal);
 
+/// <summary>
+/// One child of a searched tree node (the Advisor reads below the root after a search): the Move, who plays it, its
+/// visits, and its mover's mean result as a win probability (draw ½) with the standard error.
+/// </summary>
+public readonly record struct TreeChild(Move Move, int Player, int Visits, double Value, double StdErr);
+
 /// <summary>What one MCTS search found: per-Move statistics in legal-Move order, the Move chosen and the principal line (starting with it).</summary>
 public sealed record MctsResult(IReadOnlyList<MctsMoveStat> Moves, Move Best, IReadOnlyList<LineStep> Line, int Simulations);
 
@@ -269,6 +275,39 @@ public sealed class MctsAgent : IAgent
         var variance = Math.Max(0, (n.ScoreSq - n.Visits * mean * mean) / (n.Visits - 1));
         return Math.Sqrt(variance / n.Visits);
     }
+
+    /// <summary>
+    /// After a search: the line that starts with the Moves of <paramref name="path"/> from the root and then follows the
+    /// most visited child, each step with at least <see cref="MinLineVisits"/> visits. Shorter (possibly empty) when
+    /// the search did not go that deep. Valid until the next search.
+    /// </summary>
+    public IReadOnlyList<LineStep> LineOf(IReadOnlyList<Move> path)
+    {
+        var node = 0;
+        var prefix = new List<LineStep>();
+        for (var i = 0; i < path.Count - 1; i++)
+        {
+            node = FindChild(node, path[i]);
+            if (node < 0 || _nodes[node].Visits < MinLineVisits) return prefix;
+            prefix.Add(Step(node));
+        }
+        var last = path.Count == 0 ? -1 : FindChild(node, path[^1]);
+        return [.. prefix, .. PrincipalLine(last)];
+    }
+
+    /// <summary>After a search: the children of the node reached by <paramref name="path"/> from the root (empty when it was not reached).</summary>
+    public IReadOnlyList<TreeChild> ChildrenOf(IReadOnlyList<Move> path)
+    {
+        var node = 0;
+        foreach (var move in path)
+            if ((node = FindChild(node, move)) < 0) return [];
+        var children = new List<TreeChild>();
+        for (var c = _nodes[node].FirstChild; c >= 0; c = _nodes[c].NextSibling)
+            children.Add(new TreeChild(_nodes[c].Move, _nodes[c].Player, _nodes[c].Visits, Mean(_nodes[c]), StdErr(_nodes[c])));
+        return children;
+    }
+
+    LineStep Step(int c) => new(_nodes[c].Player, _nodes[c].Move, _nodes[c].Visits, Mean(_nodes[c]), _nodes[c].Reveals * 2 > _nodes[c].Visits);
 
     List<LineStep> PrincipalLine(int first)
     {

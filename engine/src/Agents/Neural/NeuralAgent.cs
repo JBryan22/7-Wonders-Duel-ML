@@ -184,6 +184,9 @@ public sealed class NeuralAgent : IAgent
     int[] _halving = [];
     int _simulation;
     readonly float[] _outcome = new float[NetworkEncoding.OutcomeClasses.Length];
+    readonly double[] _leafOutcome = new double[NetworkEncoding.OutcomeClasses.Length];
+    // With TrackOutcomes: per node in the first two plies, the sum of the leaf outcome distributions (root player's view).
+    readonly Dictionary<int, double[]> _outcomeSums = [];
     readonly int[] _path = new int[512];
     readonly bool[] _pathReveal = new bool[512];
     Node[] _nodes = new Node[1024];
@@ -237,6 +240,7 @@ public sealed class NeuralAgent : IAgent
         var rootCount = root.LegalMoves(_rootMoves);
         if (rootCount == 0) throw new InvalidOperationException("No legal Move");
         _nodeCount = 0;
+        _outcomeSums.Clear();
         _logitCount = 0;
         _rootPlayer = me;
         NewNode(default, -1);
@@ -361,6 +365,11 @@ public sealed class NeuralAgent : IAgent
             if (s.IsOver)
             {
                 value0 = NetworkEncoding.ValueTarget(s.Result!, 0);
+                if (TracksOutcomes)
+                {
+                    Array.Clear(_leafOutcome);
+                    _leafOutcome[NetworkEncoding.OutcomeClass(s.Result!, _rootPlayer)] = 1;
+                }
                 break;
             }
             if (s.Step == StepKind.Reveal)
@@ -374,6 +383,7 @@ public sealed class NeuralAgent : IAgent
             {
                 var v = Evaluate(node, s, mover);
                 value0 = mover == 0 ? v : -v;
+                if (TracksOutcomes) LeafOutcome(mover);
                 break;
             }
 
@@ -418,7 +428,82 @@ public sealed class NeuralAgent : IAgent
             x.ValueSq += v * v;
             if (_pathReveal[d]) x.Reveals++;
         }
+        if (!TracksOutcomes) return;
+        for (var d = 0; d < Math.Min(depth, 2); d++)
+        {
+            if (!_outcomeSums.TryGetValue(_path[d], out var sum)) _outcomeSums[_path[d]] = sum = new double[_leafOutcome.Length];
+            for (var k = 0; k < sum.Length; k++) sum[k] += _leafOutcome[k];
+        }
     }
+
+    /// <summary>
+    /// When true (the Advisor sets it), the search also averages the network's outcome-class distribution over the
+    /// simulations through each node of the first two plies, for <see cref="OutcomeOf"/>. Results are unchanged.
+    /// </summary>
+    public bool TrackOutcomes { get; set; }
+
+    /// <summary>True when the evaluator has an outcome head (a real network, not the built-in references).</summary>
+    public bool HasOutcomeHead => _evaluator.HasOutcomeHead;
+
+    bool TracksOutcomes => TrackOutcomes && _evaluator.HasOutcomeHead;
+
+    /// <summary>The softmax of the leaf's outcome logits, turned from <paramref name="mover"/>'s view to the root player's.</summary>
+    void LeafOutcome(int mover)
+    {
+        var p = Softmax(_outcome);
+        var swap = mover != _rootPlayer;
+        var half = (p.Length - 1) / 2; // wins 0..2, draw 3, losses 4..6
+        for (var k = 0; k < p.Length; k++)
+            _leafOutcome[k] = !swap || k == half ? p[k] : k < half ? p[k + half + 1] : p[k - half - 1];
+    }
+
+    /// <summary>
+    /// After a search with <see cref="TrackOutcomes"/>: the mean outcome-class distribution (in
+    /// <see cref="NetworkEncoding.OutcomeClasses"/> order, the searching player's view) over the simulations through
+    /// the node reached by <paramref name="path"/> (one or two Moves from the root); null when not tracked or not visited.
+    /// </summary>
+    public double[]? OutcomeOf(IReadOnlyList<Move> path)
+    {
+        if (!TracksOutcomes || path.Count is 0 or > 2) return null;
+        var node = 0;
+        foreach (var move in path)
+            if ((node = FindChild(node, move)) < 0) return null;
+        if (!_outcomeSums.TryGetValue(node, out var sum) || _nodes[node].Visits == 0) return null;
+        return [.. sum.Select(x => x / _nodes[node].Visits)];
+    }
+
+    /// <summary>
+    /// After a search: the line that starts with the Moves of <paramref name="path"/> from the root and then follows the
+    /// most visited child, each step with at least <see cref="MctsAgent.MinLineVisits"/> visits. Valid until the next search.
+    /// </summary>
+    public IReadOnlyList<LineStep> LineOf(IReadOnlyList<Move> path)
+    {
+        var node = 0;
+        var prefix = new List<LineStep>();
+        for (var i = 0; i < path.Count - 1; i++)
+        {
+            node = FindChild(node, path[i]);
+            if (node < 0 || _nodes[node].Visits < MctsAgent.MinLineVisits) return prefix;
+            prefix.Add(Step(node));
+        }
+        var last = path.Count == 0 ? -1 : FindChild(node, path[^1]);
+        return [.. prefix, .. PrincipalLine(last)];
+    }
+
+    /// <summary>After a search: the children of the node reached by <paramref name="path"/> from the root (empty when it was not reached).</summary>
+    public IReadOnlyList<TreeChild> ChildrenOf(IReadOnlyList<Move> path)
+    {
+        var node = 0;
+        foreach (var move in path)
+            if ((node = FindChild(node, move)) < 0) return [];
+        var children = new List<TreeChild>();
+        for (var c = _nodes[node].FirstChild; c >= 0; c = _nodes[c].NextSibling)
+            children.Add(new TreeChild(_nodes[c].Move, _nodes[c].Player, _nodes[c].Visits, WinProbability(Mean(_nodes[c])), StdErr(_nodes[c])));
+        return children;
+    }
+
+    LineStep Step(int c) =>
+        new(_nodes[c].Player, _nodes[c].Move, _nodes[c].Visits, WinProbability(Mean(_nodes[c])), _nodes[c].Reveals * 2 > _nodes[c].Visits);
 
     /// <summary>Classic: PUCT, Q + c·P·√N/(1+n), an unvisited Move valued at its parent's mean.</summary>
     int PuctPick(int node, int mover, int n, int parentVisits)

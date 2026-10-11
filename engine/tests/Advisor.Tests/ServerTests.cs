@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using SevenWondersDuel.Advisor;
@@ -46,25 +45,51 @@ public sealed class ServerTests : IDisposable
         Assert.Null(store.LoadCurrent());
     }
 
-    static int FreePort()
+    /// <summary>
+    /// A save while another program briefly holds the saved game open (on Windows a virus scanner or the search indexer
+    /// does this right after a write) waits and succeeds instead of failing the entry: the likely cause of a rare
+    /// Advisor test failure seen in ticket 30 (an entry answered with an empty server error).
+    /// </summary>
+    [Fact]
+    public async Task A_save_waits_out_a_moment_when_the_file_is_held_open()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        var store = new AdvisorStore(_folder);
+        var session = AdvisorSession.New(Ruleset.Default, 0);
+        store.SaveCurrent(session);
+        session.Enter("reveal first P1");
+        Task release;
+        using (var held = new FileStream(store.CurrentPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var heldStream = held;
+            release = Task.Run(async () => { await Task.Delay(150); heldStream.Dispose(); });
+            store.SaveCurrent(session);
+        }
+        await release;
+        Assert.Equal(session.Write(), File.ReadAllText(store.CurrentPath));
     }
 
-    static async Task<(WebApplication App, HttpClient Http)> Start(string folder)
+    /// <summary>Starts a server on a port the OS picks when it binds (port 0), so no other socket can take it in between.</summary>
+    internal static async Task<(WebApplication App, HttpClient Http)> Start(string folder, string agent = AdviceSettings.DefaultAgent)
     {
-        var port = FreePort();
-        var app = AdvisorServer.Build(new AdvisorOptions(folder, port));
+        var app = AdvisorServer.Build(new AdvisorOptions(folder, Port: 0, Agent: agent));
         await app.StartAsync();
-        return (app, new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/") });
+        return (app, new HttpClient { BaseAddress = new Uri(app.Urls.Single().TrimEnd('/') + "/") });
     }
 
-    static async Task<JsonElement> Json(HttpResponseMessage response) =>
-        JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+    /// <summary>The answer as JSON; a server error fails with its status and body, not a JSON parse error.</summary>
+    internal static async Task<JsonElement> Json(HttpResponseMessage response)
+    {
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.True(text.Length > 0, $"Empty answer, status {(int)response.StatusCode}");
+        return JsonDocument.Parse(text).RootElement;
+    }
+
+    /// <summary>Reads a file another thread may still be appending to.</summary>
+    static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        return new StreamReader(stream).ReadToEnd();
+    }
 
     [Fact]
     public async Task The_page_and_API_enter_undo_rewind_and_resume_after_a_restart()
@@ -176,7 +201,7 @@ public sealed class ServerTests : IDisposable
             var auto = await Json(await http.PostAsJsonAsync("api/advice/auto", new { on = true }));
             Assert.True(auto.GetProperty("auto").GetBoolean());
             Assert.True(new AdvisorStore(_folder).LoadAdvicePrefs().Auto);
-            Assert.Contains("sims=800", File.ReadAllText(Path.Combine(_folder, "advice.log")));
+            Assert.Contains("sims=800", ReadShared(Path.Combine(_folder, "advice.log")));
         }
         finally
         {

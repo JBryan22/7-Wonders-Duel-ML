@@ -5,13 +5,16 @@ using SevenWondersDuel.Engine;
 namespace SevenWondersDuel.Advisor;
 
 // The JSON of the advice box (web/app.js).
+// A row's Key is its log line (a Statue pair: both lines, newline-separated); Then is a pair's second line. Outcome is
+// null without an outcome head; Expected starts with the row's own Moves (Own), and HasLine is false for "no line".
 public sealed record AdviceRowView(string Label, string Line, int? Slot, int Visits, double Share, double Win, double StdErr,
-    double Gap, double Noise, bool Same, bool Best);
+    double Gap, double Noise, bool Same, bool Best, string Key, string? Then, IReadOnlyList<string> Reasons,
+    IReadOnlyList<ExpectedStep> Expected, bool HasLine, double[]? Outcome);
 public sealed record SlotBadgeView(int Slot, double Share, bool Top);
 public sealed record AdviceView(
     string Status, string? Message, string Agent, int Simulations, bool Longer, double Seconds,
     AdviceRowView[] Rows, Dictionary<string, double> Shares, SlotBadgeView[] Badges,
-    int DefaultSimulations, int ThinkLongerSimulations, bool Auto, string? Notice);
+    int DefaultSimulations, int ThinkLongerSimulations, bool Auto, string? Notice, bool HasOutcome, string[] OutcomeClasses);
 
 /// <summary>
 /// Advice on request (spec A8), computed in the background so the Advisor Window stays responsive.
@@ -177,7 +180,10 @@ public sealed class AdviceService : IDisposable
         {
             var outcome = AdviceSearch.Run(job.Observation, _settings.Agent, job.Simulations, seed, job.Cancel.Token);
             var seconds = watch.Elapsed.TotalSeconds;
-            var advice = new Advice(job.Key, _settings.Agent, outcome.Simulations, seconds, AdviceTable.Rank(job.State, outcome), outcome.Line);
+            var advice = new Advice(job.Key, _settings.Agent, outcome.Simulations, seconds, AdviceTable.Rank(job.State, outcome), outcome.Line)
+            {
+                HasOutcome = outcome.HasOutcome,
+            };
             Log(job, seconds, advice.Best.Label);
             lock (_lock)
             {
@@ -252,9 +258,21 @@ public sealed class AdviceService : IDisposable
             return new AdviceView(status, message, _settings.Agent,
                 advice?.Simulations ?? job?.Simulations ?? 0, result?.Longer ?? job?.Longer ?? false, advice?.Seconds ?? 0,
                 [.. rows.Take(AdviceTable.MaxRows).Select(r => new AdviceRowView(r.Label, r.Line, r.Slot, r.Visits, r.Share, r.Win,
-                    r.StdErr, r.Gap, r.Noise, r.Same, r.Best))],
-                rows.ToDictionary(r => r.Line, r => r.Share), badges,
-                DefaultSimulations, ThinkLongerSimulations, Auto, notice);
+                    r.StdErr, r.Gap, r.Noise, r.Same, r.Best, r.Key, r.ThenLine, r.Reasons, r.Expected, r.HasLine, r.Outcome))],
+                Shares(rows), badges,
+                DefaultSimulations, ThinkLongerSimulations, Auto, notice, advice?.HasOutcome ?? false, NetworkEncoding.OutcomeClasses);
+        }
+
+        // Every option's share by its key; a Statue keep's line also gets the sum of its pairs.
+        static Dictionary<string, double> Shares(IReadOnlyList<AdviceRow> rows)
+        {
+            var shares = new Dictionary<string, double>();
+            foreach (var r in rows)
+            {
+                shares[r.Key] = r.Share;
+                if (r.ThenLine is not null) shares[r.Line] = shares.GetValueOrDefault(r.Line) + r.Share;
+            }
+            return shares;
         }
 
         if (WhyNoAdvice(session) is { } why) return Make("unavailable", why);
