@@ -100,7 +100,7 @@ public sealed class AdvisorStore(string folder)
     /// <summary>
     /// Writes to a temporary file first, so a crash mid-write never leaves a half-written log. On Windows the replace
     /// can fail for a moment while a virus scanner or the search indexer has the file just written open (a sharing
-    /// violation, seen as a rare failed entry), so it is retried for up to about a second.
+    /// violation, seen as a rare failed entry), so it is retried for up to about two seconds.
     /// </summary>
     void WriteAtomically(string path, string text)
     {
@@ -116,10 +116,10 @@ public sealed class AdvisorStore(string folder)
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < SaveAttempts)
             {
-                Thread.Sleep(10 * attempt);
+                Thread.Sleep(Math.Min(10 * attempt, 100));
             }
         }
     }
 
-    const int SaveAttempts = 12;
+    const int SaveAttempts = 25;
 }

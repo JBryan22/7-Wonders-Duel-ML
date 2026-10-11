@@ -51,20 +51,18 @@ public sealed class ServerTests : IDisposable
     /// Advisor test failure seen in ticket 30 (an entry answered with an empty server error).
     /// </summary>
     [Fact]
-    public async Task A_save_waits_out_a_moment_when_the_file_is_held_open()
+    public void A_save_waits_out_a_moment_when_the_file_is_held_open()
     {
         var store = new AdvisorStore(_folder);
         var session = AdvisorSession.New(Ruleset.Default, 0);
         store.SaveCurrent(session);
         session.Enter("reveal first P1");
-        Task release;
-        using (var held = new FileStream(store.CurrentPath, FileMode.Open, FileAccess.Read, FileShare.None))
-        {
-            var heldStream = held;
-            release = Task.Run(async () => { await Task.Delay(150); heldStream.Dispose(); });
-            store.SaveCurrent(session);
-        }
-        await release;
+        var held = new FileStream(store.CurrentPath, FileMode.Open, FileAccess.Read, FileShare.None);
+        // A dedicated thread, not the thread pool, so a busy test run cannot delay the release.
+        var release = new Thread(() => { Thread.Sleep(100); held.Dispose(); }) { IsBackground = true };
+        release.Start();
+        store.SaveCurrent(session);
+        release.Join();
         Assert.Equal(session.Write(), File.ReadAllText(store.CurrentPath));
     }
 
