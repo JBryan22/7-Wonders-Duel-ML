@@ -229,6 +229,64 @@ function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+
+// ------------------------------------------------------------------ Tabletop Simulator (spec A9)
+// While following, the server reads the TTS table about once a second and enters what it shows; the page polls the
+// small /api/tts box and fetches the whole state again when the server's change counter moves.
+
+let ttsPoll = null;
+const TTS_POLL_MS = 1000;
+
+function watchTts() {
+  clearTimeout(ttsPoll);
+  if (!view?.tts?.following) return;
+  ttsPoll = setTimeout(async () => {
+    try {
+      const res = await fetch('/api/tts');
+      const data = await res.json();
+      if (data.changes !== view.changes) { await call('GET', '/api/state'); return; }
+      view.tts = data.tts;
+      const box = $('tts');
+      if (box) box.replaceWith(ttsPanel(view.tts));
+    } catch { /* the server is restarting: try again */ }
+    watchTts();
+  }, TTS_POLL_MS);
+}
+
+const ttsCall = (body) => call('POST', '/api/tts', body);
+
+function ttsPanel(t) {
+  const panel = h('div', { class: `panel tts tts-is-${t?.status ?? 'off'}`, id: 'tts' }, h('h2', {}, 'Tabletop Simulator'));
+  if (!t) return panel;
+  panel.append(h('div', { class: 'tts-controls small' },
+    h('label', {}, h('input', { type: 'checkbox', checked: t.following, onchange: (e) => ttsCall({ follow: e.target.checked }) }),
+      ' Follow the TTS table'),
+    h('label', { class: 'muted' }, 'You sit ',
+      h('select', { onchange: (e) => ttsCall({ color: e.target.value }) },
+        ['White', 'Red'].map(c => h('option', { value: c, selected: c === t.color }, c))))));
+  if (!t.following) {
+    panel.append(h('div', { class: 'small muted' }, 'Off: enter everything here by hand. Turn it on to have Moves read from the table.'));
+    return panel;
+  }
+  panel.append(h('div', { class: 'small muted' }, t.connected
+    ? `Connected · ${t.roundTripMs ?? '?'} ms per reading${t.settled ? '' : ' · something is held or moving'}`
+    : t.problem ?? 'Connecting…'));
+  if (t.connected && t.problem) panel.append(h('div', { class: 'small', style: 'color:var(--err)' }, t.problem));
+  if (t.message) panel.append(h('div', { class: 'tts-message' }, t.message));
+  if (t.choices.length) panel.append(h('div', { class: 'tts-choices' }, t.choices.map(c =>
+    h('button', { class: 'btn ghost tts-choice', title: 'Enter these lines', onclick: () => call('POST', '/api/tts/choose', { index: c.index }) },
+      c.lines.join(' → ')))));
+  const list = (title, items) => items.length ? h('div', { class: 'small tts-list' }, h('div', { class: 'muted' }, title),
+    h('ul', {}, items.slice(0, 12).map(i => h('li', {}, i)),
+      items.length > 12 ? h('li', { class: 'muted' }, `… and ${items.length - 12} more`) : null)) : null;
+  panel.append(...[
+    list('The table shows, but the log doesn\'t:', t.notInLog),
+    list('The log expects, but the table doesn\'t show:', t.notOnTable),
+    list('Soft checks (only notes):', t.notes)].filter(Boolean));
+  if (t.lastAppended) panel.append(h('div', { class: 'small muted' }, 'Last from the table: ', t.lastAppended));
+  return panel;
+}
+
 // ------------------------------------------------------------------ render
 
 function render() {
@@ -260,6 +318,7 @@ function render() {
     h('aside', {}, sidePanel(game)));
   drawMarkers(shownRow(view.advice));
   watchAdvice();
+  watchTts();
 }
 
 // A % badge: the Move's (or card's) share of the search; the search's choice in gold.
@@ -287,6 +346,7 @@ function sidePanel(g) {
       onclick: () => rewind(l.index + 1, l.text),
     }, h('span', { class: 'n' }, l.index + 1), l.text)));
   const panels = [
+    ttsPanel(view.tts),
     advicePanel(view.advice),
     h('div', { class: 'panel' }, h('h2', {}, 'Move Log'),
       h('div', { class: 'small muted', style: 'margin-bottom:6px' }, g.rules, ' · click a line to rewind to it'),

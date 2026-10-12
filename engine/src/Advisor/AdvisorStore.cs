@@ -18,9 +18,15 @@ public sealed record NewGameSettings(bool Messe = false, bool Liberty = false, b
 public sealed record AdvicePrefs(bool Auto = false, int? Simulations = null);
 
 /// <summary>
+/// The Tabletop Simulator Adapter's switch (follow the table or not) and the owner's TTS seat colour ("White" or
+/// "Red"; the owner usually sits White, on the right). Ticket 34 detects the colour from the host's seat.
+/// </summary>
+public sealed record TtsPrefs(bool Follow = false, string Color = "White");
+
+/// <summary>
 /// Where the Advisor keeps its files: <c>current.log</c> (the game in progress, rewritten after every entry so a
 /// restart resumes), <c>settings.json</c> (the last new-game choices), <c>advice.json</c> (advice preferences),
-/// <c>advice.log</c> (each advice search's wall-clock time) and <c>games/</c> (every earlier game's log, kept when a
+/// <c>advice.log</c> (each advice search's wall-clock time), <c>tts.json</c> (following the TTS table) and <c>games/</c> (every earlier game's log, kept when a
 /// new one starts). The default folder is per user: <c>%LOCALAPPDATA%\7wd\advisor</c> on Windows,
 /// <c>~/.local/share/7wd/advisor</c> on Linux.
 /// </summary>
@@ -96,6 +102,25 @@ public sealed class AdvisorStore(string folder)
 
     public void SaveAdvicePrefs(AdvicePrefs prefs) =>
         WriteAtomically(AdvicePrefsPath, JsonSerializer.Serialize(prefs, Json));
+
+    string TtsPrefsPath => Path.Combine(Folder, "tts.json");
+
+    public TtsPrefs LoadTtsPrefs()
+    {
+        try
+        {
+            var prefs = File.Exists(TtsPrefsPath)
+                ? JsonSerializer.Deserialize<TtsPrefs>(File.ReadAllText(TtsPrefsPath), Json) ?? new()
+                : new();
+            return prefs.Color is "White" or "Red" ? prefs : prefs with { Color = "White" };
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
+    }
+
+    public void SaveTtsPrefs(TtsPrefs prefs) => WriteAtomically(TtsPrefsPath, JsonSerializer.Serialize(prefs, Json));
 
     /// <summary>
     /// Writes to a temporary file first, so a crash mid-write never leaves a half-written log. On Windows the replace
