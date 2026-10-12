@@ -26,6 +26,9 @@ public interface ITableSource : IDisposable
 {
     /// <summary>One snapshot's JSON text. Throws <see cref="TtsException"/> when TTS can't be reached or didn't answer.</summary>
     Task<string> ReadAsync(CancellationToken cancel);
+
+    /// <summary>When TTS last said it loaded a game (a new or reloaded table), or null; see <see cref="TtsLink.GameLoadedAt"/>.</summary>
+    DateTime? LoadedAt => null;
 }
 
 /// <summary>The live table: the read-only snapshot script through the External Editor API.</summary>
@@ -35,6 +38,7 @@ public sealed class TtsLinkSource(TtsLink link, TimeSpan timeout) : ITableSource
     public static TtsLinkSource Open() => new(new TtsLink(), TimeSpan.FromSeconds(5));
 
     public Task<string> ReadAsync(CancellationToken cancel) => link.RequestSnapshotTextAsync(timeout, cancel);
+    public DateTime? LoadedAt => link.GameLoadedAt;
     public void Dispose() => link.Dispose();
 }
 
@@ -66,15 +70,19 @@ public sealed record TtsConnection(bool Following, bool Connected, string? Probl
 /// The Tabletop Simulator Adapter's polling half (spec A9): while following, it reads a Table Snapshot about once a
 /// second, waits for the table to settle, and hands each settled snapshot to <paramref name="settled"/> (the Advisor
 /// server, which reconciles it with the Move Log under its lock). Only the read-only snapshot script is ever sent.
-/// Polling runs on a background task; <see cref="PollOnceAsync"/> is one step of it (tests call it directly).
+/// Polling runs on a background task; <see cref="PollOnceAsync"/> is one step of it (tests call it directly). When TTS
+/// says it loaded a game, the settled detection starts over and <paramref name="loaded"/> is told (ticket 34: the next
+/// settled table may be a new game, or a save of this one further on).
 /// </summary>
-public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> settled, TimeSpan? interval = null) : IDisposable
+public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> settled, TimeSpan? interval = null, Action? loaded = null)
+    : IDisposable
 {
     readonly Lock _lock = new();
     readonly SettledTable _settle = new();
     readonly TimeSpan _interval = interval ?? TimeSpan.FromSeconds(1);
     readonly SemaphoreSlim _poll = new(1, 1);
     ITableSource? _source;
+    DateTime? _loadedAt;
     CancellationTokenSource? _loop;
     TtsConnection _state = new(false, false, null, false, null, null);
 
@@ -169,6 +177,12 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
             {
                 Update(s => s with { Connected = true, Problem = $"TTS sent something unexpected: {e.Message}", Settled = false });
                 return;
+            }
+            if (source.LoadedAt is { } at && at != _loadedAt)
+            {
+                _loadedAt = at;
+                _settle.Reset();
+                loaded?.Invoke();
             }
             LastSnapshot = snapshot;
             var ready = _settle.Offer(snapshot);

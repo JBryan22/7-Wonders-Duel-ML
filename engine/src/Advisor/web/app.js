@@ -261,18 +261,27 @@ function ttsPanel(t) {
   panel.append(h('div', { class: 'tts-controls small' },
     h('label', {}, h('input', { type: 'checkbox', checked: t.following, onchange: (e) => ttsCall({ follow: e.target.checked }) }),
       ' Follow the TTS table'),
-    h('label', { class: 'muted' }, 'You sit ',
+    h('label', { class: 'muted', title: 'Auto: the colour you sit at in TTS (you host the game). Choose White or Red to override it.' }, 'You sit ',
       h('select', { onchange: (e) => ttsCall({ color: e.target.value }) },
-        ['White', 'Red'].map(c => h('option', { value: c, selected: c === t.color }, c))))));
+        [['Auto', t.color === 'Auto' && t.side ? `Auto: ${t.side}` : 'Auto (your TTS seat)'], ['White', 'White'], ['Red', 'Red']]
+          .map(([c, label]) => h('option', { value: c, selected: c === t.color }, label))))));
   if (!t.following) {
     panel.append(h('div', { class: 'small muted' }, 'Off: enter everything here by hand. Turn it on to have Moves read from the table.'));
     return panel;
   }
   panel.append(h('div', { class: 'small muted' }, t.connected
     ? `Connected · ${t.roundTripMs ?? '?'} ms per reading${t.settled ? '' : ' · something is held or moving'}`
+      + `${t.side ? ` · you sit ${t.side}${t.sideDetected ? ' (your TTS seat)' : ''}` : ''}${t.catchingUp ? ' · catching up' : ''}`
     : t.problem ?? 'Connecting…'));
   if (t.connected && t.problem) panel.append(h('div', { class: 'small', style: 'color:var(--err)' }, t.problem));
   if (t.message) panel.append(h('div', { class: 'tts-message' }, t.message));
+  if (t.status === 'new-game') panel.append(h('div', { class: 'tts-choices' },
+    h('button', { class: 'btn', onclick: async () => { if (await call('POST', '/api/tts/newgame')) { showNewGame = false; render(); } } },
+      'Start the new game'),
+    h('div', { class: 'small muted' }, t.newGame, ' · ',
+      h('a', { href: '#', onclick: (e) => { e.preventDefault(); showNewGame = true; render(); } }, 'other settings…'))));
+  if (t.promos?.length) panel.append(h('div', { class: 'tts-choices' }, t.promos.map(p =>
+    h('button', { class: 'btn', onclick: () => call('POST', '/api/tts/promo', { promo: p.id }) }, `Enable ${p.name} for this game`))));
   if (t.choices.length) panel.append(h('div', { class: 'tts-choices' }, t.choices.map(c =>
     h('button', { class: 'btn ghost tts-choice', title: 'Enter these lines', onclick: () => call('POST', '/api/tts/choose', { index: c.index }) },
       c.lines.join(' → ')))));
@@ -308,7 +317,8 @@ function render() {
   if (!game || showNewGame) {
     $('prompt').textContent = 'New game';
     main.className = 'single';
-    main.append(newGameScreen());
+    main.append(newGameScreen(), ttsPanel(view?.tts));
+    watchTts();
     return;
   }
   main.className = '';

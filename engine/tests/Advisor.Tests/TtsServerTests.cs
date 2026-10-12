@@ -61,7 +61,7 @@ public sealed class TtsServerTests : IDisposable
 
             var on = await ServerTests.Json(await http.PostAsJsonAsync("api/tts", new { follow = true }));
             Assert.True(on.GetProperty("tts").GetProperty("following").GetBoolean());
-            Assert.Equal("White", on.GetProperty("tts").GetProperty("color").GetString());
+            Assert.Equal("Auto", on.GetProperty("tts").GetProperty("color").GetString());
             Assert.Contains("\"follow\": true", File.ReadAllText(Path.Combine(_folder, "tts.json")));
 
             // TTS not running: the problem is shown, nothing else happens.

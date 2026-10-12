@@ -172,7 +172,8 @@ table.compare tr.shown.tags td:first-child { box-shadow: inset 3px 0 0 #2b5fb4, 
 .tts-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
 .tts-message { margin: 6px 0; }
 .tts-is-desync .tts-message { color: var(--err); font-weight: 600; }
-.tts-is-waiting .tts-message, .tts-is-held .tts-message, .tts-is-choices .tts-message { background: var(--note); padding: 4px 6px; border-radius: 4px; }
+.tts-is-waiting .tts-message, .tts-is-held .tts-message, .tts-is-choices .tts-message,
+.tts-is-new-game .tts-message, .tts-is-promo .tts-message, .tts-is-seat .tts-message { background: var(--note); padding: 4px 6px; border-radius: 4px; }
 .tts-choices { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .tts-choice { text-align: left; font-weight: 400; font-size: 12px; }
 .tts-list ul { margin: 2px 0 6px; padding-left: 18px; }

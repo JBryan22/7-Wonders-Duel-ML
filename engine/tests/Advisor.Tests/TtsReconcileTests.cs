@@ -19,7 +19,7 @@ public sealed class TtsReconcileTests
     ];
 
     /// <summary>Plays a game forward in the "truth" session by <paramref name="moves"/> Moves and every Reveal after them.</summary>
-    static void Advance(AdvisorSession truth, RandomChanceSource chance, Rng rng, int moves)
+    internal static void Advance(AdvisorSession truth, RandomChanceSource chance, Rng rng, int moves)
     {
         while (!truth.State.IsOver)
         {
@@ -35,14 +35,16 @@ public sealed class TtsReconcileTests
         }
     }
 
-    sealed record Counts(int Appended, int Choices, int Waits, int ByHand);
+    internal sealed record Counts(int Appended, int Choices, int Waits, int ByHand, int HandMoves = 0);
 
     /// <summary>
     /// Reconciles the follower with the table until it matches, the way the Advisor server does: a single chain is
     /// entered; with several chains, or a wait, the owner's answer is taken from the truth log; the owner's own Great
-    /// Library draw (never on the table) is entered by hand.
+    /// Library draw (never on the table) is entered by hand. With <paramref name="handMoves"/> (catch-up), when the table can't
+    /// tell the owner's next Move apart (which card went under a Wonder, unseen) the owner enters it by hand.
     /// </summary>
-    static Counts CatchUp(AdvisorSession follower, AdvisorSession truth, SeatSides sides, TableSnapshot table, Counts counts)
+    internal static Counts CatchUp(AdvisorSession follower, AdvisorSession truth, SeatSides sides, TableSnapshot table, Counts counts,
+        ReconcileOptions? options = null, bool handMoves = false)
     {
         // The states the real game went through. A chain is what really happened when it leads to one of them: the
         // order of Moves the table can't tell apart (who discarded which card within one reading) may differ.
@@ -79,10 +81,19 @@ public sealed class TtsReconcileTests
             follower.Enter(next.Take(k + 1).Select(MoveLog.Format).ToList());
             return true;
         }
-
-        for (var guard = 0; guard < 8; guard++)
+        // The owner enters the game's next Move by hand (with any Reveals before it).
+        void EnterNextMove()
         {
-            var r = Reconciler.Reconcile(follower.State, follower.Seat, sides, table);
+            var here = Here();
+            Assert.True(here >= 0 && here < truth.Log.Count, $"off the game:\n{follower.Write()}\n{truth.Write()}");
+            var next = truth.Log.Skip(here).ToList();
+            var k = next.FindIndex(e => e is MoveEntry);
+            follower.Enter(next.Take(k < 0 ? next.Count : k + 1).Select(MoveLog.Format).ToList());
+        }
+
+        for (var guard = 0; guard < 16; guard++)
+        {
+            var r = Reconciler.Reconcile(follower.State, follower.Seat, sides, table, options);
             switch (r.Status)
             {
                 case SyncStatus.Matches when Here() < truth.Log.Count && EnterByHand(r):
@@ -108,6 +119,12 @@ public sealed class TtsReconcileTests
                     }
                     else
                     {
+                        if (handMoves && !r.Chains.Any(IsNext) && r.Waiting is not null && !r.Waiting.StartsWith("Name the card", StringComparison.Ordinal))
+                        {
+                            EnterNextMove();
+                            counts = counts with { HandMoves = counts.HandMoves + 1 };
+                            break;
+                        }
                         Assert.True(EnterByHand(r), $"Waiting: {r.Waiting} / Chains: {string.Join(" | ", r.Chains.Select(c => c.Text))} / "
                             + $"Not on table: {string.Join("; ", r.NotOnTable)} / Not in log: {string.Join("; ", r.NotInLog)} / "
                             + $"Follower: {follower.Write()} / Truth: {truth.Write()}");
@@ -115,6 +132,12 @@ public sealed class TtsReconcileTests
                     }
                     break;
                 default:
+                    if (handMoves)
+                    {
+                        EnterNextMove();
+                        counts = counts with { HandMoves = counts.HandMoves + 1 };
+                        break;
+                    }
                     Assert.Fail($"Desync.\nNot on the table: {string.Join("; ", r.NotOnTable)}\nNot in the log: {string.Join("; ", r.NotInLog)}\n"
                         + $"Follower:\n{follower.Write()}\nTruth:\n{truth.Write()}");
                     break;

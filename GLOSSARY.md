@@ -78,6 +78,10 @@ _Avoid_: Board state, table state, snapshot (alone)
 The condition in which a Table Snapshot cannot be explained from the Move Log; it is flagged until the table or the Move Log is corrected.
 _Avoid_: Conflict, mismatch, error (when this condition is meant)
 
+**Catch-up**:
+The deeper reconciliation the TTS Adapter runs after the Advisor restarts, starts following, starts a new game, or TTS loads a game, until the table and the Move Log match: the table may be several Moves ahead of the saved log.
+_Avoid_: Resync, cold join (joining a game already under way, which the Advisor doesn't do)
+
 **Reveal**:
 A Move-Log entry recording a chance outcome at the moment it becomes known, such as the identity of a card flipped face up, the progress tokens set out, the Wonders offered in the draft, or who plays first. Each Reveal has an audience: both players, or only one (a private Reveal, such as a Great Library draw).
 _Avoid_: Draw, deal, flip (when the logged outcome is meant)

@@ -43,6 +43,18 @@ public sealed class AdvisorSession
         return new AdvisorSession(rules, seat, new Game(rules));
     }
 
+    /// <summary>
+    /// The same game under other rules: the rules header is rewritten and the whole log replayed (spec A9: "Enable
+    /// &lt;promo&gt; for this game" when a promo Wonder turns up in a draft but its box was unticked). Throws an
+    /// <see cref="EntryException"/> if the log is not legal under <paramref name="rules"/>.
+    /// </summary>
+    public AdvisorSession WithRules(Ruleset rules)
+    {
+        var session = new AdvisorSession(rules, Seat, new Game(rules));
+        session.Replay([.. Log]);
+        return session;
+    }
+
     /// <summary>Reads a saved game: a Move Log with the seat comment (default P1 if it has none).</summary>
     public static AdvisorSession Load(string text)
     {

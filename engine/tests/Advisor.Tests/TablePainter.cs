@@ -114,8 +114,9 @@ internal static class TablePainter
     }
 
     /// <summary>The snapshot TTS would send for these objects (through the real snapshot.lua).</summary>
-    public static TableSnapshot Snapshot(IReadOnlyList<FakeObject> objects, GameState s, string? modAge = null) =>
-        TableSnapshot.Parse(new FakeTable(objects, FakeTable.ProbePlayers, modAge ?? (s.Age == 0 ? "None" : $"Age{s.Age}")).Snapshot());
+    public static TableSnapshot Snapshot(IReadOnlyList<FakeObject> objects, GameState s, string? modAge = null,
+        IReadOnlyList<(string Color, bool Host)>? players = null) =>
+        TableSnapshot.Parse(new FakeTable(objects, players ?? FakeTable.ProbePlayers, modAge ?? (s.Age == 0 ? "None" : $"Age{s.Age}")).Snapshot());
 
     public static TableSnapshot Snapshot(GameState s, SeatSides sides) => Snapshot(Paint(s, sides), s);
 }

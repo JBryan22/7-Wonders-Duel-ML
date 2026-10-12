@@ -50,7 +50,15 @@ public sealed record Reconciliation(
 /// <param name="MaxMoves">Moves in a chain (spec: "up to about 4 legal Moves and Reveals"; the Reveals between them are free, since the table fixes them).</param>
 /// <param name="MaxEntries">Moves and Reveals together.</param>
 /// <param name="MaxNodes">States visited before the search gives up (a guard; real tables need a few dozen).</param>
-public sealed record ReconcileOptions(int MaxMoves = 4, int MaxEntries = 10, int MaxNodes = 20_000);
+/// <param name="MaxReveals">Readings of one Reveal tried (cards flipped and taken between two readings can be named several ways).</param>
+public sealed record ReconcileOptions(int MaxMoves = 4, int MaxEntries = 10, int MaxNodes = 20_000, int MaxReveals = 24)
+{
+    /// <summary>
+    /// Catch-up (ticket 34): the first reading after the Advisor restarts, starts following, or TTS loads a game may be
+    /// many Moves ahead of the saved log (the game went on while the Advisor was closed), so the search goes deeper.
+    /// </summary>
+    public static readonly ReconcileOptions CatchUp = new(MaxMoves: 8, MaxEntries: 24, MaxNodes: 60_000, MaxReveals: 120);
+}
 
 /// <summary>
 /// Reconciliation (spec A9, ADR 0004): compares a settled Table Snapshot with the expected table of the current Game
@@ -100,8 +108,10 @@ public static class Reconciler
         }
         if (search.Blocked.Count > 0)
         {
-            var (_, reason) = search.Blocked.OrderBy(b => b.Chain.Count).First();
-            var prefixes = Distinct(search.Blocked.Where(b => b.Chain.Count > 0).Select(b => new TableChain(b.Chain)).ToList());
+            // The prefixes that leave the fewest differences with the table come first (a long catch-up may find many).
+            var ranked = search.Blocked.OrderBy(b => b.Mismatches).ThenBy(b => b.Chain.Count).ToList();
+            var reason = ranked[0].Reason;
+            var prefixes = Distinct(ranked.Where(b => b.Chain.Count > 0).Select(b => new TableChain(b.Chain)).ToList());
             return new Reconciliation(SyncStatus.Waiting, prefixes.Take(5).ToList(), missing, extra, reason, []);
         }
         return new Reconciliation(SyncStatus.Desync, [], missing, extra, null, []);
@@ -143,6 +153,9 @@ public static class Reconciler
         readonly ReconcileOptions _options;
         readonly Dictionary<int, TableView> _views = [];
         int _nodes;
+        // States already searched (with the Moves and entries used to get there): orders of Moves that reach the same
+        // state lead to the same chains, so each is searched once. Matters for the deep catch-up search.
+        readonly HashSet<string> _visited = new(StringComparer.Ordinal);
 
         public Search(int owner, SeatSides sides, TableSnapshot snapshot, ReconcileOptions options)
         {
@@ -154,7 +167,7 @@ public static class Reconciler
 
         /// <summary>Explaining chains with the state each reaches.</summary>
         public List<(TableChain Chain, string End)> Explained { get; } = [];
-        public List<(List<LogEntry> Chain, string Reason)> Blocked { get; } = [];
+        public List<(List<LogEntry> Chain, string Reason, int Mismatches)> Blocked { get; } = [];
 
         /// <summary>The snapshot placed with an Age's pyramid grid (0: no grid, during the draft).</summary>
         TableView View(int age)
@@ -180,6 +193,7 @@ public static class Reconciler
         public void Run(GameState s, List<LogEntry> chain, int moves)
         {
             if (++_nodes > _options.MaxNodes) return;
+            if (chain.Count > 0 && !_visited.Add($"{moves}:{chain.Count}:{Convert.ToBase64String(s.ToBytes())}")) return;
             if (chain.Count > 0)
             {
                 var (missing, extra) = Diff(s);
@@ -196,7 +210,8 @@ public static class Reconciler
                 var reveals = Reveals(s, out var blocked);
                 if (blocked is not null)
                 {
-                    Blocked.Add(([.. chain], blocked));
+                    var (missing, extra) = Diff(s);
+                    Blocked.Add(([.. chain], blocked, missing.Count + extra.Count));
                     return;
                 }
                 foreach (var r in reveals) Try(s, chain, r, moves);
@@ -272,7 +287,7 @@ public static class Reconciler
                 var patterns = new List<Reveal>();
                 void Pick(int from, List<int> chosen)
                 {
-                    if (patterns.Count >= 24) return;
+                    if (patterns.Count >= _options.MaxReveals) return;
                     if (chosen.Count == GameState.GuildsPerGame)
                     {
                         patterns.Add(new GuildPatternReveal([.. chosen.Order()]));
@@ -321,7 +336,7 @@ public static class Reconciler
                 var reveals = new List<Reveal>();
                 void Assign(int i, CardSet used, List<(int Slot, int Card)> chosen)
                 {
-                    if (reveals.Count >= 24) return;
+                    if (reveals.Count >= _options.MaxReveals) return;
                     if (i == open.Count)
                     {
                         if (chosen.Count > 0) reveals.Add(new SlotReveal(s.Age, s.AgeUntouched, [.. chosen.OrderBy(x => x.Slot)]));
