@@ -156,7 +156,7 @@ public sealed class TtsLifecycleTests : IDisposable
         setup.Enter("P1 draft pyramids");
         Assert.False(TableLifecycle.LooksFresh(TablePainter.Snapshot(setup.State, sides))); // a Wonder drafted
         Assert.False(TableLifecycle.LooksFresh(TablePainter.Snapshot([], setup.State, modAge: "Age1"))); // an Age dealt
-        var practice = TableSnapshot.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "tts", "fixtures", "ml-practice.snapshot.json")));
+        var practice = TableSnapshot.Parse(File.ReadAllText(TtsSnapshotTests.FixturePath));
         Assert.False(TableLifecycle.LooksFresh(practice));
     }
 
