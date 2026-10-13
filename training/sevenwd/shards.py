@@ -12,10 +12,21 @@ A shard is a directory of plain NumPy .npy files (little-endian, C order) plus a
 
 Row i's legal Moves are policy_index[offset[i]:offset[i+1]]: every legal Move is listed, including those with
 target 0, so the list doubles as the legal mask for the masked softmax. Targets in a row sum to 1.
+
+A **compacted** shard (`compact_shard`, which the training loop runs on every new Self-Play shard) replaces the dense
+input.npy by the same rows in CSR form; the inputs are ~94% zeros, so this is ~8x smaller and lets a multi-Generation
+training window stay in RAM (ticket 26):
+
+    input_offset.npy    int64   [N + 1]           CSR row pointers (input_offset[0] = 0)
+    input_index.npy     int16   [K]               input index of each nonzero entry, ascending within a row
+    input_value.npy     float16 [K]               its value
+
+The two forms hold exactly the same numbers; readers accept either.
 """
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -92,7 +103,14 @@ class Shard:
                 raise ShardError(f"{self.directory / name}: dtype {a.dtype}, expected {np.dtype(dtype)}")
             return a
 
-        self.input = load("input.npy", np.float16)
+        self.sparse = not (self.directory / "input.npy").exists() and (self.directory / "input_offset.npy").exists()
+        if self.sparse:
+            self.input = None
+            self.input_offset = np.asarray(load("input_offset.npy", np.int64))
+            self.input_index = load("input_index.npy", np.int16)
+            self.input_value = load("input_value.npy", np.float16)
+        else:
+            self.input = load("input.npy", np.float16)
         self.offset = np.asarray(load("policy_offset.npy", np.int64))
         self.index = load("policy_index.npy", np.int16)
         self.prob = load("policy_prob.npy", np.float32)
@@ -100,7 +118,14 @@ class Shard:
         self.outcome = load("outcome.npy", np.int8)
 
         n = header.get("positions")
-        if self.input.shape != (n, input_size):
+        if self.sparse:
+            if (self.input_offset.shape != (n + 1,) or self.input_offset[0] != 0
+                    or self.input_offset[-1] != len(self.input_index) or len(self.input_value) != len(self.input_index)):
+                raise ShardError(f"{self.directory}: bad input_offset")
+            if len(self.input_index) and (int(self.input_index.min()) < 0
+                                          or int(self.input_index.max()) >= input_size):
+                raise ShardError(f"{self.directory}: input index out of range (input size {input_size})")
+        elif self.input.shape != (n, input_size):
             raise ShardError(f"{self.directory}: input shape {self.input.shape}, expected ({n}, {input_size})")
         if self.offset.shape != (n + 1,) or self.offset[0] != 0 or self.offset[-1] != len(self.index):
             raise ShardError(f"{self.directory}: bad policy_offset")
@@ -111,6 +136,60 @@ class Shard:
         if n and (int(self.outcome.min()) < 0 or int(self.outcome.max()) >= outcome_size):
             raise ShardError(f"{self.directory}: outcome class out of range")
         self.positions = n
+
+
+def compact_shard(directory: str | Path, chunk: int = 32768) -> bool:
+    """Replace a shard's dense input.npy by input_offset/input_index/input_value (see the module docstring). Safe to
+    rerun after a crash: the sparse files are complete before input.npy is deleted, and input_offset.npy (renamed into
+    place last) marks them complete. Returns True when it compacted something.
+
+    Reads the dense file with plain reads, in chunks, twice (count, then write), and writes sequentially: a
+    desktop-hour shard is ~18 GB dense, and memory-mapping it would pull all of it into this process's working set."""
+    directory = Path(directory)
+    dense_path = directory / "input.npy"
+    if not dense_path.exists():
+        return False
+    if not (directory / "input_offset.npy").exists():
+        counts = np.concatenate([np.count_nonzero(block, axis=1) for block in _dense_chunks(dense_path, chunk)]
+                                or [np.zeros(0, np.int64)]).astype(np.int64)
+        offset = np.zeros(len(counts) + 1, np.int64)
+        np.cumsum(counts, out=offset[1:])
+        total = int(offset[-1])
+        tmp = {name: directory / f"{name}.tmp.npy" for name in ("input_index", "input_value", "input_offset")}
+        with open(tmp["input_index"], "wb") as fi, open(tmp["input_value"], "wb") as fv:
+            for f, dtype in ((fi, np.int16), (fv, np.float16)):
+                np.lib.format.write_array_header_1_0(f, {"descr": np.lib.format.dtype_to_descr(np.dtype(dtype)),
+                                                         "fortran_order": False, "shape": (total,)})
+            written = 0
+            for block in _dense_chunks(dense_path, chunk):
+                rows, cols = np.nonzero(block)  # row-major: ascending columns within each row
+                fi.write(cols.astype(np.int16).tobytes())
+                fv.write(block[rows, cols].astype(np.float16).tobytes())
+                written += len(cols)
+            if written != total:
+                raise ShardError(f"{dense_path} changed while it was compacted")
+        np.save(tmp["input_offset"], offset)
+        for name in ("input_index", "input_value", "input_offset"):
+            os.replace(tmp[name], directory / f"{name}.npy")
+    dense_path.unlink()
+    return True
+
+
+def _dense_chunks(path: Path, chunk: int):
+    """The rows of a float16 [N, D] .npy file, `chunk` rows at a time, read without a memory map."""
+    with open(path, "rb") as f:
+        version = np.lib.format.read_magic(f)
+        read_header = np.lib.format.read_array_header_1_0 if version == (1, 0) else np.lib.format.read_array_header_2_0
+        shape, fortran, dtype = read_header(f)
+        if fortran or dtype != np.dtype(np.float16) or len(shape) != 2:
+            raise ShardError(f"{path}: expected a C-order float16 matrix, got {dtype} {shape}")
+        n, width = shape
+        for a in range(0, n, chunk):
+            rows = min(chunk, n - a)
+            block = np.fromfile(f, dtype=np.float16, count=rows * width)
+            if block.size != rows * width:
+                raise ShardError(f"{path}: truncated")
+            yield block.reshape(rows, width)
 
 
 def find_shards(paths: list[str | Path]) -> list[Path]:
@@ -143,7 +222,7 @@ class ShardDataset:
         positions = np.asarray(positions, dtype=np.int64)
         b = len(positions)
         out = Batch(
-            input=np.empty((b, self.input_size), np.float32),
+            input=np.zeros((b, self.input_size), np.float32),
             policy=np.zeros((b, self.policy_size), np.float32),
             legal=np.zeros((b, self.policy_size), bool),
             value=np.empty(b, np.float32),
@@ -156,7 +235,13 @@ class ShardDataset:
             local = positions[rows] - self.starts[s]
             order = np.argsort(local)  # sorted reads are kinder to a memory map
             rows, local = rows[order], local[order]
-            out.input[rows] = shard.input[local]
+            if shard.sparse:
+                b0, b1 = shard.input_offset[local], shard.input_offset[local + 1]
+                n_in = b1 - b0
+                flat_in = np.repeat(b0 - np.cumsum(n_in) + n_in, n_in) + np.arange(n_in.sum())
+                out.input[np.repeat(rows, n_in), shard.input_index[flat_in].astype(np.int64)] =                     shard.input_value[flat_in]
+            else:
+                out.input[rows] = shard.input[local]
             out.value[rows] = shard.value[local]
             out.outcome[rows] = shard.outcome[local]
             # Gather each row's CSR slice without a Python loop.

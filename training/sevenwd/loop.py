@@ -24,6 +24,9 @@ new Run). Layout:
     net/latest.pt          the training checkpoint (network, optimiser, step count)
     net/gen-NNNN.onnx      Generation N's network; net/gen-NNNN.train.json its training plan and losses
     selfplay/gen-NNNN/     Generation N's Self-Play (played by Generation N-1's network): games.jsonl, shard/
+                           (compacted: sparse inputs, see shards.py). When the shard leaves the training window
+                           it is deleted and games.jsonl is gzipped to games.jsonl.gz (gunzip it before using
+                           `7wd selfplay-check` or `7wd shard` on it)
     matches/gen-NNNN-vs-*/ Generation N's Matches (match.jsonl, summary.json)
 
 Generation 0 is the starting network (random, or `init`), measured against Random so the Elo chain starts on the
@@ -48,6 +51,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import gzip
 import hashlib
 import json
 import logging
@@ -72,6 +76,7 @@ from .notify import notify
 from .runstate import (PAUSE, PID, LineCounter, RunError, RunLock, StatusWriter, add_override, clear_pause,
                        pause_requested, read_overrides)
 from .shards import HEADER as SHARD_HEADER
+from .shards import compact_shard
 from .stopping import StopReason
 from .train import TrainConfig, load_checkpoint, train
 
@@ -344,14 +349,27 @@ def window_for(run: Run, g: int) -> list[tuple[int, int]]:
 
 
 def clean_shards(run: Run, oldest_kept: int) -> list[int]:
-    """Delete the shards of Generations older than the window (they never re-enter it). Game Records stay."""
+    """Delete the shards of Generations older than the window (they never re-enter it). Game Records stay, gzipped
+    (~4.5x smaller: a desktop-hour of Self-Play writes ~0.5 GB of records)."""
     removed = []
     for i in range(1, oldest_kept):
         shard = run.shard_dir(i)
         if shard.exists():
             shutil.rmtree(shard)
             removed.append(i)
+        gzip_records(run.selfplay_dir(i))
     return removed
+
+
+def gzip_records(directory: Path) -> None:
+    plain, packed = directory / "games.jsonl", directory / "games.jsonl.gz"
+    if not plain.exists():
+        return
+    tmp = packed.with_name(packed.name + ".tmp")
+    with open(plain, "rb") as src, gzip.open(tmp, "wb", compresslevel=6) as dst:
+        shutil.copyfileobj(src, dst, 1 << 20)
+    os.replace(tmp, packed)
+    plain.unlink()
 
 
 # --- the C# side -------------------------------------------------------------------------------------------------------
@@ -606,19 +624,22 @@ class Loop:
             if s.workers:
                 args += ["--workers", str(s.workers)]
             self.cli.run(args, self.run.root, directory / "log.txt")
+        if compact_shard(self.run.shard_dir(g)):
+            self.say(f"Generation {g}: shard compacted (sparse inputs)")
         summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
-        records = read_records(directory / "games.jsonl", self.run.manifest.version)
-        if len(records) != s.games:
-            raise RuntimeError(f"{directory}: {len(records)} Game Records, expected {s.games}")
+        games = 0
         mix = {"military": 0, "science": 0, "civilian": 0, "draw": 0}
-        for r in records:
+        for r in read_records(directory, self.run.manifest.version):
+            games += 1
             mix["draw" if r["winner"] < 0 else str(r["victory"]).lower()] += 1
+        if games != s.games:
+            raise RuntimeError(f"{directory}: {games} Game Records, expected {s.games}")
         return {
-            "selfplay_games": len(records),
+            "selfplay_games": games,
             "selfplay_positions": shard_positions(self.run, g),
             "selfplay_seconds": summary.get("seconds"),
             "selfplay_positions_per_s": summary.get("positionsPerSecond"),
-            **{f"victory_{k}": v / len(records) for k, v in mix.items()},
+            **{f"victory_{k}": v / games for k, v in mix.items()},
         }
 
     def train_generation(self, g: int, window: list[tuple[int, int]], new_positions: int) -> dict:
@@ -717,12 +738,19 @@ def anchor_cols(m: dict) -> dict:
             "anchor_elo": m.get("eloA")}
 
 
-def read_records(path: Path, encoding_version: int) -> list[dict]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    header = json.loads(lines[0])
-    if header.get("encodingVersion") != encoding_version:
-        raise RuntimeError(f"{path}: Self-Play encoded v{header.get('encodingVersion')}, the Run is v{encoding_version}")
-    return [json.loads(line) for line in lines[1:] if line.strip()]
+def read_records(directory: Path, encoding_version: int):
+    """The Game Records of a Self-Play directory (games.jsonl, or games.jsonl.gz once gzipped), one at a time: a
+    desktop-hour Generation holds ~0.5 GB of them."""
+    path = directory / "games.jsonl"
+    with (open(path, encoding="utf-8") if path.exists()
+          else gzip.open(directory / "games.jsonl.gz", "rt", encoding="utf-8")) as f:
+        header = json.loads(f.readline())
+        if header.get("encodingVersion") != encoding_version:
+            raise RuntimeError(f"{path}: Self-Play encoded v{header.get('encodingVersion')}, "
+                               f"the Run is v{encoding_version}")
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
 
 
 def first_line(e: BaseException) -> str:

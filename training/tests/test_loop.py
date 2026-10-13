@@ -2,6 +2,7 @@
 test (spec A11): 2 Generations in the tiny config, Self-Play -> training -> ONNX export -> Matches, through the real
 C# `7wd` (skipped without the .NET SDK; CI has it)."""
 import csv
+import gzip
 import json
 import shutil
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 from sevenwd.config import ConfigError, RunConfig, load_config, parse_config
 from sevenwd.export import read_metadata
 from sevenwd.loop import (COLUMNS, Run, RunError, clean_shards, create_run, main, open_run, read_best, read_rows,
-                          window_for)
+                          read_records, window_for)
 from sevenwd.shards import write_shard
 
 from conftest import synthetic_positions
@@ -24,6 +25,13 @@ def test_default_config_lists_the_built_in_defaults():
     assert load_config(CONFIGS / "default.yaml") == RunConfig()
     tiny = load_config(TINY)
     assert tiny.selfplay.games == 10 and tiny.selfplay.simulations == 8 and tiny.generations == 2
+
+
+def test_desktop_config_is_the_calibrated_one():
+    desktop = load_config(CONFIGS / "desktop.yaml")  # ticket 26: Generations of ~1 desktop-hour
+    assert desktop.selfplay.games == 55_000 and desktop.selfplay.simulations == 64
+    assert desktop.training.window_positions == 25_000_000 and desktop.training.reuse == 2.0
+    assert desktop.matches.mode == "classic" and desktop.matches.simulations == 800 and desktop.stop.cap_hours == 300
 
 
 def test_config_refuses_unknown_and_bad_settings():
@@ -95,7 +103,11 @@ def test_window_takes_the_newest_generations_and_old_shards_are_deleted(manifest
 
     assert clean_shards(run, 2) == [1]
     assert not run.shard_dir(1).exists() and run.shard_dir(2).exists()
-    assert (run.selfplay_dir(1) / "games.jsonl").exists()
+    # The records stay, gzipped; the loop still reads them.
+    assert not (run.selfplay_dir(1) / "games.jsonl").exists()
+    with gzip.open(run.selfplay_dir(1) / "games.jsonl.gz", "rt", encoding="utf-8") as f:
+        assert f.read() == "records stay\n"
+    assert (run.selfplay_dir(2) / "games.jsonl").exists()
     assert clean_shards(run, 2) == []
 
 
@@ -126,6 +138,8 @@ def test_smoke_two_tiny_generations(manifest, tiny_run):
         assert header["encodingVersion"] == manifest.version and header["games"] == 10
         assert header["model"] == f"net/gen-{g - 1:04d}.onnx"
         assert len(lines) == 11
+        assert not (run.shard_dir(g) / "input.npy").exists()  # compacted after Self-Play
+        assert len(list(read_records(run.selfplay_dir(g), manifest.version))) == 10
         shard = json.loads((run.shard_dir(g) / "shard.json").read_text(encoding="utf-8"))
         assert shard["encoding_version"] == manifest.version
         assert int(rows[g]["selfplay_positions"]) == shard["positions"] > 0
