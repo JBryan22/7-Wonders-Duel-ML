@@ -13,6 +13,11 @@ public enum InferenceDevice { Auto, Cpu, Cuda }
 /// (training/sevenwd/export.py). Loading checks the version handshake: the model's <c>encoding_version</c> must be this
 /// build's <see cref="NetworkEncoding.Version"/> and its sizes must match the Encoding, otherwise it is refused.
 /// <para>
+/// A network may drop input blocks (metadata <c>dropped_inputs</c>, e.g. <c>derived</c>: a pilot trained without the
+/// derived features). It zeroes them inside the model, so it takes the same Encoding inputs; loading checks that every
+/// name is an input block of this Encoding (<see cref="DroppedInputs"/>).
+/// </para>
+/// <para>
 /// <see cref="Run"/> is thread-safe, but search goes through an <see cref="InferenceBatcher"/>, which batches the
 /// requests of many concurrent searches into one call.
 /// </para>
@@ -44,12 +49,20 @@ public sealed class NeuralNetwork : IDisposable
     /// <summary>The model's metadata as exported (format, encoding_version, sizes, width, blocks, ...).</summary>
     public IReadOnlyDictionary<string, string> Metadata { get; }
 
+    /// <summary>The Encoding input blocks the network never sees (zeroed inside the model); empty for most networks.</summary>
+    public IReadOnlyList<string> DroppedInputs => ParseDropped(Metadata);
+
+    static string[] ParseDropped(IReadOnlyDictionary<string, string> metadata) =>
+        metadata.TryGetValue("dropped_inputs", out var dropped) && dropped.Length > 0 ? dropped.Split(',') : [];
+
     /// <summary>Why CUDA was not used when <see cref="InferenceDevice.Auto"/> fell back to the CPU (null otherwise).</summary>
     public string? FallbackReason { get; private init; }
 
     public override string ToString() =>
         $"{System.IO.Path.GetFileName(Path)} (Encoding v{Metadata.GetValueOrDefault("encoding_version")}, " +
-        $"{Metadata.GetValueOrDefault("width")}x{Metadata.GetValueOrDefault("blocks")}, {Device.ToString().ToUpperInvariant()})";
+        $"{Metadata.GetValueOrDefault("width")}x{Metadata.GetValueOrDefault("blocks")}, " +
+        (DroppedInputs.Count > 0 ? $"without {string.Join(", ", DroppedInputs)}, " : "") +
+        $"{Device.ToString().ToUpperInvariant()})";
 
     /// <summary>
     /// Loads a model and checks it against this build's Encoding. <paramref name="cpuThreads"/> is ONNX Runtime's
@@ -133,6 +146,11 @@ public sealed class NeuralNetwork : IDisposable
             }
             if (metadata.TryGetValue("outcome_classes", out var classes) && classes != string.Join(',', NetworkEncoding.OutcomeClasses))
                 throw new FormatException($"{name}'s outcome classes ({classes}) differ from the Encoding's");
+            foreach (var block in ParseDropped(metadata))
+                if (!NetworkEncoding.InputBlocks.Any(b => b.Name == block))
+                    throw new FormatException(
+                        $"{name} drops the input block '{block}', which Encoding v{NetworkEncoding.Version} doesn't have " +
+                        $"(blocks: {string.Join(", ", NetworkEncoding.InputBlocks.Select(b => b.Name))})");
             return new NeuralNetwork(path, session, device, new Dictionary<string, string>(metadata));
         }
         catch

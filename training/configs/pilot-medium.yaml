@@ -1,0 +1,77 @@
+# Pilot 2 (ticket 27): Medium network = pilot-small.yaml (desktop.yaml, anchor_every 2, 20-hour cap, plateau/warm-start rules off)
+# with a 512x6 network, Self-Play and Matches on CUDA, and 40,000 games so a Generation stays ~1 desktop-hour (ticket 26:
+# Medium Self-Play 1,591 positions/s on CUDA = ~29 min for 40,000 games; its Matches ~23 min each, on CUDA).
+# The calibrated desktop config (ticket 26; spec A7 "Tuning procedure"): the base for the pilots (ticket 27) and the
+# main Run (ticket 28). Measured on the Windows desktop (i5-12600KF, 16 logical CPUs, 32 GB RAM, RTX 3060 12 GB,
+# NVMe) on 2026-10-12; the numbers and how they were measured are in .scratch/7wd-v1-build/issues/26-calibration-run.md.
+# Put Runs outside OneDrive (they write GBs per hour), e.g. from training/:
+#   uv run 7wd-train start --run C:/7wd-runs/main --config configs/desktop.yaml
+#
+# One Generation is about 1 desktop-hour (measured with a full-size Generation, calib-b):
+#   Self-Play      55,000 games, 3.78M searched positions, at 20.4 games/s                     ~45 min
+#   compaction     the new shard's dense inputs (18 GB) -> sparse (2.2 GB, see shards.py)      ~3.5 min
+#   training       2 x 3.78M / 1024 = 7,376 steps at ~47-53 steps/s (GPU)                      ~2.5 min
+#   export         ONNX                                                                        ~1 s
+#   Matches        vs the previous Generation, 400 games at 800 simulations                    ~6 min
+#                  vs the best network too, when it is older than the previous one             +6 min
+#                  vs the Anchor every 5th Generation (~3.2 min)                                ~0.6 min averaged
+#   total          ~57 min, ~63 min when the best lags behind
+# So the 300-hour cap buys ~290-300 Generations = ~16M Self-Play games (spec sanity check: >= 500k).
+# Disk (C:\7wd-runs): ~16 GB of shards in the window + an 18 GB dense shard while one is compacted, Game Records
+# ~0.45 GB per Generation (gzipped to ~0.1 GB once out of the window): ~35 GB at any time + ~30 GB over 300 hours.
+encoding_version: 1
+seed: 0
+generations: null          # keep going until stopped (cap, plateau, warm-start trigger or a pause)
+init: null
+
+network:
+  width: 512               # pilot: Medium
+  blocks: 6                # pilot: Medium
+
+selfplay:
+  games: 40000             # pilot: ~29 min of Medium Self-Play on CUDA (+ ~23-min Matches): ~1 desktop-hour
+  simulations: 64          # the spec's default; 32 sims measured no faster (~1,585 vs ~1,620 positions/s: the
+                           # search's own overhead dominates), 128 sims halves the games (763 positions/s)
+  mode: gumbel
+  search: ""
+  promo_rate: 1.0
+  device: cuda             # pilot: the Medium net is 2.3x faster on CUDA (1,591 vs 696 positions/s)
+  threads: 4
+  parallel: null           # 512 games at a time (32 per logical CPU): mean inference batch ~75
+  workers: null            # 4 inference threads
+
+training:
+  window_positions: 25000000  # ~7 Generations of ~3.8M (the spec's "window ~7 Generations"); compacted shards
+                              # take ~600 bytes/position, so the window is ~16 GB and stays in RAM (dense it
+                              # would be ~125 GB)
+  reuse: 2.0               # each new position is seen ~2x on average: ~7,400 steps per Generation
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  device: auto             # CUDA: ~47-53 steps/s for 256x4 and 512x6 alike (batch building, not the GPU, limits it)
+  checkpoint_minutes: 5
+  min_steps: 1
+
+matches:
+  pairs: 200               # 400 games, the spec's Match size
+  simulations: 800
+  mode: classic            # the evaluation search: most-visited Move, no noise. At 800 sims classic search beat
+                           # Gumbel search with the same network 61.5% (CI 54.6-68.0); gumbel=0 didn't help (46%).
+                           # Same speed. Ticket 25 saw the same at 64 sims. Self-Play stays Gumbel.
+  search: ""
+  device: cuda             # pilot: Medium Matches 6.6 s per seed pair on CUDA vs 7.3 on the CPU
+  threads: 4
+  parallel: 64             # game threads: 64 measured ~18% faster than the default 16 (32 and 128: ~same as 64)
+  promo: null              # base-only (headline Elo)
+  anchor: mcts             # the Anchor, Elo 1512
+  anchor_elo: null
+  anchor_every: 2          # pilot: more Anchor points for the comparison
+  generation0_opponent: random
+
+stop:
+  cap_hours: 20            # pilot: 20 desktop-hours
+  plateau_generations: null  # pilot: off
+  science_min_share: null  # pilot: off
+  science_from: 6          # ... over Generations 6-10 (desktop-hours ~6-10, ~275k games)
+  science_to: 10
+  progress_by: null        # pilot: off

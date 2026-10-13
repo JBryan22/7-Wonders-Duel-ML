@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import stopping
+from .awake import KeepAwake
 from .config import ConfigError, RunConfig, load_config
 from .export import export_onnx, read_metadata
 from .manifest import REPO_ROOT, Manifest, load_manifest
@@ -222,6 +223,7 @@ def create_run(root: str | Path, config_path: str | Path, manifest: Manifest | N
     manifest = manifest or load_manifest()
     if manifest.version != config.encoding_version:
         raise RunError(f"the config asks for Encoding v{config.encoding_version} but the manifest is v{manifest.version}")
+    check_dropped_inputs(config, manifest)
     root.mkdir(parents=True, exist_ok=True)
     for sub in ("net", "selfplay", "matches"):
         (root / sub).mkdir(exist_ok=True)
@@ -233,6 +235,7 @@ def create_run(root: str | Path, config_path: str | Path, manifest: Manifest | N
         "config_source": str(Path(config_path).resolve()),
         "encoding_version": manifest.version,
         "manifest_sha256": manifest_hash(manifest.path),
+        **({"dropped_inputs": list(config.dropped_inputs)} if config.dropped_inputs else {}),
         "git": git_info(),
         "machine": machine_info(),
     })
@@ -270,7 +273,17 @@ def open_run(root: str | Path, config_path: str | Path | None = None, manifest: 
     if manifest_hash(manifest.path) != record["manifest_sha256"]:
         raise RunError(f"the Encoding manifest {manifest.path} changed since {root} started (same version "
                        f"{manifest.version}): the Encoding must not change inside a Run")
+    check_dropped_inputs(config, manifest)
     return Run(root, config, manifest)
+
+
+def check_dropped_inputs(config: RunConfig, manifest: Manifest) -> None:
+    """`dropped_inputs` names input blocks of the Encoding manifest (e.g. derived)."""
+    blocks = [b.name for b in manifest.input_blocks]
+    unknown = [n for n in config.dropped_inputs if n not in blocks]
+    if unknown:
+        raise RunError(f"dropped_inputs: {', '.join(unknown)} is not an input block of Encoding v{manifest.version} "
+                       f"(blocks: {', '.join(blocks)})")
 
 
 def start_run(root: str | Path, config_path: str | Path | None = None, manifest: Manifest | None = None) -> Run:
@@ -486,9 +499,9 @@ class Loop:
             g = len(rows)
             while last is None or g <= last:
                 self.check_pause()
-                started = time.monotonic()
+                started = self.status.seconds()  # desktop time: a sleep in the middle doesn't count
                 row = self.generation_with_retries(g)
-                row["seconds"] = time.monotonic() - started
+                row["seconds"] = self.status.seconds() - started
                 row["finished"] = now()
                 row["hours"] = self.status.hours()
                 reason = stopping.check(self.config, rows + [row], row["hours"], read_overrides(self.run.root))
@@ -594,7 +607,8 @@ class Loop:
             init = (REPO_ROOT / init) if (REPO_ROOT / init).exists() else init.resolve()
         self.say("Generation 0: " + (f"starting network from {init}" if init else "random starting network"))
         result = train(self.run.manifest, [], TrainConfig(steps=0, width=c.network.width, blocks=c.network.blocks,
-                                                          seed=c.seed, device="cpu"),
+                                                          seed=c.seed, device="cpu",
+                                                          dropped_inputs=tuple(c.dropped_inputs)),
                        checkpoint=self.run.checkpoint, init=init)
         self.export(result.model, out)
 
@@ -604,9 +618,14 @@ class Loop:
         tmp = out.with_name(out.name + ".tmp")
         export_onnx(model, self.run.manifest, tmp)
         # The Encoding-version handshake on the Python side; C# checks it again when it loads the model.
-        version = read_metadata(tmp).get("encoding_version")
+        metadata = read_metadata(tmp)
+        version = metadata.get("encoding_version")
         if version != str(self.run.manifest.version):
             raise RuntimeError(f"{tmp} carries Encoding version {version}, the Run is v{self.run.manifest.version}")
+        dropped = metadata.get("dropped_inputs", "")
+        if dropped != ",".join(self.config.dropped_inputs):
+            raise RuntimeError(f"{tmp} drops the inputs {dropped!r}, the Run's config says "
+                               f"{','.join(self.config.dropped_inputs)!r}")
         os.replace(tmp, out)
 
     def selfplay(self, g: int) -> dict:
@@ -672,7 +691,8 @@ class Loop:
                            TrainConfig(steps=remaining, batch_size=t.batch_size, learning_rate=t.learning_rate,
                                        weight_decay=t.weight_decay, width=c.network.width, blocks=c.network.blocks,
                                        seed=c.seed + 7919 * g + step_now, device=t.device,
-                                       checkpoint_minutes=t.checkpoint_minutes),
+                                       checkpoint_minutes=t.checkpoint_minutes,
+                                       dropped_inputs=tuple(c.dropped_inputs)),
                            checkpoint=self.run.checkpoint, tick=tick)
             # Losses are averaged over all of the Generation's steps, also when a pause split them over sessions.
             sums = plan.pop("partial_sums", {})
@@ -770,6 +790,7 @@ def progress_fields(rows: list[dict]) -> dict:
         score = stopping.value(r.get("anchor_score"))
         if score is not None:
             fields["anchor"] = f"{score:.0%} at Generation {r['generation']}"
+            fields["anchor_elo"] = stopping.value(r.get("anchor_elo"))
             break
     if rows and stopping.value(rows[-1].get("best_generation")) is not None:
         fields["best"] = int(stopping.value(rows[-1]["best_generation"]))
@@ -812,6 +833,16 @@ def summary_line(row: dict) -> str:
     return "; ".join(parts)
 
 
+def next_pilot_hint(root: Path) -> str:
+    """For a Run in the pilot queue that stopped itself: which pilot the next `7wd-train start` moves on to."""
+    try:
+        from .control import queue_after
+        following = queue_after(root)
+    except Exception:  # the hint is informational only
+        return ""
+    return f". Start training moves on to the next pilot, {following.name}" if following else ""
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="sevenwd-loop", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -839,7 +870,10 @@ def main(argv: list[str] | None = None) -> int:
     status.start_heartbeat()
     loop = Loop(run, None, status=status, ignore_stop_now=args.ignore_stop)  # type: ignore[arg-type]
     state, reason, kind, code = "done", None, None, 0
+    awake = KeepAwake()  # no idle sleep while the loop runs; released on pause, stop and exit
     try:
+        if awake.acquire():
+            loop.say(f"keeping the computer awake while training: {awake.how}")
         loop.cli = Cli.locate(args.cli, say=loop.say)
         done = loop.run_until(args.generations)
         reason = f"finished Generation {done - 1}, as configured"
@@ -849,7 +883,7 @@ def main(argv: list[str] | None = None) -> int:
         state, reason, kind, code = "stopped", e.reason.message, e.reason.kind, SELF_STOPPED
         loop.say(f"the Run stopped itself: {reason}")
         if e.tell:
-            notify(f"7WD training: {run.root.name} stopped", reason)
+            notify(f"7WD training: {run.root.name} stopped", reason + next_pilot_hint(run.root))
         print(f"sevenwd-loop: stopped: {reason}", file=sys.stderr)
     except (LoopStopped, KeyboardInterrupt) as e:
         state, reason, code = "paused", str(e) or "Ctrl+C", STOPPED
@@ -868,6 +902,7 @@ def main(argv: list[str] | None = None) -> int:
         notify(f"7WD training: {run.root.name} stopped (fault)", first_line(e))
         print(f"sevenwd-loop: failed: {e}", file=sys.stderr)
     finally:
+        awake.release()
         status.stop_heartbeat()
         if state == "paused":
             clear_pause(run.root)

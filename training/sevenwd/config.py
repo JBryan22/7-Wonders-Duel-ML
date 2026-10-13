@@ -8,6 +8,10 @@ smoke-test config.
     seed: 0                 Self-Play, training and Match seeds all derive from it
     generations: null       stop after this Generation (null: keep going until stopped)
     init: null              start Generation 0 from this checkpoint (e.g. another Run's net/latest.pt) instead of random
+    dropped_inputs: []      Encoding input blocks the network never sees, e.g. [derived] (the derived features): the
+                            network multiplies them by 0 in its input layer. The Encoding (v1), the C# encoder and the
+                            shards stay the same; the exported model says which blocks it drops (ONNX metadata
+                            dropped_inputs), and C# checks the names. Block names: data/encoding/v1.json
     network:   width, blocks
     selfplay:  games, simulations, mode (gumbel | classic), search (extra neural: settings), promo_rate, device,
                threads (ONNX Runtime CPU threads), parallel (games at a time), workers (inference threads)
@@ -97,6 +101,7 @@ class RunConfig:
     seed: int = 0
     generations: int | None = None
     init: str | None = None
+    dropped_inputs: tuple[str, ...] = ()
     network: NetworkSection = field(default_factory=NetworkSection)
     selfplay: SelfPlaySection = field(default_factory=SelfPlaySection)
     training: TrainingSection = field(default_factory=TrainingSection)
@@ -126,6 +131,12 @@ def _build(cls, raw: Any, where: str):
             values[name] = _build(SECTIONS[name], value, f"{where}.{name}" if where else name)
             continue
         default = getattr(cls(), name)
+        if isinstance(default, tuple):
+            if value is None:
+                value = ()
+            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+                raise ConfigError(f"{where + '.' if where else ''}{name}: expected a list of names")
+            value = tuple(value)
         if value is not None and isinstance(default, float) and isinstance(value, int) and not isinstance(value, bool):
             value = float(value)
         values[name] = value
@@ -164,6 +175,7 @@ def validate(c: RunConfig) -> None:
     need(c.matches.pairs > 0 and c.matches.simulations > 0, "matches pairs and simulations must be positive")
     need(c.matches.mode in ("gumbel", "classic"), "matches.mode is gumbel or classic")
     need(c.matches.anchor_every >= 0, "matches.anchor_every is 0 (never) or a positive number of Generations")
+    need(len(set(c.dropped_inputs)) == len(c.dropped_inputs), "dropped_inputs names a block twice")
     need(c.generations is None or c.generations >= 0, "generations must be 0 or more")
     st = c.stop
     need(st.cap_hours is None or st.cap_hours > 0, "stop.cap_hours is positive (or null: no cap)")

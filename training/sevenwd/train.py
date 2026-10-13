@@ -43,6 +43,9 @@ class TrainConfig:
     seed: int = 0
     device: str = "auto"
     checkpoint_minutes: float = 5.0
+    # Input blocks the network drops (a new network only; a checkpoint keeps its own). None: none for a new network,
+    # and no check against a checkpoint; a tuple must match the checkpoint's.
+    dropped_inputs: tuple[str, ...] | None = None
 
 
 @dataclass
@@ -100,7 +103,11 @@ def train(
     resume = load_checkpoint(checkpoint, manifest) if checkpoint and checkpoint.exists() else None
     start = resume or (load_checkpoint(init, manifest) if init else None)
     net_config = (NetworkConfig(**start["network"]) if start
-                  else NetworkConfig.from_manifest(manifest, config.width, config.blocks))
+                  else NetworkConfig.from_manifest(manifest, config.width, config.blocks,
+                                                   tuple(config.dropped_inputs or ())))
+    if config.dropped_inputs is not None and tuple(config.dropped_inputs) != net_config.dropped_inputs:
+        raise ValueError(f"the checkpoint drops the inputs {list(net_config.dropped_inputs)}, "
+                         f"asked for {list(config.dropped_inputs)}")
     if (net_config.input_size, net_config.policy_size, net_config.outcome_size) != (
             manifest.input_size, manifest.policy_size, manifest.outcome_size):
         raise ValueError("checkpoint sizes don't match the manifest")
@@ -170,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--width", type=int, default=256, help="network width (ignored when starting from a checkpoint)")
     p.add_argument("--blocks", type=int, default=4, help="residual blocks (ignored when starting from a checkpoint)")
+    p.add_argument("--drop-inputs", nargs="*", help="input blocks the network never sees, e.g. derived (a new "
+                                                    "network; must match a checkpoint's)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="auto", help="auto (CUDA if available), cpu, cuda, cuda:1, ...")
     p.add_argument("--checkpoint-minutes", type=float, default=5.0)
@@ -182,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--steps > 0 needs --data")
     config = TrainConfig(steps=args.steps, batch_size=args.batch_size, learning_rate=args.lr,
                          weight_decay=args.weight_decay, width=args.width, blocks=args.blocks, seed=args.seed,
-                         device=args.device, checkpoint_minutes=args.checkpoint_minutes)
+                         device=args.device, checkpoint_minutes=args.checkpoint_minutes,
+                         dropped_inputs=tuple(args.drop_inputs) if args.drop_inputs is not None else None)
     result = train(manifest, shard_dirs, config, checkpoint=args.checkpoint, init=args.init,
                    log_every=args.log_every)
     export_onnx(result.model, manifest, args.out)

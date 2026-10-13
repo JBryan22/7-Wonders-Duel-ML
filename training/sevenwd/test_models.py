@@ -4,6 +4,8 @@
     tiny.expected.json  its torch outputs for two fixed inputs, so C# can check it runs the model the same way
     zero.onnx           all weights zero: a uniform policy (every logit 0) and value 0 everywhere
     wrong-version.onnx  like zero.onnx but stamped with Encoding version 999, which C# must refuse
+    no-derived.onnx     a seeded random network (8 x 1) that drops the derived-feature inputs (dropped_inputs=derived)
+    bad-drop.onnx       like zero.onnx but claiming to drop an input block the Encoding doesn't have: refused
 
 Regenerate with `uv run python -m sevenwd.test_models` (from training/) after a change to the network or the export.
 """
@@ -50,10 +52,17 @@ def write_test_models(out: Path, manifest: Manifest | None = None) -> list[Path]
         for p in zero.parameters():
             p.zero_()
 
+    torch.manual_seed(27)
+    no_derived = Network(NetworkConfig.from_manifest(manifest, width=8, blocks=1, dropped_inputs=("derived",))).eval()
+    bad_drop = Network(dataclasses.replace(zero.config, dropped_inputs=("no-such-block",))).eval()
+    bad_drop.load_state_dict(zero.state_dict())
+
     paths = [
         export_onnx(tiny, manifest, out / "tiny.onnx"),
         export_onnx(zero, manifest, out / "zero.onnx"),
         export_onnx(zero, dataclasses.replace(manifest, version=WRONG_VERSION), out / "wrong-version.onnx"),
+        export_onnx(no_derived, manifest, out / "no-derived.onnx"),
+        export_onnx(bad_drop, manifest, out / "bad-drop.onnx"),
     ]
     expected_path = out / "tiny.expected.json"
     expected_path.write_text(json.dumps(expected) + "\n", encoding="utf-8")

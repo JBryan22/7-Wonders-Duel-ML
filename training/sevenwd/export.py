@@ -11,6 +11,8 @@ and string metadata (ONNX metadata_props, ORT's ModelMetadata.CustomMetadataMap)
 
     format = "7wd-network", encoding_version = "<int>", input_size, policy_size, outcome_size,
     outcome_classes (comma-separated, manifest order), width, blocks
+    dropped_inputs (comma-separated input block names; only on a network that drops inputs, see network.py: it
+    takes the same Encoding inputs, and C# checks that the names are blocks of its Encoding)
 """
 from __future__ import annotations
 
@@ -68,6 +70,8 @@ def export_onnx(model: Network, manifest: Manifest, path: str | Path) -> Path:
         "width": str(config.width),
         "blocks": str(config.blocks),
     }
+    if config.dropped_inputs:
+        stamp["dropped_inputs"] = ",".join(config.dropped_inputs)
     del proto.metadata_props[:]
     for key, value in stamp.items():
         proto.metadata_props.add(key=key, value=value)

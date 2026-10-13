@@ -86,6 +86,33 @@ public class NeuralTests
     }
 
     [Fact]
+    public void A_network_without_the_derived_features_ignores_them_and_an_unknown_dropped_block_is_refused()
+    {
+        using var network = NeuralNetwork.Load(Model("no-derived.onnx"), InferenceDevice.Cpu);
+        Assert.Equal(["derived"], network.DroppedInputs);
+        Assert.Contains("without derived", network.ToString());
+        using (var tiny = NeuralNetwork.Load(Tiny, InferenceDevice.Cpu)) Assert.Empty(tiny.DroppedInputs);
+
+        // Same inputs except the derived block: same outputs. Changing another block does change them.
+        var derived = NetworkEncoding.InputBlocks.Single(b => b.Name == "derived");
+        var size = NetworkEncoding.InputSize;
+        var input = new float[3 * size];
+        for (var i = 0; i < size; i++) input[i] = input[size + i] = input[2 * size + i] = (float)(i % 7) / 7;
+        for (var i = derived.Offset; i < derived.Offset + derived.Size; i++) input[size + i] = 1f - input[i];
+        input[2 * size] = 1f - input[0];
+        var policy = new float[3 * NetworkEncoding.PolicySize];
+        var value = new float[3];
+        var outcome = new float[3 * NetworkEncoding.OutcomeClasses.Length];
+        network.Run(input, 3, policy, value, outcome);
+        Assert.Equal(value[0], value[1]);
+        Assert.Equal(policy[..NetworkEncoding.PolicySize], policy[NetworkEncoding.PolicySize..(2 * NetworkEncoding.PolicySize)]);
+        Assert.NotEqual(value[0], value[2]);
+
+        var e = Assert.Throws<FormatException>(() => NeuralNetwork.Load(Model("bad-drop.onnx"), InferenceDevice.Cpu));
+        Assert.Contains("no-such-block", e.Message);
+    }
+
+    [Fact]
     public void Files_that_are_not_7wd_networks_are_refused()
     {
         Assert.Throws<FileNotFoundException>(() => NeuralNetwork.Load(Model("missing.onnx"), InferenceDevice.Cpu));

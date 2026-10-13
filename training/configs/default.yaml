@@ -4,6 +4,7 @@ encoding_version: 1
 seed: 0
 generations: null          # keep going until stopped
 init: null                 # or another Run's checkpoint, e.g. runs/warm/net/latest.pt
+dropped_inputs: []         # Encoding input blocks the network never sees, e.g. [derived] (see config.py)
 
 network:
   width: 256

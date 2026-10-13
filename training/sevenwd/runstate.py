@@ -147,18 +147,68 @@ def is_running(root: Path) -> bool:
 
 # --- the status the loop keeps ----------------------------------------------------------------------------------------
 
+def awake_clock():
+    """A clock (seconds) that stops while the computer sleeps or hibernates. Windows: QueryUnbiasedInterruptTime
+    (Python's time.monotonic there is GetTickCount64, which counts sleep: pilot 1 counted a 15-hour sleep as
+    desktop-hours). Linux: time.monotonic (CLOCK_MONOTONIC), which stops during suspend."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            query = ctypes.windll.kernel32.QueryUnbiasedInterruptTime
+            query.argtypes = [ctypes.POINTER(ctypes.c_ulonglong)]
+            query.restype = ctypes.c_int
+
+            def unbiased() -> float:
+                t = ctypes.c_ulonglong()
+                if not query(ctypes.byref(t)):
+                    raise OSError("QueryUnbiasedInterruptTime failed")
+                return t.value / 1e7  # 100-ns units
+
+            unbiased()
+            return unbiased
+        except (OSError, AttributeError):
+            pass
+    return time.monotonic
+
+
+class ActiveClock:
+    """Seconds the loop has been running, not counting sleep or suspend. Two lines of defence: a clock that stops
+    while the machine sleeps (awake_clock), and, once `gap` is set (the status heartbeat sets it), a jump of more than
+    `gap` seconds between two readings is not counted: the heartbeat reads it every ~15 s, so such a gap means the
+    process was frozen (a sleep the clock still counted)."""
+
+    def __init__(self, clock=None, gap: float | None = None):
+        self.clock = clock or awake_clock()
+        self.gap = gap
+        self.elapsed = 0.0
+        self.skipped = 0.0  # seconds not counted because of a gap
+        self._last = self.clock()
+        self._lock = threading.Lock()
+
+    def read(self) -> float:
+        with self._lock:
+            t = self.clock()
+            step, self._last = max(0.0, t - self._last), t
+            if self.gap is not None and step > self.gap:
+                self.skipped += step
+            else:
+                self.elapsed += step
+            return self.elapsed
+
+
 class StatusWriter:
     """Keeps <run>/status.json up to date while the loop runs, including the desktop-hours used (counted only while
-    the loop runs, carried over from the previous status at start). A heartbeat thread rewrites it every `every`
-    seconds so status shows progress inside long steps (and the hours stay right if the machine dies)."""
+    the loop runs and the machine is awake (ActiveClock), carried over from the previous status at start). A
+    heartbeat thread rewrites it every `every` seconds so status shows progress inside long steps (and the hours stay
+    right if the machine dies)."""
 
-    def __init__(self, root: Path, every: float = 15.0):
+    def __init__(self, root: Path, every: float = 15.0, clock=None):
         self.root = Path(root)
         previous = read_status(self.root)
         self.base_seconds = float(previous.get("active_seconds") or 0.0)
-        self.started = time.monotonic()
-        self.fields: dict = {k: previous[k] for k in ("finished_generations", "elo", "anchor", "best", "cap_hours")
-                             if k in previous}
+        self.clock = ActiveClock(clock)
+        self.fields: dict = {k: previous[k] for k in ("finished_generations", "elo", "anchor", "anchor_elo", "best",
+                                                      "cap_hours") if k in previous}
         self.progress = None  # a callable giving e.g. "812/2000 games", or None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -169,7 +219,7 @@ class StatusWriter:
         return self.seconds() / 3600
 
     def seconds(self) -> float:
-        return self.base_seconds + time.monotonic() - self.started
+        return self.base_seconds + self.clock.read()
 
     def update(self, **fields) -> None:
         with self._lock:
@@ -195,6 +245,9 @@ class StatusWriter:
         write_json(self.root / STATUS, data)
 
     def start_heartbeat(self) -> None:
+        # Readings now come at least every `every` seconds, so a much longer jump is a sleep: don't count it.
+        self.clock.gap = max(300.0, 20 * self._every)
+
         def beat():
             while not self._stop.wait(self._every):
                 with self._lock:
@@ -268,13 +321,27 @@ def status_line(root: Path, name: str | None = None) -> str:
     if done is not None:
         parts.append(f"{done} Generation{'s' if done != 1 else ''} done")
     if s.get("elo") is not None:
-        elo = f"Elo {s['elo']:.0f}"
-        if s.get("anchor"):
-            elo += f" (vs the Anchor {s['anchor']})"
-        parts.append(elo)
+        parts.append(f"Elo {s['elo']:.0f}")
+    if s.get("anchor"):
+        anchor_elo = s.get("anchor_elo", latest_anchor_elo(root))
+        parts.append(f"Anchor {s['anchor']}" + (f" = Anchor Elo {anchor_elo:.0f}" if anchor_elo is not None else ""))
     if s.get("best") is not None:
         parts.append(f"best Generation {s['best']}")
     hours = float(s.get("active_seconds") or 0) / 3600
     cap = s.get("cap_hours")
     parts.append(f"{hours:.1f}" + (f" of {cap:g}" if cap else "") + " desktop-hours")
     return head + ": " + "; ".join(parts)
+
+
+def latest_anchor_elo(root: Path) -> float | None:
+    """The newest anchor_elo in generations.csv (for a status.json written before it carried anchor_elo)."""
+    import csv
+    try:
+        with open(Path(root) / "generations.csv", newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+    except OSError:
+        return None
+    for r in reversed(rows):
+        if r.get("anchor_elo"):
+            return float(r["anchor_elo"])
+    return None
