@@ -64,11 +64,12 @@ public static class BoardView
                 e switch { MoveEntry m => m.Player, LibraryReveal l => l.Player, _ => -1 },
                 e is LibraryReveal { Redacted: true })).ToArray(),
             Result: s.Result is { } r ? ResultOf(r) : null,
-            CanUndo: session.Log.Count > 0,
+            CanUndo: session.Ai is null ? session.Log.Count > 0 : session.CanTakeBack,
             SavedTo: savedTo);
     }
 
-    static string Who(AdvisorSession session, int player) => player == session.Seat ? $"P{player + 1} (you)" : $"P{player + 1}";
+    static string Who(AdvisorSession session, int player) =>
+        player == session.Seat ? $"P{player + 1} (you)" : session.Ai is not null ? $"P{player + 1} (AI)" : $"P{player + 1}";
 
     static string Prompt(AdvisorSession session, RevealView? reveal, DecisionView? decision)
     {

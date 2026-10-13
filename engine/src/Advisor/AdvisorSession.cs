@@ -23,12 +23,22 @@ public sealed class AdvisorSession
     /// <summary>The comment line that records the owner's seat in a saved Move Log (comments are ignored by the parser).</summary>
     public const string SeatPrefix = "# advisor seat=";
 
-    AdvisorSession(Ruleset rules, int seat, Game game)
+    AdvisorSession(Ruleset rules, int seat, Game game, AiOpponent? ai = null)
     {
         Rules = rules;
         Seat = seat;
         Game = game;
+        Ai = ai;
     }
+
+    /// <summary>
+    /// The AI opponent of a "Play against the AI" game (ticket 36), or null for a game entered by hand. In such a game
+    /// the program deals every Reveal itself (<see cref="Deal"/>) and the AI plays the other seat.
+    /// </summary>
+    public AiOpponent? Ai { get; private set; }
+
+    /// <summary>The AI's seat in a game against the AI.</summary>
+    public int AiSeat => 1 - Seat;
 
     public Ruleset Rules { get; }
     /// <summary>The owner's player: 0 for P1, 1 for P2.</summary>
@@ -37,10 +47,12 @@ public sealed class AdvisorSession
     public GameState State => Game.State;
     public IReadOnlyList<LogEntry> Log => Game.Log;
 
-    public static AdvisorSession New(Ruleset rules, int seat)
+    public static AdvisorSession New(Ruleset rules, int seat, AiOpponent? ai = null)
     {
         if (seat is not (0 or 1)) throw new ArgumentOutOfRangeException(nameof(seat), "The seat is P1 (0) or P2 (1)");
-        return new AdvisorSession(rules, seat, new Game(rules));
+        var session = new AdvisorSession(rules, seat, new Game(rules), ai);
+        session.Deal();
+        return session;
     }
 
     /// <summary>
@@ -50,7 +62,7 @@ public sealed class AdvisorSession
     /// </summary>
     public AdvisorSession WithRules(Ruleset rules)
     {
-        var session = new AdvisorSession(rules, Seat, new Game(rules));
+        var session = new AdvisorSession(rules, Seat, new Game(rules), Ai);
         session.Replay([.. Log]);
         return session;
     }
@@ -59,9 +71,11 @@ public sealed class AdvisorSession
     public static AdvisorSession Load(string text)
     {
         var seat = 0;
+        AiOpponent? ai = null;
         foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
         {
             var line = raw.Trim();
+            if (line.StartsWith(AiOpponent.Prefix, StringComparison.Ordinal)) ai = AiOpponent.Parse(line[AiOpponent.Prefix.Length..]);
             if (!line.StartsWith(SeatPrefix, StringComparison.Ordinal)) continue;
             seat = line[SeatPrefix.Length..] switch
             {
@@ -71,8 +85,9 @@ public sealed class AdvisorSession
             };
         }
         var game = MoveLog.Parse(text);
-        var session = new AdvisorSession(game.Rules, seat, game);
+        var session = new AdvisorSession(game.Rules, seat, game, ai);
         session.Replay([.. game.Log]);
+        session.Deal();
         return session;
     }
 
@@ -83,6 +98,7 @@ public sealed class AdvisorSession
         sb.Append(MoveLog.VersionLine).Append('\n');
         sb.Append(Rules).Append('\n');
         sb.Append(SeatPrefix).Append(Seat == 0 ? "P1" : "P2").Append('\n');
+        if (Ai is not null) sb.Append(AiOpponent.Prefix).Append(Ai.Write()).Append('\n');
         foreach (var e in Log) sb.Append(MoveLog.Format(e)).Append('\n');
         return sb.ToString();
     }
@@ -153,6 +169,118 @@ public sealed class AdvisorSession
         if (count < 0 || count > Log.Count) throw new EntryException($"There is no log line {count}");
         Replay(Log.Take(count).ToList());
     }
+
+    // ---------------------------------------------------------------- playing against the AI (ticket 36)
+
+    /// <summary>True when it is the AI's decision in a game against the AI.</summary>
+    public bool AiToMove => Ai is not null && State.Step == StepKind.Decision && State.PlayerToDecide == AiSeat;
+
+    /// <summary>
+    /// In a game against the AI, deals every Reveal the game is waiting for from a seeded random Chance Source (like
+    /// Self-Play): the first player, the Progress tokens, the draft offers, card flips, the Guild backs, the owner's
+    /// Great Library draw and the Statue of Liberty's returned cards. The AI's own Great Library draw is private, so it
+    /// is logged redacted (<see cref="Replay"/> does that) and only drawn for the AI's eyes in <see cref="AiObservation"/>.
+    /// Each Reveal's seed comes from the game's seed and the log position, so the same log always deals the same.
+    /// </summary>
+    public void Deal()
+    {
+        if (Ai is null) return;
+        while (State.Step == StepKind.Reveal)
+        {
+            var reveal = new RandomChanceSource(AiOpponent.Mix(Ai.Seed, (ulong)Log.Count, 1)).Next(State);
+            Enter(MoveLog.Format(reveal));
+        }
+    }
+
+    /// <summary>
+    /// What the AI sees when it is to decide: its own Observation of the real game. When its Great Library draw is due
+    /// (logged "? ? ?" because the owner may not see it), the 3 tokens are drawn here from the box with a seed from the
+    /// game's seed and the draw's log position, so asking again gives the same draw; the owner's view never holds it.
+    /// </summary>
+    public Observation AiObservation()
+    {
+        if (Ai is null) throw new InvalidOperationException("Not a game against the AI");
+        if (!State.LibraryDrawHidden || State.PlayerToDecide != AiSeat) return State.Observe(AiSeat);
+        var at = Log.ToList().FindLastIndex(e => e is LibraryReveal { Redacted: true } l && l.Player == AiSeat);
+        var box = ProgressTokens.In(State.TokensSetAside).ToArray();
+        var rng = new Rng(AiOpponent.Mix(Ai.Seed, (ulong)at, 2));
+        for (var i = 0; i < GameState.LibraryDrawSize; i++)
+        {
+            var j = i + rng.Next(box.Length - i);
+            (box[i], box[j]) = (box[j], box[i]);
+        }
+        var draw = box[..GameState.LibraryDrawSize];
+        Array.Sort(draw);
+        var game = new Game(Rules);
+        for (var i = 0; i < Log.Count; i++) game.Apply(i == at ? new LibraryReveal(AiSeat, draw) : Log[i]);
+        return game.State.Observe(AiSeat);
+    }
+
+    /// <summary>The AI's search seed for the current position (from the game's seed and the log position).</summary>
+    public ulong AiSeed => Ai is null ? 0 : AiOpponent.Mix(Ai.Seed, (ulong)Log.Count, 3);
+
+    /// <summary>Enters the AI's Move, then deals what it revealed.</summary>
+    public void EnterAiMove(Move move)
+    {
+        if (!AiToMove) throw new EntryException("It is not the AI's turn");
+        Enter(MoveLog.Format(new MoveEntry(AiSeat, move)));
+        Deal();
+    }
+
+    /// <summary>
+    /// The owner's Move in a game against the AI (one line, or a Statue keep/give pair): only the owner's own Moves are
+    /// accepted (the program deals the Reveals and the AI plays its seat). Then deals what it revealed.
+    /// </summary>
+    public void EnterOwn(IReadOnlyList<string> lines)
+    {
+        if (Ai is null) throw new InvalidOperationException("Not a game against the AI");
+        if (State.IsOver) throw new EntryException("The game is over. Start a new game from the New game button.");
+        if (State.Step != StepKind.Decision || State.PlayerToDecide != Seat)
+            throw new EntryException("It is the AI's turn: wait for its Move.");
+        var before = Game;
+        try
+        {
+            foreach (var line in lines)
+            {
+                LogEntry entry;
+                try
+                {
+                    entry = MoveLog.ParseEntry(line.Trim(), State);
+                }
+                catch (Exception e) when (e is FormatException or KeyNotFoundException or InvalidOperationException or ArgumentException)
+                {
+                    throw new EntryException(e.Message);
+                }
+                if (entry is not MoveEntry m || m.Player != Seat)
+                    throw new EntryException("Against the AI you enter only your own Moves: the program deals the cards and the AI plays its seat.");
+                Enter(line);
+            }
+            Deal();
+        }
+        catch (EntryException)
+        {
+            Game = before;
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Takes back the owner's last Move and everything after it (the AI's reply and the cards dealt), counting a
+    /// takeback. Not allowed once the game is over: the result is recorded and stands.
+    /// </summary>
+    public void TakeBack()
+    {
+        if (Ai is null) throw new InvalidOperationException("Not a game against the AI");
+        if (State.IsOver) throw new EntryException("The game is over and its result is recorded: it can't be taken back.");
+        var entries = Log.ToList();
+        var last = entries.FindLastIndex(e => e is MoveEntry m && m.Player == Seat);
+        if (last < 0) throw new EntryException("You have no Move to take back yet.");
+        Replay(entries.Take(last).ToList());
+        Ai = Ai with { Takebacks = Ai.Takebacks + 1 };
+    }
+
+    /// <summary>True when the owner has a Move to take back (a game against the AI that isn't over).</summary>
+    public bool CanTakeBack => Ai is not null && !State.IsOver && Log.Any(e => e is MoveEntry m && m.Player == Seat);
 
     /// <summary>Why the Advisor refuses an entry the Engine would accept, or a friendlier reason than the Engine's.</summary>
     string? WhyRefused(LogEntry entry)

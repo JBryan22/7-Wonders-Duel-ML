@@ -78,6 +78,10 @@ function advicePanel(a) {
     ' Advise by itself on my turns');
   if (a.notice) panel.append(h('div', { class: 'note small' }, a.notice));
 
+  if (a.status === 'off') {
+    panel.append(h('p', { class: 'muted small' }, a.message));
+    return panel;
+  }
   if (a.status === 'unavailable') {
     panel.append(h('p', { class: 'muted small' }, a.message), auto);
     return panel;
@@ -312,6 +316,7 @@ function render() {
   const main = $('main');
   main.replaceChildren();
   $('undo').disabled = !game?.canUndo || showNewGame;
+  $('undo').title = view?.play ? "Take back your last Move and the AI's reply (Ctrl+Z)" : 'Remove the last Move and the Reveals after it (Ctrl+Z)';
   $('newgame').hidden = !game || showNewGame;
 
   if (!game || showNewGame) {
@@ -329,6 +334,47 @@ function render() {
   drawMarkers(shownRow(view.advice));
   watchAdvice();
   watchTts();
+  watchAi();
+}
+
+// ------------------------------------------------------------------ playing against the AI (ticket 36)
+// The server deals the cards and runs the AI's search in the background; while the AI thinks, the page asks for the
+// state every 300 ms and redraws when the AI has moved.
+
+let aiPoll = null;
+const AI_POLL_MS = 300;
+const aiTurn = (g) => !!view?.play && !g.result && g.decision && g.decision.player !== g.seat;
+
+function watchAi() {
+  clearTimeout(aiPoll);
+  if (!view?.play?.thinking) return;
+  aiPoll = setTimeout(async () => {
+    try {
+      const res = await fetch('/api/state');
+      const data = await res.json();
+      const moved = data.game?.log.length !== view.game?.log.length || data.play?.thinking !== view.play?.thinking
+        || data.play?.error !== view.play?.error || !data.game;
+      if (moved) { view = data; render(); return; }
+    } catch { /* the server is restarting: try again */ }
+    watchAi();
+  }, AI_POLL_MS);
+}
+
+function playPanel(p) {
+  const panel = h('div', { class: 'panel play', id: 'play' }, h('h2', {}, 'Playing against the AI'));
+  panel.append(h('div', {}, h('b', {}, p.opponent), h('span', { class: 'muted small' },
+    ` · P${p.aiSeat + 1}${p.simulations ? ` · ${p.simulations.toLocaleString('en')} simulations per Move` : ''}`)));
+  if (p.thinking) panel.append(h('div', { class: 'thinking ai-status' }, h('span', { class: 'spinner' }), p.message));
+  else if (p.lastAi) panel.append(h('div', { class: 'ai-last' }, p.lastAi));
+  if (p.error) panel.append(h('div', { class: 'small', style: 'color:var(--err)' }, p.error, ' ',
+    h('button', { class: 'btn ghost', onclick: () => call('POST', '/api/play/retry') }, 'Ask the AI again')));
+  panel.append(h('div', { class: 'tally' }, p.tally.text));
+  if (p.takebacks) panel.append(h('div', { class: 'small muted' }, `Takebacks this game: ${p.takebacks} (kept with the result)`));
+  panel.append(h('label', { class: 'small muted auto' },
+    h('input', { type: 'checkbox', checked: p.advice, onchange: (e) => call('POST', '/api/play/advice', { on: e.target.checked }) }),
+    ' Show advice (spoils the test)'));
+  panel.append(h('div', { class: 'small muted' }, 'Results are kept in ', p.resultsFile));
+  return panel;
 }
 
 // A % badge: the Move's (or card's) share of the search; the search's choice in gold.
@@ -336,6 +382,9 @@ const badge = (share, top) => h('span', { class: `badge${top ? ' top' : ''}`, ti
 
 function boardPanel(g) {
   const panel = h('div', { class: 'panel' });
+  if (view.play && !g.result) panel.append(h('div', { class: `ai-banner${aiTurn(g) ? ' thinking' : ''}` },
+    aiTurn(g) ? [h('span', { class: 'spinner' }), view.play.message ?? 'The AI is to move'] : view.play.lastAi ?? 'Your move.',
+    !aiTurn(g) && view.play.lastAi ? h('span', { class: 'muted' }, ' · your move') : null));
   const tray = trayFor(g);
   if (tray) panel.append(tray);
   if (g.pyramid) panel.append(h('h2', {}, `Age ${['', 'I', 'II', 'III'][g.age]}`), pyramid(g));
@@ -348,18 +397,20 @@ function boardPanel(g) {
 }
 
 function sidePanel(g) {
-  const log = h('div', { class: 'log', id: 'log' },
+  const play = view.play;
+  const log = h('div', { class: `log${play ? ' norewind' : ''}`, id: 'log' },
     g.log.length === 0 ? h('div', { class: 'muted' }, 'No entries yet.') : null,
     g.log.map(l => h('div', {
       class: `${l.kind}${l.player === g.seat && l.kind === 'move' ? ' you' : ''}`,
-      title: 'Rewind to just after this line (later lines are removed)',
-      onclick: () => rewind(l.index + 1, l.text),
+      title: play ? '' : 'Rewind to just after this line (later lines are removed)',
+      onclick: play ? null : () => rewind(l.index + 1, l.text),
     }, h('span', { class: 'n' }, l.index + 1), l.text)));
   const panels = [
-    ttsPanel(view.tts),
+    play ? playPanel(play) : ttsPanel(view.tts),
     advicePanel(view.advice),
     h('div', { class: 'panel' }, h('h2', {}, 'Move Log'),
-      h('div', { class: 'small muted', style: 'margin-bottom:6px' }, g.rules, ' · click a line to rewind to it'),
+      h('div', { class: 'small muted', style: 'margin-bottom:6px' }, g.rules,
+        play ? ' · the program deals the cards; "? ? ?" is the AI\'s private draw' : ' · click a line to rewind to it'),
       log,
       h('div', { class: 'small muted', style: 'margin-top:6px' }, 'Saved after every entry to ', g.savedTo)),
   ];
@@ -384,7 +435,8 @@ function pyramid(g) {
   for (const s of p.slots) {
     const classes = ['card', s.face];
     if (s.card) classes.push(`c-${s.card.color}`);
-    if (s.actions.length) classes.push('acc');
+    const mine = s.actions.length && !aiTurn(g);
+    if (mine) classes.push('acc');
     if (s.pulse) classes.push('pulse');
     if (guildMode) classes.push('pick');
     if (guildMode && guildPick.includes(s.name)) classes.push('picked');
@@ -394,9 +446,9 @@ function pyramid(g) {
       title: s.card ? s.card.name : `slot ${s.name}`,
       'data-slot': s.slot,
     }, h('span', { class: 'slotname' }, s.name), s.card ? s.card.name : '');
-    const b = s.actions.length ? view.advice?.badges.find(x => x.slot === s.slot) : null;
+    const b = mine ? view.advice?.badges.find(x => x.slot === s.slot) : null;
     if (b) el.append(badge(b.share, b.top));
-    if (s.actions.length) el.addEventListener('click', (e) => cardMenu(e, s));
+    if (mine) el.addEventListener('click', (e) => cardMenu(e, s));
     else if (s.pulse) el.addEventListener('click', () => slotPicker(s));
     else if (guildMode) el.addEventListener('click', () => {
       guildPick = guildPick.includes(s.name) ? guildPick.filter(x => x !== s.name)
@@ -467,6 +519,8 @@ function trayFor(g) {
   if (g.reveal && g.reveal.kind !== 'slots') return revealTray(g.reveal);
   if (g.reveal) return h('div', { class: 'tray' }, h('div', { class: 'title' }, g.reveal.title),
     h('div', { class: 'small muted' }, 'Nothing else can be entered until the pulsing cards are named.'));
+  if (g.decision && aiTurn(g)) return h('div', { class: 'tray' }, h('div', { class: 'title' }, g.decision.title),
+    h('div', { class: 'small muted' }, 'The AI is deciding; its choice appears here and in the Move Log.'));
   if (g.decision && g.decision.tiles.length) return h('div', { class: 'tray' },
     h('div', { class: 'title' }, g.decision.title),
     h('div', { class: 'tiles' }, g.decision.tiles.map(t => {
@@ -509,8 +563,13 @@ function revealTray(r) {
 function resultTray(g) {
   const r = g.result;
   const name = (p) => g.players[p].label;
+  const play = view.play;
+  const headline = !play ? (r.winner < 0 ? 'A draw' : `${name(r.winner)} wins by ${r.victory}`)
+    : r.winner < 0 ? 'A draw' : r.winner === g.seat ? `You win by ${r.victory}!` : `The AI wins by ${r.victory}`;
   return h('div', { class: 'tray' },
-    h('div', { class: 'title' }, r.winner < 0 ? 'A draw' : `${name(r.winner)} wins by ${r.victory}`),
+    h('div', { class: 'title' }, headline),
+    play ? h('div', { class: 'tally' }, play.tally.text,
+      h('span', { class: 'muted small' }, ' · New game to play again')) : null,
     h('table', { class: 'score' },
       h('tr', {}, h('th', {}, 'Score sheet'), h('th', {}, name(0)), h('th', {}, name(1))),
       r.scores.map(s => h('tr', {}, h('td', {}, s.category), h('td', {}, s.p1), h('td', {}, s.p2))),
@@ -546,31 +605,101 @@ function city(p, g) {
 
 // ------------------------------------------------------------------ new game, undo, rewind
 
+// The opponents offered for "Play against the AI" and the remembered choices (GET /api/play/opponents), loaded with
+// the new-game screen.
+let opponents = null;
+async function loadOpponents() {
+  try {
+    opponents = await (await fetch('/api/play/opponents')).json();
+  } catch {
+    opponents = { runsFolder: null, opponents: [], settings: null };
+  }
+  if (!view?.game || showNewGame) render();
+}
+
+const CUSTOM = '__custom__';
+
 function newGameScreen() {
-  const s = view?.settings ?? { messe: view?.game?.messe ?? false, liberty: view?.game?.liberty ?? false, rule2015: view?.game?.rule2015 ?? false, seat: view?.game?.seat ?? 0 };
+  const remembered = opponents?.settings;
+  const s = view?.settings ?? remembered ?? { messe: view?.game?.messe ?? false, liberty: view?.game?.liberty ?? false, rule2015: view?.game?.rule2015 ?? false, seat: view?.game?.seat ?? 0 };
   const messe = h('input', { type: 'checkbox', checked: s.messe });
   const liberty = h('input', { type: 'checkbox', checked: s.liberty });
   const ruleNew = h('input', { type: 'radio', name: 'rule', checked: !s.rule2015 });
   const rule2015 = h('input', { type: 'radio', name: 'rule', checked: s.rule2015 });
-  const seat1 = h('input', { type: 'radio', name: 'seat', checked: s.seat !== 1 });
-  const seat2 = h('input', { type: 'radio', name: 'seat', checked: s.seat === 1 });
+  const seat1 = h('input', { type: 'radio', name: 'seat', checked: s.seat !== 1 && !(s.vsAi && s.randomSeat) });
+  const seat2 = h('input', { type: 'radio', name: 'seat', checked: s.seat === 1 && !(s.vsAi && s.randomSeat) });
+  const seatRandom = h('input', { type: 'radio', name: 'seat', checked: !!(s.vsAi && s.randomSeat) });
+  const modeHand = h('input', { type: 'radio', name: 'mode', id: 'mode-hand', checked: !s.vsAi });
+  const modeAi = h('input', { type: 'radio', name: 'mode', id: 'mode-ai', checked: !!s.vsAi });
+
+  // The opponent: a Run's best network, a Generation, the MCTS Anchor, the Heuristic, Random, or any Agent spec.
+  const list = opponents?.opponents ?? [];
+  const select = h('select', { id: 'opponent' });
+  const groups = new Map();
+  for (const o of list) {
+    if (!groups.has(o.group)) groups.set(o.group, h('optgroup', { label: o.group }));
+    groups.get(o.group).append(h('option', { value: o.spec, 'data-label': o.label, selected: o.spec === s.opponent }, o.text));
+  }
+  select.append(...groups.values(), h('option', { value: CUSTOM }, 'Other: type an Agent spec…'));
+  if (s.opponent && !list.some(o => o.spec === s.opponent)) select.value = CUSTOM;
+  const custom = h('input', { type: 'text', id: 'opponent-spec', placeholder: 'e.g. neural:C:\\7wd-runs\\pilot-1-small\\net\\gen-0003.onnx,mode=classic',
+    value: s.opponent && select.value === CUSTOM ? s.opponent : '', style: 'width:100%' });
+  const sims = h('input', { type: 'number', id: 'ai-sims', min: 1, step: 100, value: s.aiSimulations ?? 800, style: 'width:7em' });
+  const aiBox = h('fieldset', { class: 'ai-settings' }, h('legend', {}, 'The AI opponent'),
+    h('label', {}, 'Opponent ', select),
+    h('div', { class: 'custom-spec' }, custom),
+    h('label', {}, 'Think time: ', sims, ' simulations per Move ',
+      h('span', { class: 'small muted' }, '(networks and MCTS; 800 is the Matches\' setting, more is stronger and slower)')),
+    h('div', { class: 'small muted' }, opponents?.runsFolder ? `Networks are listed from ${opponents.runsFolder}.` : ''),
+    h('div', { class: 'small muted' }, 'The program deals every card; you see only what your seat may see. Advice is off unless you turn it on.'));
+  const syncAi = () => {
+    const ai = modeAi.checked;
+    aiBox.hidden = !ai;
+    seatRandom.disabled = !ai;
+    if (!ai && seatRandom.checked) seat1.checked = true;
+    custom.parentElement.hidden = select.value !== CUSTOM;
+  };
+  modeHand.addEventListener('change', syncAi);
+  modeAi.addEventListener('change', syncAi);
+  select.addEventListener('change', syncAi);
+
   const start = async () => {
-    const ok = await call('POST', '/api/new', { messe: messe.checked, liberty: liberty.checked, rule2015: rule2015.checked, seat: seat2.checked ? 1 : 0 });
+    const body = { messe: messe.checked, liberty: liberty.checked, rule2015: rule2015.checked, seat: seat2.checked ? 1 : 0 };
+    if (modeAi.checked) {
+      const isCustom = select.value === CUSTOM;
+      Object.assign(body, {
+        vsAi: true,
+        opponent: isCustom ? custom.value.trim() : select.value,
+        opponentLabel: isCustom ? custom.value.trim() : select.selectedOptions[0]?.dataset.label,
+        aiSimulations: Math.max(1, parseInt(sims.value, 10) || 800),
+        randomSeat: seatRandom.checked,
+      });
+    }
+    const button = $('start');
+    button.disabled = true;
+    button.textContent = 'Starting…';
+    const ok = await call('POST', '/api/new', body);
     if (ok) { showNewGame = false; render(); }
   };
-  return h('div', { class: 'panel newgame' },
+  const screen = h('div', { class: 'panel newgame' },
     h('h2', {}, 'New game'),
+    h('fieldset', {}, h('legend', {}, 'What kind of game'),
+      h('label', {}, modeHand, ' Enter a game by hand (a real game, or TTS), with advice'),
+      h('label', {}, modeAi, ' Play against the AI (here, in this window)')),
+    aiBox,
     h('fieldset', {}, h('legend', {}, 'Promo Wonders in the pool'),
       h('label', {}, messe, ' The Messe'), h('label', {}, liberty, ' Statue of Liberty')),
     h('fieldset', {}, h('legend', {}, 'Who starts the next Age when military is tied'),
       h('label', {}, ruleNew, ' The player who took the last card chooses (current rule)'),
       h('label', {}, rule2015, ' The player who took the last card starts (2015 rule)')),
     h('fieldset', {}, h('legend', {}, 'Your seat'),
-      h('label', {}, seat1, ' P1'), h('label', {}, seat2, ' P2'),
-      h('div', { class: 'small muted' }, 'P1 and P2 are only labels; who plays first is entered next.')),
+      h('label', {}, seat1, ' P1'), h('label', {}, seat2, ' P2'), h('label', {}, seatRandom, ' Random (against the AI)'),
+      h('div', { class: 'small muted' }, 'P1 and P2 are only labels; who plays first is drawn (against the AI) or entered next.')),
     h('div', { class: 'row', style: 'display:flex;gap:8px;justify-content:flex-end' },
       view?.game ? h('button', { class: 'btn ghost', onclick: () => { showNewGame = false; render(); } }, 'Back to the game') : null,
-      h('button', { class: 'btn', onclick: start }, view?.game ? 'Start (this game is saved and closed)' : 'Start')));
+      h('button', { class: 'btn', id: 'start', onclick: start }, view?.game ? 'Start (this game is saved and closed)' : 'Start')));
+  syncAi();
+  return screen;
 }
 
 function rewind(count, text) {
@@ -581,7 +710,7 @@ function rewind(count, text) {
 }
 
 $('undo').addEventListener('click', () => call('POST', '/api/undo'));
-$('newgame').addEventListener('click', () => { showNewGame = true; render(); });
+$('newgame').addEventListener('click', () => { showNewGame = true; render(); loadOpponents(); });
 document.addEventListener('click', hidePopover);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') hidePopover();
@@ -592,3 +721,4 @@ document.addEventListener('keydown', (e) => {
 });
 
 call('GET', '/api/state');
+loadOpponents();

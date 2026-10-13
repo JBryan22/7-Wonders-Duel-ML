@@ -6,13 +6,15 @@ using SevenWondersDuel.Advisor;
 using SevenWondersDuel.Advisor.Tts;
 
 const string Usage = """
-    usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--sims N] [--no-browser] [--tts-file F]
+    usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--sims N] [--runs DIR] [--no-browser] [--tts-file F]
            7wd-advisor tts-snapshot [options]   reads the Tabletop Simulator table (tts-snapshot --help)
       Starts the Advisor Window on http://localhost:N (default 7700) and opens it in the browser.
       --data DIR    where the game in progress and earlier games are saved
                     (default: %LOCALAPPDATA%\7wd\advisor on Windows, ~/.local/share/7wd/advisor on Linux)
       --agent SPEC  the search that gives advice: mcts (default) or neural:<onnx file>[,settings]
       --sims N      simulations per advice request (default 800; Think longer runs 4x)
+      --runs DIR    where "Play against the AI" lists trained networks (default: SEVENWD_RUNS, else
+                    C:\7wd-runs on Windows, ~/7wd-runs on Linux); only read, never written
       --no-browser  only start the server (open the address yourself)
       --tts-file F  follow a table recorded in a file instead of the live TTS table (for checking a saved snapshot)
     Stop it with Ctrl+C or by closing this window; the game is saved after every entry.
@@ -26,6 +28,7 @@ var browser = true;
 var agent = AdviceSettings.DefaultAgent;
 int? sims = null;
 string? ttsFile = null;
+string? runs = null;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -44,6 +47,9 @@ for (var i = 0; i < args.Length; i++)
             sims = n;
             i++;
             break;
+        case "--runs" when i + 1 < args.Length:
+            runs = args[++i];
+            break;
         case "--tts-file" when i + 1 < args.Length:
             ttsFile = args[++i];
             break;
@@ -60,7 +66,7 @@ WebApplication app;
 try
 {
     app = AdvisorServer.Build(new AdvisorOptions(data, port, Agent: agent, Simulations: sims,
-        TableSource: ttsFile is null ? null : () => new FileTableSource(ttsFile)));
+        TableSource: ttsFile is null ? null : () => new FileTableSource(ttsFile), RunsFolder: runs));
 }
 catch (Exception e) when (e is FormatException or IOException or InvalidOperationException)
 {

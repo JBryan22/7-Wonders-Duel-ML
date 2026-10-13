@@ -177,3 +177,14 @@ table.compare tr.shown.tags td:first-child { box-shadow: inset 3px 0 0 #2b5fb4, 
 .tts-choices { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
 .tts-choice { text-align: left; font-weight: 400; font-size: 12px; }
 .tts-list ul { margin: 2px 0 6px; padding-left: 18px; }
+
+/* playing against the AI (ticket 36) */
+.ai-banner { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 10px; border-radius: 6px;
+  background: #eef4ff; border: 1px solid #c4d4f2; font-weight: 600; }
+.ai-banner.thinking { background: #f3f1ec; border-color: var(--line); color: var(--muted); }
+.ai-last { font-weight: 600; margin: 6px 0; }
+.ai-status { margin: 6px 0; }
+.tally { font-weight: 600; margin: 6px 0; }
+.play .auto { display: block; margin-top: 6px; }
+.log.norewind > div { cursor: default; }
+.ai-settings select { max-width: 100%; }

@@ -3,8 +3,13 @@ using SevenWondersDuel.Engine;
 
 namespace SevenWondersDuel.Advisor;
 
-/// <summary>The new-game choices the Advisor remembers (spec A8: the promo boxes keep the last choice).</summary>
-public sealed record NewGameSettings(bool Messe = false, bool Liberty = false, bool Rule2015 = false, int Seat = 0)
+/// <summary>
+/// The new-game choices the Advisor remembers (spec A8: the promo boxes keep the last choice), and those of "Play against
+/// the AI" (ticket 36): the mode, the opponent's spec and name, its simulations and a random seat.
+/// </summary>
+public sealed record NewGameSettings(bool Messe = false, bool Liberty = false, bool Rule2015 = false, int Seat = 0,
+    bool VsAi = false, string? Opponent = null, string? OpponentLabel = null, int AiSimulations = AiOpponent.DefaultSimulations,
+    bool RandomSeat = false)
 {
     public Ruleset ToRuleset() => new(
         Rule2015 ? StartChoice.Rule2015 : StartChoice.New,
@@ -126,6 +131,44 @@ public sealed class AdvisorStore(string folder)
     }
 
     public void SaveTtsPrefs(TtsPrefs prefs) => WriteAtomically(TtsPrefsPath, JsonSerializer.Serialize(prefs, Json));
+
+    /// <summary>Every finished game against the AI (ticket 36): <c>vs-ai.json</c> next to the saved games.</summary>
+    public string AiResultsPath => Path.Combine(Folder, "vs-ai.json");
+
+    public List<AiGameRecord> LoadAiResults()
+    {
+        try
+        {
+            return File.Exists(AiResultsPath)
+                ? JsonSerializer.Deserialize<AiResults>(File.ReadAllText(AiResultsPath), Json)?.Games ?? []
+                : [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Adds a finished game's result unless a game with the same seed is already there; true if it was added.</summary>
+    public bool AddAiResult(AiGameRecord record)
+    {
+        var games = LoadAiResults();
+        if (games.Any(g => g.Seed == record.Seed)) return false;
+        games.Add(record);
+        WriteAtomically(AiResultsPath, JsonSerializer.Serialize(new AiResults(games), Json));
+        return true;
+    }
+
+    /// <summary>"You 2 – 1 AI (pilot-1-small Gen 3)": the results against one opponent spec.</summary>
+    public TallyView Tally(string spec, string label)
+    {
+        var games = LoadAiResults().Where(g => g.Spec == spec).ToList();
+        int you = games.Count(g => g.Winner == "you"), ai = games.Count(g => g.Winner == "ai"), draws = games.Count(g => g.Winner == "draw");
+        var text = $"You {you} – {ai} AI ({label})" + (draws > 0 ? $" · {draws} draw{(draws > 1 ? "s" : "")}" : "");
+        return new TallyView(label, you, ai, draws, text);
+    }
+
+    sealed record AiResults(List<AiGameRecord> Games);
 
     /// <summary>
     /// Writes to a temporary file first, so a crash mid-write never leaves a half-written log. On Windows the replace

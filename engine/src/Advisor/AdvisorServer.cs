@@ -14,11 +14,13 @@ namespace SevenWondersDuel.Advisor;
 /// <c>neural:&lt;onnx&gt;</c>); <paramref name="Simulations"/> fixes the advice budget (null: 800, or this computer's
 /// reduced default). <paramref name="TableSource"/> opens the Tabletop Simulator table (default: the live table
 /// through the External Editor API; tests pass a fake). <paramref name="TtsPolling"/> false leaves polling to the
-/// caller (<see cref="AdvisorServer.Tts"/>.PollOnceAsync), for tests.
+/// caller (<see cref="AdvisorServer.Tts"/>.PollOnceAsync), for tests. <paramref name="RunsFolder"/> is where "Play
+/// against the AI" looks for trained networks (null: <see cref="Opponents.DefaultRunsFolder"/>); <paramref name="AiPause"/>
+/// is the least time each AI Move takes, so the owner sees it happen (null: <see cref="AdvisorServer.DefaultAiPause"/>).
 /// </summary>
 public sealed record AdvisorOptions(string DataFolder, int Port = AdvisorServer.DefaultPort, string? WebFolder = null,
     string Agent = AdviceSettings.DefaultAgent, int? Simulations = null, Func<ITableSource>? TableSource = null,
-    bool TtsPolling = true);
+    bool TtsPolling = true, string? RunsFolder = null, TimeSpan? AiPause = null);
 
 /// <summary>
 /// The Advisor Window's local web server (spec A8): serves the page from web/ and a small JSON API. It listens on
@@ -26,11 +28,17 @@ public sealed record AdvisorOptions(string DataFolder, int Port = AdvisorServer.
 /// nothing.
 /// <code>
 /// GET  /api/state              the game view (or the new-game screen when there is no game) and the advice box
-/// POST /api/new     {messe, liberty, rule2015, seat}   start a new game (the previous one is archived)
+/// POST /api/new     {messe, liberty, rule2015, seat}   start a new game (the previous one is archived); with
+///                   vsAi, opponent, opponentLabel, aiSimulations, randomSeat: a game against the AI (ticket 36)
 /// POST /api/entry   {line, then?}  enter one Move Log line ("P1 build baths", "reveal 3.1 baths", ...); with then, two
-///                              lines as one change (a Statue keep/give pair), both or neither
-/// POST /api/undo               remove the last Move and the Reveals after it
-/// POST /api/rewind  {count}    keep only the first count log lines
+///                              lines as one change (a Statue keep/give pair), both or neither. Against the AI: the
+///                              owner's own Moves only; the program deals the Reveals and the AI answers in the background
+/// POST /api/undo               remove the last Move and the Reveals after it (against the AI: take back the owner's
+///                              last Move and the AI's reply)
+/// POST /api/rewind  {count}    keep only the first count log lines (not against the AI)
+/// GET  /api/play/opponents     the opponents the new-game screen offers (Runs' networks, MCTS, Heuristic, Random)
+/// POST /api/play/advice {on}   show the advice box in a game against the AI (off by default)
+/// POST /api/play/retry         ask the AI again after its search failed
 /// POST /api/abandon            archive the game and go back to the new-game screen
 /// GET  /api/advice             the advice box only (the page polls it while a search runs)
 /// POST /api/advice  {longer}   ask for advice on the current position (longer: Think longer)
@@ -77,9 +85,24 @@ public sealed class AdvisorServer : IDisposable
     Promos _missingPromos;
     bool _catchUp = true;
 
+    // Playing against the AI (ticket 36, under _lock): the AI's search for the position _aiKey (a saved log) runs in the
+    // background; when it is done, its Move is entered if the game is still at that position. _aiLast is the "AI
+    // played: ..." line, _aiError a failed search, _aiAdvice the owner's advice toggle (off by default: it would spoil
+    // the test of strength), _recorded the seed of the last result written to vs-ai.json.
+    public static readonly TimeSpan DefaultAiPause = TimeSpan.FromMilliseconds(700);
+    readonly string? _runsFolder;
+    readonly TimeSpan _aiPause;
+    Task _aiTask = Task.CompletedTask;
+    CancellationTokenSource? _aiCancel;
+    string? _aiKey, _aiLast, _aiError;
+    bool _aiAdvice;
+    string? _recorded;
+
     public AdvisorServer(AdvisorStore store, AdviceSettings? advice = null, bool fixedBudget = false,
-        Func<ITableSource>? tableSource = null, bool ttsPolling = true)
+        Func<ITableSource>? tableSource = null, bool ttsPolling = true, string? runsFolder = null, TimeSpan? aiPause = null)
     {
+        _runsFolder = runsFolder ?? Opponents.DefaultRunsFolder;
+        _aiPause = aiPause ?? DefaultAiPause;
         _store = store;
         _advice = new AdviceService(advice ?? new AdviceSettings(), store.LoadAdvicePrefs(), fixedBudget, store.AdviceLogPath,
             store.SaveAdvicePrefs);
@@ -96,8 +119,10 @@ public sealed class AdvisorServer : IDisposable
             var moved = store.ArchiveCurrent();
             _notice = $"The saved game could not be read and was moved to {moved}: {e.Message}";
         }
-        _advice.Sync(_session);
+        if (_session?.Ai is not null && _session.State.IsOver) _recorded = _session.Ai.Seed.ToString();
+        _advice.Sync(AdviceTarget);
         if (_ttsPrefs.Follow) _tts.Start(_ttsPolling);
+        lock (_lock) KickAi();
     }
 
     public AdvisorSession? Session
@@ -114,6 +139,31 @@ public sealed class AdvisorServer : IDisposable
     {
         _tts.Dispose();
         _advice.Dispose();
+        lock (_lock) _aiCancel?.Cancel();
+    }
+
+    /// <summary>The AI's search in progress, if any (tests wait on it).</summary>
+    public Task AiRunning
+    {
+        get { lock (_lock) return _aiTask; }
+    }
+
+    /// <summary>
+    /// Waits until the AI has nothing more to do: the owner is to decide, the game is over, or the AI's search failed.
+    /// </summary>
+    public async Task AiSettled()
+    {
+        while (true)
+        {
+            Task task;
+            lock (_lock)
+            {
+                task = _aiTask;
+                if (task.IsCompleted && (_session is null || !_session.AiToMove || _aiError is not null)) return;
+            }
+            await task;
+            await Task.Yield();
+        }
     }
 
     public static WebApplication Build(AdvisorOptions options, string[]? args = null)
@@ -124,7 +174,7 @@ public sealed class AdvisorServer : IDisposable
         builder.WebHost.UseUrls($"http://127.0.0.1:{options.Port}");
         var advice = new AdviceSettings(options.Agent, options.Simulations ?? AdviceSettings.DefaultSimulations);
         var server = new AdvisorServer(new AdvisorStore(options.DataFolder), advice, fixedBudget: options.Simulations is not null,
-            options.TableSource, options.TtsPolling);
+            options.TableSource, options.TtsPolling, options.RunsFolder, options.AiPause);
         builder.Services.AddSingleton(server);
         var app = builder.Build();
         app.Lifetime.ApplicationStopping.Register(server.Dispose);
@@ -144,18 +194,45 @@ public sealed class AdvisorServer : IDisposable
         });
 
         app.MapGet("/api/state", () => Respond(() => { }, save: false));
-        app.MapPost("/api/new", (NewGameRequest r) => Respond(() => NewGame(new NewGameSettings(r.Messe, r.Liberty, r.Rule2015, r.Seat is 1 ? 1 : 0))));
+        app.MapPost("/api/new", (NewGameRequest r) => Respond(() =>
+        {
+            var settings = _store.LoadSettings() with
+            {
+                Messe = r.Messe, Liberty = r.Liberty, Rule2015 = r.Rule2015, Seat = r.Seat is 1 ? 1 : 0, VsAi = r.VsAi,
+            };
+            if (!r.VsAi)
+            {
+                NewGame(settings);
+                return;
+            }
+            NewAiGame(settings with
+            {
+                Opponent = r.Opponent, OpponentLabel = r.OpponentLabel, AiSimulations = r.AiSimulations ?? AiOpponent.DefaultSimulations,
+                RandomSeat = r.RandomSeat,
+            });
+        }));
         app.MapPost("/api/entry", (EntryRequest r) => Respond(() =>
         {
-            if (r.Then is null) Current().Enter(r.Line ?? "");
-            else Current().Enter([r.Line ?? "", r.Then]);
+            var session = Current();
+            if (session.Ai is not null) session.EnterOwn(r.Then is null ? [r.Line ?? ""] : [r.Line ?? "", r.Then]);
+            else if (r.Then is null) session.Enter(r.Line ?? "");
+            else session.Enter([r.Line ?? "", r.Then]);
         }));
         app.MapPost("/api/undo", () => Respond(() =>
         {
-            if (Current().Undo()) HoldTable();
+            var session = Current();
+            if (session.Ai is not null)
+            {
+                session.TakeBack();
+                _aiLast = null;
+                _notice = "Took back your last Move (and the AI's reply). Takebacks are noted with the result.";
+            }
+            else if (session.Undo()) HoldTable();
         }));
         app.MapPost("/api/rewind", (RewindRequest r) => Respond(() =>
         {
+            if (Current().Ai is not null)
+                throw new EntryException("Against the AI only your last Move can be taken back (Undo): rewinding would show cards you shouldn't know yet.");
             var before = Current().Log.Count;
             Current().RewindTo(r.Count);
             if (Current().Log.Count < before) HoldTable();
@@ -169,19 +246,31 @@ public sealed class AdvisorServer : IDisposable
             _notice = moved is null ? null : $"The game was saved to {moved}.";
         }, save: false));
 
-        app.MapGet("/api/advice", () => { lock (_lock) return Results.Ok(_advice.View(_session)); });
+        app.MapGet("/api/advice", () => { lock (_lock) return Results.Ok(AdviceBox()); });
         app.MapPost("/api/advice", (AdviceRequest r) =>
         {
-            lock (_lock) return Results.Ok(_session is null ? _advice.View(null) : _advice.Request(_session, r.Longer));
+            lock (_lock)
+            {
+                if (AdviceTarget is { } session) _advice.Request(session, r.Longer);
+                return Results.Ok(AdviceBox());
+            }
         });
         app.MapPost("/api/advice/auto", (AutoRequest r) =>
         {
             lock (_lock)
             {
-                _advice.SetAuto(r.On, _session);
-                return Results.Ok(_advice.View(_session));
+                _advice.SetAuto(r.On, AdviceTarget);
+                return Results.Ok(AdviceBox());
             }
         });
+
+        app.MapGet("/api/play/opponents", () => Results.Ok(new OpponentsResponse(_runsFolder, Opponents.List(_runsFolder), _store.LoadSettings())));
+        app.MapPost("/api/play/advice", (AutoRequest r) => Respond(() => _aiAdvice = r.On, save: false));
+        app.MapPost("/api/play/retry", () => Respond(() =>
+        {
+            _aiError = null;
+            _aiKey = null;
+        }, save: false));
 
         app.MapGet("/api/tts", () => { lock (_lock) return Results.Ok(new TtsResponse(TtsBox(), _changes)); });
         app.MapPost("/api/tts", (TtsRequest r) => Respond(() => SetTts(r), save: false));
@@ -203,6 +292,158 @@ public sealed class AdvisorServer : IDisposable
         // The table may already be a few draft picks in: catch up with it.
         _catchUp = true;
         Reconcile(force: true);
+    }
+
+    /// <summary>
+    /// A game against the AI (ticket 36): the opponent is checked first (a missing network file is refused here, not
+    /// mid-game), the seat is drawn when the owner asked for a random one, and the program deals the setup at once.
+    /// </summary>
+    void NewAiGame(NewGameSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.Opponent)) throw new EntryException("Choose the AI opponent first");
+        var spec = settings.Opponent.Trim();
+        var ai = new AiOpponent(spec, string.IsNullOrWhiteSpace(settings.OpponentLabel) ? spec : settings.OpponentLabel.Trim(),
+            settings.AiSimulations, (ulong)Random.Shared.NextInt64() ^ (ulong)DateTime.UtcNow.Ticks);
+        try
+        {
+            ai.Validate();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            throw new EntryException($"Can't play against '{spec}': {e.Message}");
+        }
+        _store.SaveSettings(settings);
+        var moved = _store.ArchiveCurrent();
+        var seat = settings.RandomSeat ? Random.Shared.Next(2) : settings.Seat;
+        _session = AdvisorSession.New(settings.ToRuleset(), seat, ai);
+        _aiAdvice = false;
+        _aiLast = null;
+        _aiError = null;
+        _hold.Clear();
+        _lastAppended = null;
+        _notice = (moved is null ? "" : $"The previous game was saved to {moved}. ")
+                  + $"New game against {ai.Label}: you are P{seat + 1}. The cards are dealt by the program.";
+        Reconcile(force: true);
+    }
+
+    // ---------------------------------------------------------------- playing against the AI
+
+    /// <summary>The session advice is about: none in a game against the AI unless the owner turned advice on.</summary>
+    AdvisorSession? AdviceTarget => _session?.Ai is not null && !_aiAdvice ? null : _session;
+
+    AdviceView AdviceBox()
+    {
+        var box = _advice.View(AdviceTarget);
+        return _session?.Ai is not null && !_aiAdvice
+            ? box with { Status = "off", Message = "Advice is off while you play the AI (it would spoil the test). Turn it on above if you want it." }
+            : box;
+    }
+
+    /// <summary>
+    /// Starts the AI's search when it is the AI's decision (under the lock), unless one already runs for this position
+    /// or failed there. A search for an older position is cancelled. The search runs on a background task from the AI's
+    /// own Observation; its Move is entered under the lock only if the game is still at the same position, after at least
+    /// the AI pause so the owner sees it happen. Then the next AI decision (play again, a draft pick) starts the same way.
+    /// </summary>
+    void KickAi()
+    {
+        var session = _session;
+        if (session is null || !session.AiToMove)
+        {
+            _aiCancel?.Cancel();
+            _aiCancel = null;
+            _aiKey = null;
+            _aiError = null;
+            return;
+        }
+        var key = session.Write();
+        if (_aiKey == key) return;
+        _aiCancel?.Cancel();
+        _aiKey = key;
+        _aiError = null;
+        var ai = session.Ai!;
+        var observation = session.AiObservation();
+        var seed = session.AiSeed;
+        var before = session.State.Clone();
+        var cancel = new CancellationTokenSource();
+        _aiCancel = cancel;
+        _aiTask = Task.Run(async () =>
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            Move move;
+            try
+            {
+                move = AiPlayer.Choose(observation, ai, seed, cancel.Token);
+                var wait = _aiPause - watch.Elapsed;
+                if (wait > TimeSpan.Zero) await Task.Delay(wait, cancel.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception e)
+            {
+                lock (_lock)
+                {
+                    if (_aiKey != key || cancel.IsCancellationRequested) return;
+                    _aiError = $"The AI's search failed: {e.Message}";
+                    Console.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {_aiError}");
+                    _changes++;
+                }
+                return;
+            }
+            lock (_lock)
+            {
+                if (cancel.IsCancellationRequested || _session is null || _aiKey != key || _session.Write() != key) return;
+                try
+                {
+                    _session.EnterAiMove(move);
+                }
+                catch (EntryException e)
+                {
+                    _aiError = $"The AI's Move was refused: {e.Message}";
+                    _changes++;
+                    return;
+                }
+                _aiLast = AiPlayer.Describe(before, move);
+                _aiKey = null;
+                SaveQuietly();
+                AfterAiChange();
+                _advice.Sync(AdviceTarget);
+                _changes++;
+            }
+        });
+    }
+
+    /// <summary>After any change of a game against the AI: record a finished game's result, or start the AI's search.</summary>
+    void AfterAiChange()
+    {
+        if (_session?.Ai is { } ai && _session.State.Result is { } result && _recorded != ai.Seed.ToString())
+        {
+            var seat = _session.Seat;
+            var winner = result.IsDraw ? "draw" : result.Winner == seat ? "you" : "ai";
+            var (you, them) = seat == 0 ? (result.P1.Total, result.P2.Total) : (result.P2.Total, result.P1.Total);
+            try
+            {
+                _store.AddAiResult(new AiGameRecord(DateTime.Now, ai.Label, ai.Spec, ai.Simulations, seat, winner,
+                    result.Victory.ToString().ToLowerInvariant(), you, them, ai.Takebacks, ai.Seed.ToString()));
+                _recorded = ai.Seed.ToString();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                _notice = $"Could not record the result in {_store.AiResultsPath}: {e.Message}";
+            }
+        }
+        KickAi();
+    }
+
+    PlayView? PlayBox()
+    {
+        if (_session?.Ai is not { } ai) return null;
+        var thinking = _session.AiToMove && _aiError is null;
+        return new PlayView(ai.Label, ai.Spec, ai.Searches ? ai.Simulations : null, _session.AiSeat, thinking,
+            thinking ? $"{ai.Label} is thinking…" : null, _aiLast, _aiError, _aiAdvice, ai.Takebacks, _session.CanTakeBack,
+            _store.Tally(ai.Spec, ai.Label), _store.AiResultsPath);
     }
 
     /// <summary>
@@ -327,7 +568,7 @@ public sealed class AdvisorServer : IDisposable
     /// </summary>
     void Reconcile(bool force)
     {
-        if (_settled is not { } snapshot || !_tts.Following)
+        if (_settled is not { } snapshot || !_tts.Following || _session?.Ai is not null)
         {
             if (_sync is not null || _syncText is not null) _changes++;
             _sync = null;
@@ -367,7 +608,7 @@ public sealed class AdvisorServer : IDisposable
                     SaveQuietly();
                     log = _session.Write();
                     result = Reconciler.Reconcile(_session.State, _session.Seat, sides, snapshot, options);
-                    _advice.Sync(_session);
+                    _advice.Sync(AdviceTarget);
                 }
                 catch (EntryException e)
                 {
@@ -483,18 +724,20 @@ public sealed class AdvisorServer : IDisposable
                 // The change stands (the log in memory is the truth); the next change saves it again.
                 _notice = $"Could not save the game to {_store.CurrentPath}: {e.Message} It is saved again after the next entry.";
             }
-            _advice.Sync(_session);
+            AfterAiChange();
+            _advice.Sync(AdviceTarget);
             _changes++;
             var view = _session is null ? null : BoardView.Build(_session, _store.CurrentPath);
-            var response = new StateResponse(view, view is null ? _store.LoadSettings() : null, error, _notice, _advice.View(_session),
-                TtsBox(), _changes);
+            var response = new StateResponse(view, view is null ? _store.LoadSettings() : null, error, _notice, AdviceBox(),
+                TtsBox(), _changes, PlayBox());
             _notice = null;
             return error is null ? Results.Ok(response) : Results.BadRequest(response);
         }
     }
 }
 
-public sealed record NewGameRequest(bool Messe, bool Liberty, bool Rule2015, int Seat);
+public sealed record NewGameRequest(bool Messe, bool Liberty, bool Rule2015, int Seat, bool VsAi = false, string? Opponent = null,
+    string? OpponentLabel = null, int? AiSimulations = null, bool RandomSeat = false);
 public sealed record EntryRequest(string? Line, string? Then = null);
 public sealed record RewindRequest(int Count);
 public sealed record AdviceRequest(bool Longer);
@@ -508,7 +751,7 @@ public sealed record PromoRequest(string? Promo);
 /// a one-time notice, the advice box for the current position, the Tabletop Simulator box, and the change counter.
 /// </summary>
 public sealed record StateResponse(GameView? Game, NewGameSettings? Settings, string? Error, string? Notice, AdviceView Advice,
-    TtsView Tts, long Changes);
+    TtsView Tts, long Changes, PlayView? Play = null);
 
 /// <summary>The Tabletop Simulator box alone, polled by the page while following the table.</summary>
 public sealed record TtsResponse(TtsView Tts, long Changes);
@@ -532,3 +775,15 @@ public sealed record TtsView(bool Following, string Color, bool Connected, strin
 public sealed record TtsPromoView(string Id, string Name);
 
 public sealed record TtsChoiceView(int Index, string Text, IReadOnlyList<string> Lines);
+
+/// <summary>
+/// The "Play against the AI" box (ticket 36), null in a game entered by hand: the opponent (name, spec, simulations for
+/// a search Agent), the AI's seat, whether it is thinking, the last "AI played: ..." line, a failed search, the owner's
+/// advice toggle, the takebacks so far and whether Undo can take one back, the tally against this opponent and where
+/// the results are kept.
+/// </summary>
+public sealed record PlayView(string Opponent, string Spec, int? Simulations, int AiSeat, bool Thinking, string? Message,
+    string? LastAi, string? Error, bool Advice, int Takebacks, bool CanTakeBack, TallyView Tally, string ResultsFile);
+
+/// <summary>The opponents for the new-game screen, the runs folder they were read from, and the remembered choices.</summary>
+public sealed record OpponentsResponse(string? RunsFolder, IReadOnlyList<OpponentOption> Opponents, NewGameSettings Settings);

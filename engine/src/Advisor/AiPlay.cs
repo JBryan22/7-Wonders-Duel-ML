@@ -1,0 +1,161 @@
+using System.Text.Json;
+using SevenWondersDuel.Agents;
+using SevenWondersDuel.Engine;
+
+namespace SevenWondersDuel.Advisor;
+
+/// <summary>
+/// The opponent of a "Play against the AI" game (ticket 36): an Agent spec (<c>neural:&lt;onnx&gt;,mode=classic</c>,
+/// <c>mcts</c>, <c>heuristic</c>, <c>random</c>, ...), the name shown for it, the search budget (simulations, for the
+/// search Agents), the game's seed (every Reveal and every AI search seed derives from it and the log position, so a
+/// saved game resumes exactly) and how many Moves the owner took back. Saved in the Move Log as one comment line.
+/// </summary>
+public sealed record AiOpponent(string Spec, string Label, int Simulations, ulong Seed, int Takebacks = 0)
+{
+    public const string Prefix = "# advisor ai ";
+    public const int DefaultSimulations = 800;
+
+    static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    public string Write() => JsonSerializer.Serialize(this, Json);
+
+    public static AiOpponent Parse(string json) =>
+        Deserialize(json) ?? throw new FormatException("Empty advisor ai line");
+
+    static AiOpponent? Deserialize(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<AiOpponent>(json, Json);
+        }
+        catch (JsonException e)
+        {
+            throw new FormatException($"Bad advisor ai line: {e.Message}");
+        }
+    }
+
+    /// <summary>A seed for one use (<paramref name="purpose"/>) at one log position: SplitMix-style mixing.</summary>
+    public static ulong Mix(ulong seed, ulong position, ulong purpose)
+    {
+        var x = seed ^ (position * 0x9E3779B97F4A7C15UL) ^ (purpose * 0xD1B54A32D192ED03UL);
+        x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9UL;
+        x = (x ^ (x >> 27)) * 0x94D049BB133111EBUL;
+        return x ^ (x >> 31);
+    }
+
+    /// <summary>True for the Agents that search, where <see cref="Simulations"/> sets the budget.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool Searches => AdviceSettings.Split(Spec).Name is "mcts" or "neural";
+
+    /// <summary>Throws a <see cref="FormatException"/> (or the network's load error) unless the spec builds an Agent.</summary>
+    public void Validate()
+    {
+        if (Simulations < 1) throw new FormatException("The AI needs at least 1 simulation");
+        AiPlayer.Create(this, 0);
+    }
+}
+
+/// <summary>Builds the AI opponent's Agent and asks it for a Move (it sees only its own Observation).</summary>
+public static class AiPlayer
+{
+    public static IAgent Create(AiOpponent ai, ulong seed) =>
+        ai.Searches ? AdviceSearch.CreateAgent(ai.Spec, ai.Simulations, seed) : AgentSpecs.Create(ai.Spec, seed);
+
+    /// <summary>The AI's Move for the decision at the front of <paramref name="observation"/>; a search can be cancelled.</summary>
+    public static Move Choose(Observation observation, AiOpponent ai, ulong seed, CancellationToken cancel = default)
+    {
+        var moves = observation.LegalMoves();
+        if (moves.Count == 0) throw new InvalidOperationException("The AI has no legal Move");
+        if (moves.Count == 1) return moves[0];
+        return Create(ai, seed) switch
+        {
+            MctsAgent mcts => mcts.Search(observation, cancel).Best,
+            NeuralAgent neural => neural.Search(observation, cancel).Best,
+            var agent => agent.ChooseMove(observation),
+        };
+    }
+
+    /// <summary>"AI played: Build Baths": the AI's Move in the owner's words.</summary>
+    public static string Describe(GameState before, Move move) => move.Kind switch
+    {
+        MoveKind.StartMe => "AI played: the AI starts this Age",
+        MoveKind.StartOpponent => "AI played: you start this Age",
+        MoveKind.Library => $"AI played: kept {Engine.Data.GameData.Tokens[move.Token].Name} from its Great Library draw",
+        _ => $"AI played: {AdviceTable.Label(before, move)}",
+    };
+}
+
+/// <summary>One choice in the new-game screen's opponent list.</summary>
+public sealed record OpponentOption(string Group, string Text, string Label, string Spec);
+
+/// <summary>
+/// The opponents offered on the new-game screen: every Run under the runs folder (its best Generation first, then each
+/// Generation's network, all with the classic evaluation search, which played better than Gumbel in ticket 26's
+/// Matches), then the MCTS Anchor, the Heuristic and Random. The runs folder is only read.
+/// </summary>
+public static class Opponents
+{
+    /// <summary><c>SEVENWD_RUNS</c>, else <c>C:\7wd-runs</c> on Windows and <c>~/7wd-runs</c> elsewhere.</summary>
+    public static string DefaultRunsFolder =>
+        Environment.GetEnvironmentVariable("SEVENWD_RUNS") is { Length: > 0 } env ? env
+        : OperatingSystem.IsWindows() ? @"C:\7wd-runs"
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "7wd-runs");
+
+    public static string NetworkSpec(string onnx) => $"neural:{Path.GetFullPath(onnx)},mode=classic";
+
+    public static List<OpponentOption> List(string? runsFolder)
+    {
+        var list = new List<OpponentOption>();
+        if (runsFolder is not null && Directory.Exists(runsFolder))
+        {
+            // The Run whose best network changed last first (the one in training now), so it is the default choice.
+            foreach (var run in Directory.GetDirectories(runsFolder)
+                         .OrderByDescending(r => File.Exists(Path.Combine(r, "best.json")) ? File.GetLastWriteTimeUtc(Path.Combine(r, "best.json")) : DateTime.MinValue)
+                         .ThenBy(r => r, StringComparer.OrdinalIgnoreCase))
+            {
+                var name = Path.GetFileName(run);
+                var net = Path.Combine(run, "net");
+                var gens = Directory.Exists(net)
+                    ? Directory.GetFiles(net, "gen-*.onnx")
+                        .Select(f => (File: f, Gen: int.TryParse(Path.GetFileNameWithoutExtension(f)[4..], out var g) ? g : -1))
+                        .Where(x => x.Gen >= 0).OrderByDescending(x => x.Gen).ToList()
+                    : [];
+                var best = BestOf(run);
+                if (best is { } b && File.Exists(b.File))
+                    list.Add(new OpponentOption(name, $"{name}: best network (Gen {b.Gen})", $"{name} Gen {b.Gen}", NetworkSpec(b.File)));
+                foreach (var (file, gen) in gens)
+                    list.Add(new OpponentOption(name, $"{name}: Gen {gen}", $"{name} Gen {gen}", NetworkSpec(file)));
+            }
+        }
+        list.Add(new OpponentOption("Built-in", "MCTS Anchor (no network)", "MCTS Anchor", "mcts"));
+        list.Add(new OpponentOption("Built-in", "Heuristic (weak)", "Heuristic", "heuristic"));
+        list.Add(new OpponentOption("Built-in", "Random (very weak)", "Random", "random"));
+        return list;
+    }
+
+    /// <summary>A Run's best Generation from its <c>best.json</c> (<c>{"generation": 3, "model": "net/gen-0003.onnx"}</c>), or null.</summary>
+    static (int Gen, string File)? BestOf(string run)
+    {
+        try
+        {
+            var path = Path.Combine(run, "best.json");
+            if (!File.Exists(path)) return null;
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var root = doc.RootElement;
+            var gen = root.GetProperty("generation").GetInt32();
+            var model = root.GetProperty("model").GetString();
+            return model is null ? null : (gen, Path.GetFullPath(Path.Combine(run, model)));
+        }
+        catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+}
+
+/// <summary>One finished game against the AI, as kept in <c>vs-ai.json</c>.</summary>
+public sealed record AiGameRecord(DateTime Finished, string Opponent, string Spec, int Simulations, int Seat, string Winner,
+    string Victory, int YourVp, int AiVp, int Takebacks, string Seed);
+
+/// <summary>The tally against one opponent.</summary>
+public sealed record TallyView(string Opponent, int You, int Ai, int Draws, string Text);
