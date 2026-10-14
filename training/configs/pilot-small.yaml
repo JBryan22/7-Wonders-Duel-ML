@@ -68,7 +68,7 @@ matches:
   generation0_opponent: random
 
 stop:
-  cap_hours: 20            # pilot: 20 desktop-hours
+  cap_hours: 10            # pilot: 10 desktop-hours (owner shortened from 20 on 2026-10-14; pilot 1 ran 12.7)
   plateau_generations: null  # pilot: off
   science_min_share: null  # pilot: off
   science_from: 6          # ... over Generations 6-10 (desktop-hours ~6-10, ~275k games)

@@ -4,6 +4,7 @@ encoding_version: 1
 seed: 0
 generations: null          # keep going until stopped
 init: null                 # or another Run's checkpoint, e.g. runs/warm/net/latest.pt
+init_from: null            # or another Run's directory: continue from it (checkpoint + window; see config.py)
 dropped_inputs: []         # Encoding input blocks the network never sees, e.g. [derived] (see config.py)
 
 network:
@@ -44,10 +45,13 @@ matches:
   anchor_elo: null         # only needed when the anchor isn't a Ladder rung
   anchor_every: 5
   generation0_opponent: random
+  reference: null          # a stronger fixed opponent than the Anchor, played on the Anchor's Generations
+  reference_elo: null      # only needed when the reference isn't a Ladder rung
+  reference_pairs: null    # default: pairs
 
 stop:                      # the Run stops itself on the first of these (null switches one off)
   cap_hours: 300           # desktop-hours of training
-  plateau_generations: 20  # Anchor Elo hasn't risen by more than its error bar over the last 20 Generations
+  plateau_generations: 20  # Anchor (or reference) Elo hasn't risen by more than its error bar over the last 20 Generations
   science_min_share: 0.01  # warm-start trigger: science wins under 1% of Self-Play games ...
   science_from: 6          # ... over Generations 6-10
   science_to: 10

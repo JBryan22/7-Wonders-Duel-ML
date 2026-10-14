@@ -8,6 +8,13 @@ smoke-test config.
     seed: 0                 Self-Play, training and Match seeds all derive from it
     generations: null       stop after this Generation (null: keep going until stopped)
     init: null              start Generation 0 from this checkpoint (e.g. another Run's net/latest.pt) instead of random
+                            (weights only; a fresh optimiser)
+    init_from: null         warm start: continue from another Run (its directory, e.g. C:/7wd-runs/pilot-1-small).
+                            Creating the Run copies the parent's training checkpoint (network, optimiser, step count)
+                            into net/latest.pt, so Generation 0 is the parent's newest network; the parent's newest
+                            shards fill the training window until the Run's own Generations do (they are only read,
+                            never deleted). The parent must use the same Encoding, network size and dropped inputs.
+                            The lineage is recorded in run.json (init_from). Not together with init
     dropped_inputs: []      Encoding input blocks the network never sees, e.g. [derived] (the derived features): the
                             network multiplies them by 0 in its input layer. The Encoding (v1), the C# encoder and the
                             shards stay the same; the exported model says which blocks it drops (ONNX metadata
@@ -18,10 +25,13 @@ smoke-test config.
     training:  window_positions, reuse (times each new position is seen on average), batch_size, learning_rate,
                weight_decay, device, checkpoint_minutes, min_steps
     matches:   pairs, simulations, mode, search, device, threads, parallel (game threads), promo, anchor, anchor_elo,
-               anchor_every, generation0_opponent
+               anchor_every, generation0_opponent, reference (a stronger fixed opponent than the Anchor, e.g.
+               mcts:sims=20000, played on the Anchor's Generations), reference_elo (only needed when it isn't a
+               Ladder rung), reference_pairs (seed pairs for the reference Match; default: pairs)
     stop:      when the Run stops itself (spec A7, "Budget and stopping"; null switches a rule off):
-               cap_hours (desktop-hours of training), plateau_generations (the Anchor Elo hasn't risen by more than its
-               error bar over this many Generations), science_min_share + science_from/science_to (warm-start
+               cap_hours (desktop-hours of training), plateau_generations (the Elo against the Anchor, or against
+               the reference when there is one (whichever has more headroom), hasn't risen by more than its error
+               bar over this many Generations), science_min_share + science_from/science_to (warm-start
                trigger: science wins under this share of the Self-Play games of those Generations), progress_by (warm-
                start trigger: no Anchor Elo progress by this Generation). See stopping.py.
 """
@@ -83,6 +93,9 @@ class MatchSection:
     anchor_elo: float | None = None
     anchor_every: int = 5
     generation0_opponent: str | None = "random"
+    reference: str | None = None
+    reference_elo: float | None = None
+    reference_pairs: int | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,7 @@ class RunConfig:
     seed: int = 0
     generations: int | None = None
     init: str | None = None
+    init_from: str | None = None
     dropped_inputs: tuple[str, ...] = ()
     network: NetworkSection = field(default_factory=NetworkSection)
     selfplay: SelfPlaySection = field(default_factory=SelfPlaySection)
@@ -174,6 +188,8 @@ def validate(c: RunConfig) -> None:
          "training window_positions, reuse and batch_size must be positive")
     need(c.matches.pairs > 0 and c.matches.simulations > 0, "matches pairs and simulations must be positive")
     need(c.matches.mode in ("gumbel", "classic"), "matches.mode is gumbel or classic")
+    need(c.matches.reference_pairs is None or c.matches.reference_pairs > 0, "matches.reference_pairs is positive or null")
+    need(c.init is None or c.init_from is None, "init (a checkpoint) and init_from (a Run) can't both be set")
     need(c.matches.anchor_every >= 0, "matches.anchor_every is 0 (never) or a positive number of Generations")
     need(len(set(c.dropped_inputs)) == len(c.dropped_inputs), "dropped_inputs names a block twice")
     need(c.generations is None or c.generations >= 0, "generations must be 0 or more")

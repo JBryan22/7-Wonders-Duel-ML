@@ -1,0 +1,77 @@
+# The main Run (ticket 28): desktop.yaml (ticket 26's calibrated ~1-desktop-hour Generations) with the pilots'
+# winners (ticket 27: Small 256x4, Gumbel Self-Play, derived features on, classic search in Matches), continuing from
+# pilot 1's network, with a stronger fixed reference than the Anchor and the main-Run stopping rules. Start it with
+# the "Start training" shortcut (runs/queue.yaml: the queue's last entry), or from training/:
+#   uv run 7wd-train start --run C:/7wd-runs/main --config configs/main.yaml
+# Measurements behind the numbers: .scratch/7wd-v1-build/issues/26-calibration-run.md (Generation timings, disk)
+# and 28-main-run.md (the reference, the warm start).
+encoding_version: 1
+seed: 1                    # not pilot 1's 0: Generation g's Self-Play deals differ from pilot 1's Generation g,
+                           # whose shards share the first window (see init_from)
+generations: null          # keep going until stopped (cap, plateau, warm-start trigger or a pause)
+init: null
+init_from: C:/7wd-runs/pilot-1-small   # the warm start (owner, 2026-10-14: no learning lost): its checkpoint (Generation
+                           # 6's network, optimiser and step count) becomes this Run's Generation 0, and its newest
+                           # shards (Generations 6..2, ~19M positions) fill the window until this Run's own do (~Gen 7).
+                           # Lineage in run.json (init_from)
+
+network:
+  width: 256               # Small: pilot 2 (Medium 512x6) was no better at equal desktop-hours (ticket 27)
+  blocks: 4
+
+selfplay:
+  games: 55000             # ~43 min at ~21 games/s: sizes the Generation to ~1 desktop-hour (see above)
+  simulations: 64          # the spec's default; 32 sims measured no faster (~1,585 vs ~1,620 positions/s: the
+                           # search's own overhead dominates), 128 sims halves the games (763 positions/s)
+  mode: gumbel
+  search: ""
+  promo_rate: 1.0
+  device: cpu              # the Small net: CPU ~1,450-1,620 positions/s = CUDA; keeps the GPU free. A Medium
+                           # (512x6) net needs cuda here: 1,590 positions/s on CUDA vs 696 on the CPU
+  threads: 4
+  parallel: null           # 512 games at a time (32 per logical CPU): mean inference batch ~75
+  workers: null            # 4 inference threads
+
+training:
+  window_positions: 25000000  # ~7 Generations of ~3.8M (the spec's "window ~7 Generations"); compacted shards
+                              # take ~600 bytes/position, so the window is ~16 GB and stays in RAM (dense it
+                              # would be ~125 GB)
+  reuse: 2.0               # each new position is seen ~2x on average: ~7,400 steps per Generation
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  device: auto             # CUDA: ~47-53 steps/s for 256x4 and 512x6 alike (batch building, not the GPU, limits it)
+  checkpoint_minutes: 5
+  min_steps: 1
+
+matches:
+  pairs: 200               # 400 games, the spec's Match size
+  simulations: 800
+  mode: classic            # the evaluation search: most-visited Move, no noise. At 800 sims classic search beat
+                           # Gumbel search with the same network 61.5% (CI 54.6-68.0); gumbel=0 didn't help (46%).
+                           # Same speed. Ticket 25 saw the same at 64 sims. Self-Play stays Gumbel.
+  search: ""
+  device: cpu              # CPU beats CUDA at Match batch sizes (~7): 52 s vs 132 s for 32 seed pairs
+  threads: 4
+  parallel: 64             # game threads: 64 measured ~18% faster than the default 16 (32 and 128: ~same as 64)
+  promo: null              # base-only (headline Elo)
+  anchor: mcts             # the Anchor, Elo 1512 (kept: v1's success test is passing it; ~85% already)
+  anchor_elo: null
+  anchor_every: 5          # ~every 5 desktop-hours
+  generation0_opponent: mcts  # the Anchor: Generation 0 is already strong, so its Elo comes straight from the Anchor
+                           # (Random would only say "wins every game")
+  reference: mcts:sims=20000  # the Reference: the Anchor at 20x the simulations, Elo 1712 on the Ladder (+200 vs the
+                           # Anchor: 76.0%, CI 71.6-79.9%; engine/src/Agents/Ladder.cs). 678 ms per Move (the Anchor:
+                           # 32). Played with the Anchor, also at Generation 0. Pilot 1 (Anchor Elo ~1815) should score
+                           # ~60-65% against it: room to show progress where the Anchor (~85%) is running out. The
+                           # plateau test follows whichever of the two the latest Generation scored lower against
+  reference_elo: null      # rated on the Ladder
+  reference_pairs: 100     # 200 games, ~5-6 min every 5th Generation (200 pairs would take ~11 min)
+
+stop:
+  cap_hours: 150           # desktop-hours: the owner prefers less than the spec's 300 (2026-10-14)
+  plateau_generations: 20  # = 20 desktop-hours and 4 reference Matches with flat Elo
+  science_min_share: 0.01  # warm-start trigger: science wins under 1% of Self-Play games ...
+  science_from: 6          # ... over Generations 6-10 (desktop-hours ~6-10, ~275k games)
+  science_to: 10
+  progress_by: 20          # warm-start trigger: no Anchor Elo progress by Generation 20 (~20 desktop-hours)

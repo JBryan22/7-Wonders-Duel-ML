@@ -181,6 +181,28 @@ public sealed class PlayAiTests : IDisposable
         Assert.Equal(3, Opponents.List(Path.Combine(_folder, "missing")).Count);
     }
 
+    [Fact]
+    public void The_main_Runs_best_network_is_the_default_and_before_it_has_one_the_Run_it_continues_from()
+    {
+        var runs = MakeRuns();
+        var parent = Path.Combine(runs, "pilot-a");
+        Directory.CreateDirectory(Path.Combine(parent, "net"));
+        File.Copy(Path.Combine(runs, "pilot-x", "net", "gen-0001.onnx"), Path.Combine(parent, "net", "gen-0005.onnx"));
+        File.WriteAllText(Path.Combine(parent, "best.json"), """{"generation": 5, "model": "net/gen-0005.onnx"}""");
+        File.SetLastWriteTimeUtc(Path.Combine(parent, "best.json"), DateTime.UtcNow.AddDays(-2)); // pilot-x changed later
+        var main = Path.Combine(runs, Opponents.MainRun);
+        Directory.CreateDirectory(Path.Combine(main, "net"));
+        File.WriteAllText(Path.Combine(main, "run.json"),
+            JsonSerializer.Serialize(new Dictionary<string, object> { ["init_from"] = new Dictionary<string, string> { ["run"] = parent } }));
+        Assert.Equal("pilot-a Gen 5", Opponents.List(runs)[0].Label);
+
+        File.Copy(Path.Combine(parent, "net", "gen-0005.onnx"), Path.Combine(main, "net", "gen-0000.onnx"));
+        File.WriteAllText(Path.Combine(main, "best.json"), """{"generation": 0, "model": "net/gen-0000.onnx"}""");
+        File.SetLastWriteTimeUtc(Path.Combine(main, "best.json"), DateTime.UtcNow.AddDays(-3));
+        Assert.Equal("main Gen 0", Opponents.List(runs)[0].Label);
+        Assert.Contains("main: best network (Gen 0)", Opponents.List(runs)[0].Text);
+    }
+
     /// <summary>A runs folder like C:\7wd-runs with one Run, two Generations (the tiny test network) and a best.json.</summary>
     string MakeRuns()
     {

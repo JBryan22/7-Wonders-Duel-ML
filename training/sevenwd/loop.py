@@ -29,11 +29,17 @@ new Run). Layout:
                            `7wd selfplay-check` or `7wd shard` on it)
     matches/gen-NNNN-vs-*/ Generation N's Matches (match.jsonl, summary.json)
 
+A Run with `init_from` (a warm start from a parent Run, e.g. the main Run from pilot 1) starts with the parent's
+training checkpoint copied into net/latest.pt at creation, so Generation 0 is the parent's newest network and training
+carries on with its optimiser and step count; until the Run's own shards fill the window, the parent's newest shards
+fill the rest of it (read in place, never deleted by this Run). run.json records the lineage (init_from).
+
 Generation 0 is the starting network (random, or `init`), measured against Random so the Elo chain starts on the
 shared scale. Generation N >= 1: Self-Play with Generation N-1's network -> training on the window (the newest
 Generations' shards holding ~window_positions positions; shards that leave it are deleted, the Game Records stay)
 for reuse x new positions / batch steps -> export net/gen-N.onnx -> a Match against Generation N-1 (and against the
-best network when that is older), and against the Anchor every anchor_every Generations. No gating: Self-Play always
+best network when that is older), and against the Anchor (and the reference, a stronger fixed opponent, when the
+config has one) every anchor_every Generations. No gating: Self-Play always
 uses the newest network; the best pointer moves when a Generation beats the current best under the pass rule.
 
 Every step skips work already done (the C# side resumes Self-Play and Matches by itself), so stopping and starting
@@ -58,6 +64,7 @@ import logging
 import math
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -97,6 +104,7 @@ COLUMNS = [
     "prev_score", "prev_low", "prev_high", "prev_elo_diff",
     "best_opponent", "best_score", "best_low", "best_passes",
     "anchor_score", "anchor_low", "anchor_high", "anchor_elo",
+    "ref_score", "ref_low", "ref_high", "ref_elo",
     "elo", "best_generation", "seconds", "hours", "stop_reason",
 ]
 
@@ -176,6 +184,11 @@ class Run:
         return self.root / "config.yaml"
 
     @property
+    def parent(self) -> Path | None:
+        """The Run this one continues from (config init_from), or None."""
+        return resolve_parent(self.config.init_from) if self.config.init_from else None
+
+    @property
     def checkpoint(self) -> Path:
         return self.root / "net" / "latest.pt"
 
@@ -200,7 +213,8 @@ class Run:
         return self.selfplay_dir(g) / "shard"
 
     def match_dir(self, g: int, opponent: str) -> Path:
-        return self.root / "matches" / f"{gen_name(g)}-vs-{opponent}"
+        # An Agent spec can hold characters a Windows folder name can't (mcts:sims=50): keep [A-Za-z0-9._=,-].
+        return self.root / "matches" / f"{gen_name(g)}-vs-{re.sub(r'[^A-Za-z0-9._=,-]', '-', opponent)}"
 
     @property
     def pause_path(self) -> Path:
@@ -224,10 +238,16 @@ def create_run(root: str | Path, config_path: str | Path, manifest: Manifest | N
     if manifest.version != config.encoding_version:
         raise RunError(f"the config asks for Encoding v{config.encoding_version} but the manifest is v{manifest.version}")
     check_dropped_inputs(config, manifest)
+    lineage = check_parent(config, manifest) if config.init_from else None
     root.mkdir(parents=True, exist_ok=True)
     for sub in ("net", "selfplay", "matches"):
         (root / sub).mkdir(exist_ok=True)
     shutil.copyfile(manifest.path, root / "manifest.json")
+    if lineage is not None:
+        # The warm start: the parent's checkpoint (network, optimiser, step count) becomes this Run's.
+        tmp = root / "net" / "latest.pt.tmp"
+        shutil.copyfile(Path(lineage["run"]) / "net" / "latest.pt", tmp)
+        os.replace(tmp, root / "net" / "latest.pt")
     write_json(root / "run.json", {
         "format": RUN_FORMAT,
         "created": now(),
@@ -236,6 +256,7 @@ def create_run(root: str | Path, config_path: str | Path, manifest: Manifest | N
         "encoding_version": manifest.version,
         "manifest_sha256": manifest_hash(manifest.path),
         **({"dropped_inputs": list(config.dropped_inputs)} if config.dropped_inputs else {}),
+        **({"init_from": lineage} if lineage is not None else {}),
         "git": git_info(),
         "machine": machine_info(),
     })
@@ -277,6 +298,67 @@ def open_run(root: str | Path, config_path: str | Path | None = None, manifest: 
     return Run(root, config, manifest)
 
 
+def resolve_parent(given: str) -> Path:
+    path = Path(given)
+    if not path.is_absolute():
+        path = (REPO_ROOT / path) if (REPO_ROOT / path).exists() else path.resolve()
+    return path
+
+
+def parent_shards(parent: Path) -> list[tuple[int, int]]:
+    """The parent Run's Generations that still have a shard, newest first, with their positions."""
+    found = []
+    for d in (parent / "selfplay").glob("gen-*"):
+        header = d / "shard" / SHARD_HEADER
+        if header.is_file() and d.name[4:].isdigit():
+            found.append((int(d.name[4:]), int(json.loads(header.read_text(encoding="utf-8"))["positions"])))
+    return sorted(found, reverse=True)
+
+
+def check_parent(config: RunConfig, manifest: Manifest) -> dict:
+    """A warm start's parent Run must exist, not be training, have a checkpoint, and train the same Encoding with the
+    same network shape. Returns the lineage recorded in run.json."""
+    from .runstate import is_running
+    parent = resolve_parent(config.init_from)
+    if not (parent / "config.yaml").is_file() or not (parent / "run.json").is_file():
+        raise RunError(f"init_from: {parent} is not a Run")
+    checkpoint = parent / "net" / "latest.pt"
+    if not checkpoint.is_file():
+        raise RunError(f"init_from: {parent} has no training checkpoint (net/latest.pt)")
+    if is_running(parent):
+        raise RunError(f"init_from: {parent} is still training; pause it first (its checkpoint must not change)")
+    record = json.loads((parent / "run.json").read_text(encoding="utf-8"))
+    if record.get("encoding_version") != manifest.version or record.get("manifest_sha256") != manifest_hash(manifest.path):
+        raise RunError(f"init_from: {parent} trained another Encoding (or manifest) than this Run's v{manifest.version}")
+    ckpt = load_checkpoint(checkpoint, manifest)
+    net = ckpt["network"]
+    if (net.get("width"), net.get("blocks")) != (config.network.width, config.network.blocks):
+        raise RunError(f"init_from: {parent}'s network is {net.get('width')}x{net.get('blocks')}, the config asks for "
+                       f"{config.network.width}x{config.network.blocks}")
+    if tuple(net.get("dropped_inputs") or ()) != tuple(config.dropped_inputs):
+        raise RunError(f"init_from: {parent}'s network drops the inputs {list(net.get('dropped_inputs') or [])}, the "
+                       f"config says {list(config.dropped_inputs)}")
+    # The Generation whose training ended at the checkpoint's step: the network Generation 0 will be.
+    trained = None
+    for plan in sorted((parent / "net").glob("gen-*.train.json")):
+        if json.loads(plan.read_text(encoding="utf-8")).get("total_steps") == ckpt["step"]:
+            trained = int(plan.name[4:8])
+    best = parent / "best.json"
+    with open(parent / "generations.csv", newline="", encoding="utf-8") as f:
+        finished_rows = sum(1 for _ in csv.DictReader(f))
+    return {
+        "run": str(parent),
+        "checkpoint_sha256": sha256_bytes(checkpoint.read_bytes()),
+        "checkpoint_step": ckpt["step"],
+        "network_generation": trained,  # the checkpoint holds this Generation's network (None: mid-training)
+        "finished_generations": finished_rows,
+        "best": json.loads(best.read_text(encoding="utf-8")) if best.is_file() else None,
+        "config_sha256": record.get("config_sha256"),
+        "git": record.get("git"),
+        "window_shards": [g for g, _ in parent_shards(parent)],
+    }
+
+
 def check_dropped_inputs(config: RunConfig, manifest: Manifest) -> None:
     """`dropped_inputs` names input blocks of the Encoding manifest (e.g. derived)."""
     blocks = [b.name for b in manifest.input_blocks]
@@ -307,8 +389,11 @@ def read_rows(run: Run) -> list[dict[str, str]]:
 
 
 def append_row(run: Run, row: dict) -> None:
+    # By the file's own header: a Run started before a column was added keeps its layout (the new column is left out).
+    with open(run.csv_path, newline="", encoding="utf-8") as f:
+        header = next(csv.reader(f), None) or COLUMNS
     with open(run.csv_path, "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([fmt(row.get(c)) for c in COLUMNS])
+        csv.writer(f).writerow([fmt(row.get(c)) for c in header])
         f.flush()
         os.fsync(f.fileno())
 
@@ -359,6 +444,21 @@ def window_for(run: Run, g: int) -> list[tuple[int, int]]:
         window.append((i, n))
         total += n
     return window
+
+
+def inherited_window(run: Run, window: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """A warm-started Run's window continues into its parent's newest shards while the Run's own Generations (all of
+    them, back to Generation 1) hold fewer than window_positions: the parent Generations (newest first) that fill it."""
+    parent = run.parent
+    if parent is None or not window or min(i for i, _ in window) != 1:
+        return []
+    total, inherited = sum(n for _, n in window), []
+    for i, n in parent_shards(parent):
+        if total >= run.config.training.window_positions:
+            break
+        inherited.append((i, n))
+        total += n
+    return inherited
 
 
 def clean_shards(run: Run, oldest_kept: int) -> list[int]:
@@ -550,22 +650,28 @@ class Loop:
             if read_best(self.run) is None:
                 write_best(self.run, 0, "the starting network")
             row["best_generation"] = 0
-            opponent = self.config.matches.generation0_opponent
+            m_cfg = self.config.matches
+            opponent = m_cfg.generation0_opponent
             if opponent:
-                m = self.match(0, opponent, opponent, opponent_elo=None)
+                elo = m_cfg.anchor_elo if opponent == m_cfg.anchor else None
+                m = self.match(0, "anchor" if opponent == m_cfg.anchor else opponent, opponent, opponent_elo=elo)
                 row["elo"] = m.get("eloA")
-                if opponent == self.config.matches.anchor:
+                if opponent == m_cfg.anchor:
                     row.update(anchor_cols(m))
+            if m_cfg.reference and (self.config.init or self.config.init_from):
+                # A trained starting network: measure it against the reference too (the plateau test's first point).
+                row.update(self.reference_match(0))
             return row
 
         prev = read_rows(self.run)[-1]
         self.check_pause()
         row.update(self.selfplay(g))
         window = window_for(self.run, g)
-        row["window_generations"] = len(window)
-        row["window_positions"] = sum(n for _, n in window)
+        inherited = inherited_window(self.run, window)
+        row["window_generations"] = len(window) + len(inherited)
+        row["window_positions"] = sum(n for _, n in window + inherited)
         self.check_pause()
-        row.update(self.train_generation(g, window, row["selfplay_positions"]))
+        row.update(self.train_generation(g, window, row["selfplay_positions"], inherited))
 
         prev_elo = num(prev.get("elo"))
         m = self.match(g, gen_name(g - 1), "neural:" + self.neural_spec(self.run.net(g - 1), self.config.matches), prev_elo)
@@ -591,11 +697,19 @@ class Loop:
         if every and g % every == 0:
             a = self.match(g, "anchor", self.config.matches.anchor, self.config.matches.anchor_elo)
             row.update(anchor_cols(a))
+            if self.config.matches.reference:
+                row.update(self.reference_match(g))
 
         removed = clean_shards(self.run, min(i for i, _ in window))
         if removed:
             self.say(f"deleted the shards of Generations {', '.join(map(str, removed))} (out of the window)")
         return row
+
+    def reference_match(self, g: int) -> dict:
+        m = self.config.matches
+        r = self.match(g, "reference", m.reference, m.reference_elo, pairs=m.reference_pairs)
+        return {"ref_score": r["winRate"], "ref_low": r["winRateLow"], "ref_high": r["winRateHigh"],
+                "ref_elo": r.get("eloA")}
 
     def initial_network(self) -> None:
         out = self.run.net(0)
@@ -605,7 +719,14 @@ class Loop:
         init = Path(c.init) if c.init else None
         if init is not None and not init.is_absolute():
             init = (REPO_ROOT / init) if (REPO_ROOT / init).exists() else init.resolve()
-        self.say("Generation 0: " + (f"starting network from {init}" if init else "random starting network"))
+        if c.init_from:
+            if not self.run.checkpoint.exists():
+                raise RunError(f"{self.run.checkpoint} is missing: a Run with init_from starts from the copy of its "
+                               f"parent's checkpoint made at creation")
+            self.say(f"Generation 0: continuing from {self.run.parent}'s network (its training checkpoint, step "
+                     f"{load_checkpoint(self.run.checkpoint, self.run.manifest)['step']:,})")
+        else:
+            self.say("Generation 0: " + (f"starting network from {init}" if init else "random starting network"))
         result = train(self.run.manifest, [], TrainConfig(steps=0, width=c.network.width, blocks=c.network.blocks,
                                                           seed=c.seed, device="cpu",
                                                           dropped_inputs=tuple(c.dropped_inputs)),
@@ -661,7 +782,8 @@ class Loop:
             **{f"victory_{k}": v / games for k, v in mix.items()},
         }
 
-    def train_generation(self, g: int, window: list[tuple[int, int]], new_positions: int) -> dict:
+    def train_generation(self, g: int, window: list[tuple[int, int]], new_positions: int,
+                         inherited: list[tuple[int, int]] = ()) -> dict:
         t = self.config.training
         out, plan_path = self.run.net(g), self.run.train_plan(g)
         step_now = (load_checkpoint(self.run.checkpoint, self.run.manifest)["step"]
@@ -671,13 +793,21 @@ class Loop:
         else:
             steps = max(t.min_steps, math.ceil(t.reuse * new_positions / t.batch_size))
             plan = {"start_step": step_now, "steps": steps, "window": [i for i, _ in window],
-                    "window_positions": sum(n for _, n in window), "new_positions": new_positions}
+                    "window_positions": sum(n for _, n in [*window, *inherited]), "new_positions": new_positions}
+            if inherited:
+                plan["inherited"] = {"run": str(self.run.parent), "window": [i for i, _ in inherited]}
             write_json(plan_path, plan)
         if not out.exists():
             end = plan["start_step"] + plan["steps"]
             remaining = end - step_now
+            parent = plan.get("inherited")
+            shards = [self.run.shard_dir(i) for i in plan["window"]]
+            if parent:
+                shards += [Path(parent["run"]) / "selfplay" / gen_name(i) / "shard" for i in parent["window"]]
             self.say(f"Generation {g}: training {remaining} steps on {plan['window_positions']:,} positions "
-                     f"(Generations {min(plan['window'])}-{max(plan['window'])})")
+                     f"(Generations {min(plan['window'])}-{max(plan['window'])}"
+                     + (f" + {Path(parent['run']).name} Generations {min(parent['window'])}-{max(parent['window'])}"
+                        if parent else "") + ")")
             done = [step_now - plan["start_step"]]
             self.doing(f"Generation {g}: training", lambda: f"{done[0]:,}/{plan['steps']:,} steps")
 
@@ -687,7 +817,7 @@ class Loop:
 
             c = self.config
             started = time.monotonic()
-            result = train(self.run.manifest, [self.run.shard_dir(i) for i in plan["window"]],
+            result = train(self.run.manifest, shards,
                            TrainConfig(steps=remaining, batch_size=t.batch_size, learning_rate=t.learning_rate,
                                        weight_decay=t.weight_decay, width=c.network.width, blocks=c.network.blocks,
                                        seed=c.seed + 7919 * g + step_now, device=t.device,
@@ -723,10 +853,11 @@ class Loop:
             "policy_entropy": losses.get("entropy"),
         }
 
-    def match(self, g: int, name: str, opponent: str, opponent_elo: float | None) -> dict:
+    def match(self, g: int, name: str, opponent: str, opponent_elo: float | None, pairs: int | None = None) -> dict:
         """Generation g's network (A) against the Agent spec `opponent` (B), saved in matches/gen-g-vs-<name>/ and
         resumed if it was stopped. Returns its summary.json."""
         m = self.config.matches
+        pairs = pairs or m.pairs
         directory = self.run.match_dir(g, name)
         summary_path = directory / "summary.json"
         if summary_path.exists():
@@ -734,11 +865,11 @@ class Loop:
             if summary.get("complete"):
                 return summary
         self.check_pause()
-        self.say(f"Generation {g}: Match against {name} ({m.pairs} seed pairs)")
+        self.say(f"Generation {g}: Match against {name} ({pairs} seed pairs)")
         lines = LineCounter(directory / "match.jsonl")
-        self.doing(f"Generation {g}: Match against {name}", lambda: f"{max(0, lines() - 1)}/{m.pairs} seed pairs")
+        self.doing(f"Generation {g}: Match against {name}", lambda: f"{max(0, lines() - 1)}/{pairs} seed pairs")
         args = ["match", "neural:" + self.neural_spec(self.run.net(g), m), opponent,
-                "--pairs", str(m.pairs), "--seed", str(self.config.seed), "--out", self.run.rel(directory),
+                "--pairs", str(pairs), "--seed", str(self.config.seed), "--out", self.run.rel(directory),
                 "--stop-file", self.run.rel(self.run.pause_path)]
         if m.promo:
             args += ["--promo", m.promo]
@@ -792,6 +923,12 @@ def progress_fields(rows: list[dict]) -> dict:
             fields["anchor"] = f"{score:.0%} at Generation {r['generation']}"
             fields["anchor_elo"] = stopping.value(r.get("anchor_elo"))
             break
+    for r in reversed(rows):
+        score = stopping.value(r.get("ref_score"))
+        if score is not None:
+            fields["reference"] = f"{score:.0%} at Generation {r['generation']}"
+            fields["reference_elo"] = stopping.value(r.get("ref_elo"))
+            break
     if rows and stopping.value(rows[-1].get("best_generation")) is not None:
         fields["best"] = int(stopping.value(rows[-1]["best_generation"]))
     return fields
@@ -801,7 +938,8 @@ SCALARS = {
     "loss/total": "loss_total", "loss/policy": "loss_policy", "loss/value": "loss_value",
     "loss/outcome": "loss_outcome", "policy/entropy": "policy_entropy",
     "elo/generation": "elo", "elo/anchor": "anchor_elo", "match/vs_previous": "prev_score",
-    "match/vs_anchor": "anchor_score", "best/generation": "best_generation",
+    "match/vs_anchor": "anchor_score", "elo/reference": "ref_elo", "match/vs_reference": "ref_score",
+    "best/generation": "best_generation",
     "selfplay/victory_military": "victory_military", "selfplay/victory_science": "victory_science",
     "selfplay/victory_civilian": "victory_civilian", "selfplay/victory_draw": "victory_draw",
     "selfplay/positions_per_second": "selfplay_positions_per_s", "training/steps_per_second": "train_steps_per_s",
@@ -827,6 +965,8 @@ def summary_line(row: dict) -> str:
         parts.append(f"vs Generation {g - 1}: {row['prev_score']:.1%}")
     if row.get("anchor_score") is not None:
         parts.append(f"vs the Anchor: {row['anchor_score']:.1%}")
+    if row.get("ref_score") is not None:
+        parts.append(f"vs the reference: {row['ref_score']:.1%}")
     if row.get("elo") is not None:
         parts.append(f"Elo {row['elo']:.0f}")
     parts.append(f"best: Generation {row.get('best_generation')}")
@@ -840,7 +980,7 @@ def next_pilot_hint(root: Path) -> str:
         following = queue_after(root)
     except Exception:  # the hint is informational only
         return ""
-    return f". Start training moves on to the next pilot, {following.name}" if following else ""
+    return f". Start training moves on to the next Run in the queue, {following.name}" if following else ""
 
 
 def main(argv: list[str] | None = None) -> int:

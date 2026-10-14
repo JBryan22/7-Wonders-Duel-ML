@@ -4,12 +4,12 @@
 
 **Blocked by:** 26
 
-**Status:** ready-for-human (needs the owner or the Windows desktop)
+**Status:** done
 
 Spec: `docs/spec-v1.md`.
 
-- [ ] Small vs Medium, derived features on/off, classic vs Gumbel compared on Anchor Elo
-- [ ] Winners frozen into the main Run config
+- [x] Small vs Medium compared on Anchor Elo (derived features on/off and classic vs Gumbel skipped: owner's call, see below)
+- [x] Winners frozen into the main Run config (`training/configs/main.yaml`)
 
 ## Notes
 
@@ -24,3 +24,20 @@ Spec: `docs/spec-v1.md`.
 ### 2026-10-14: pilots shortened to 10 desktop-hours
 
 The owner shortened every pilot from 20 to 10 desktop-hours (big differences between setups usually show early). Pilot 1 had already run 12.7 h; it was stopped and marked finished (`stop_kind: cap`, backup `status.json.before-10h`). Compare all pilots at the 10-hour mark using the `hours` column of each Run's `generations.csv`. Pilots 2–4 configs now have `cap_hours: 10`. Before the main run, add a stronger reference opponent than the Anchor: pilot 1 already beats it 85%, so Anchor Elo will soon stop showing progress.
+
+### 2026-10-14: results, pilots 3 and 4 skipped, ticket closed
+
+Compared at the 10-desktop-hour mark (`hours` column of each Run's `generations.csv`; both stopped by the 10-hour cap, pilot 1 at 12.7 h, pilot 2 at 11.2 h during its last Match, `status.json.before-stop`):
+
+| Pilot | Net | Generations by ~10 h | Elo (chain) | Best Anchor score (Anchor Elo) | Best |
+|---|---|---|---|---|---|
+| 1 Small/Gumbel (`pilot-small.yaml`) | 256x4 | 6 (Gen 5 at 9.3 h) | 1518 | 85.1% at Gen 4, 5.3 h (1815) | Gen 5 |
+| 2 Medium (`pilot-medium.yaml`) | 512x6 | 7 (Gen 6 at 9.4 h) | 1504 | 80.9% at Gen 6, 9.4 h (1762) | Gen 5 |
+
+Medium was no better at equal desktop-hours (and got there later: 74.5% at 6.3 h vs Small's 85% at 5.3 h), so the main Run stays Small.
+
+**Pilots 3 (classic Self-Play) and 4 (no derived features) were skipped: the owner's call (2026-10-14).** Reasons: the differences they test were expected to be small (ticket 25 already found the two search modes train about equally good networks; the derived features are cheap and shared with the Heuristic), and 20 more desktop-hours of pilots buy less than 20 more hours of the main Run. Their configs stay in `training/configs/` and the queue marks them skipped.
+
+**The main Run therefore uses:** Small 256x4, Gumbel Self-Play at 64 sims, derived features on, classic search in Matches, `desktop.yaml`'s Generation sizes, continuing from pilot 1's network (`training/configs/main.yaml`; details in ticket 28).
+
+The stronger reference asked for above is measured and wired in under ticket 28 (`mcts:sims=20000`, Elo 1712).

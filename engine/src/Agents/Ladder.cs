@@ -24,7 +24,13 @@ public static class Ladder
         ["pimc"] = 1263,
         // +249 against pimc (ticket 17, 80.7 %).
         [Anchor] = AnchorElo,
+        // The main Run's Reference (ticket 28): the Anchor at 20x the simulations. +200 against the Anchor (76.0 %,
+        // CI 71.6-79.9 %, 400 games); 678 ms per Move vs the Anchor's 32 ms (16 game threads on the desktop).
+        [Reference] = 1712,
     };
+
+    /// <summary>The Reference's Agent spec: a stronger fixed opponent than the Anchor (ticket 28).</summary>
+    public const string Reference = "mcts:sims=20000";
 
     /// <summary>The recorded Elo of an Agent spec, or null if it is not a rung at its default settings.</summary>
     public static double? Elo(string spec) => Ratings.TryGetValue(spec, out var elo) ? elo : null;

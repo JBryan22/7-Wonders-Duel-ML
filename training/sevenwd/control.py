@@ -28,6 +28,9 @@ configured Generations), a plain `start` moves on to the next unfinished pilot: 
 it current and starts it. The loop never moves on by itself (spec A7: control is always manual; a finished pilot is
 also the moment to look at its result): its notification says that Start goes on with the next pilot. `status` shows
 one line per pilot, the current one marked with ">".
+
+An entry with `skip: <why>` is never started (it shows as skipped in `status`): the owner skipped pilots 3 and 4 on
+2026-10-14 and went on to the main Run, the queue's last entry (`name: main run`). The list may also be called `runs:`.
 """
 from __future__ import annotations
 
@@ -86,6 +89,7 @@ class Pilot:
     name: str
     run: Path
     config: Path
+    skip: str | None = None  # why this entry is skipped (never started), or None
 
 
 def queue_file() -> Path:
@@ -102,9 +106,9 @@ def load_queue(path: Path | None = None) -> list[Pilot]:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as e:
         raise RunError(f"{path}: not valid YAML: {e}") from e
-    items = raw.get("pilots") if isinstance(raw, dict) else None
+    items = (raw.get("runs") or raw.get("pilots")) if isinstance(raw, dict) else None
     if not isinstance(items, list):
-        raise RunError(f"{path}: expected a list under 'pilots:'")
+        raise RunError(f"{path}: expected a list under 'runs:' (or 'pilots:')")
     pilots = []
     for i, item in enumerate(items, 1):
         if not isinstance(item, dict) or not item.get("run") or not item.get("config"):
@@ -113,7 +117,8 @@ def load_queue(path: Path | None = None) -> list[Pilot]:
         run = (run if run.is_absolute() else path.parent / run).resolve()
         config = Path(item["config"])
         config = config if config.is_absolute() else TRAINING_DIR / config
-        pilots.append(Pilot(str(item.get("name") or run.name), run, config))
+        skip = item.get("skip")
+        pilots.append(Pilot(str(item.get("name") or run.name), run, config, str(skip) if skip else None))
     return pilots
 
 
@@ -137,7 +142,7 @@ def queue_after(root: Path, queue: list[Pilot] | None = None) -> Pilot | None:
     at = next((i for i, p in enumerate(queue) if same(p.run, root)), None)
     if at is None:
         return None
-    return next((p for p in queue[at + 1:] if not finished(p.run)), None)
+    return next((p for p in queue[at + 1:] if not p.skip and not finished(p.run)), None)
 
 
 def pick_from_queue(say=print) -> tuple[Path, Path | None] | None:
@@ -150,7 +155,7 @@ def pick_from_queue(say=print) -> tuple[Path, Path | None] | None:
     if current is not None and not any(same(p.run, current) for p in queue):
         return None  # a Run outside the queue is current: leave it be
     if current is None:
-        pilot = next((p for p in queue if not finished(p.run)), None)
+        pilot = next((p for p in queue if not p.skip and not finished(p.run)), None)
     else:
         why = finished(current)
         if why is None:
@@ -158,9 +163,9 @@ def pick_from_queue(say=print) -> tuple[Path, Path | None] | None:
         pilot = queue_after(current, queue)
         name = next(p.name for p in queue if same(p.run, current))
         if pilot is not None:
-            say(f"{name} is finished ({why}); moving on to the next pilot in the queue: {pilot.name}")
+            say(f"{name} is finished ({why}); moving on to the next Run in the queue: {pilot.name}")
     if pilot is None:
-        raise RunError(f"every pilot in the queue ({queue_file()}) is finished; see `{PROG} status`")
+        raise RunError(f"every Run in the queue ({queue_file()}) is finished; see `{PROG} status`")
     return pilot.run, None if (pilot.run / "config.yaml").exists() else pilot.config
 
 
@@ -184,14 +189,16 @@ def status_lines(run: Path | None = None) -> list[str]:
         lines.append("> " + status_line(current) + "  (current, not in the queue)")
     for p in queue:
         mark = "> " if current is not None and same(p.run, current) else "  "
-        if (p.run / "config.yaml").exists():
+        if p.skip:
+            lines.append(mark + f"{p.name}: skipped ({p.skip})")
+        elif (p.run / "config.yaml").exists():
             lines.append(mark + status_line(p.run, p.name))
         else:
             lines.append(mark + f"{p.name}: queued, not started yet ({p.config.name})")
     if current is not None and finished(current):
         following = queue_after(current, queue)
         lines.append(f"(Start training moves on to {following.name})" if following
-                     else "(every pilot in the queue is finished)")
+                     else "(every Run in the queue is finished)")
     return lines
 
 

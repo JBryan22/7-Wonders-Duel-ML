@@ -108,9 +108,13 @@ public static class Opponents
         var list = new List<OpponentOption>();
         if (runsFolder is not null && Directory.Exists(runsFolder))
         {
-            // The Run whose best network changed last first (the one in training now), so it is the default choice.
-            foreach (var run in Directory.GetDirectories(runsFolder)
-                         .OrderByDescending(r => File.Exists(Path.Combine(r, "best.json")) ? File.GetLastWriteTimeUtc(Path.Combine(r, "best.json")) : DateTime.MinValue)
+            // The default choice comes first: the main Run's best network; until it has one, the Run it continues from
+            // (its warm start, run.json init_from); then the Run whose best network changed last.
+            var dirs = Directory.GetDirectories(runsFolder);
+            var preferred = PreferredRun(runsFolder);
+            foreach (var run in dirs
+                         .OrderByDescending(r => preferred is not null && SamePath(r, preferred))
+                         .ThenByDescending(r => File.Exists(Path.Combine(r, "best.json")) ? File.GetLastWriteTimeUtc(Path.Combine(r, "best.json")) : DateTime.MinValue)
                          .ThenBy(r => r, StringComparer.OrdinalIgnoreCase))
             {
                 var name = Path.GetFileName(run);
@@ -132,6 +136,36 @@ public static class Opponents
         list.Add(new OpponentOption("Built-in", "Random (very weak)", "Random", "random"));
         return list;
     }
+
+    /// <summary>The Run the main training Run is called by (ticket 28: <c>C:\7wd-runs\main</c>).</summary>
+    public const string MainRun = "main";
+
+    /// <summary>
+    /// The Run offered first: <see cref="MainRun"/> once it has a best network; before that, the Run it warm-starts
+    /// from (<c>init_from.run</c> in its <c>run.json</c>, e.g. pilot-1-small); null when there is no main Run.
+    /// </summary>
+    static string? PreferredRun(string runsFolder)
+    {
+        var main = Path.Combine(runsFolder, MainRun);
+        if (!Directory.Exists(main)) return null;
+        if (BestOf(main) is { } b && File.Exists(b.File)) return main;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(main, "run.json")));
+            if (doc.RootElement.TryGetProperty("init_from", out var from) && from.TryGetProperty("run", out var parent)
+                && parent.GetString() is { } p && Directory.Exists(p))
+                return p;
+        }
+        catch (Exception e) when (e is IOException or JsonException or InvalidOperationException or UnauthorizedAccessException)
+        {
+        }
+        return main;
+    }
+
+    static bool SamePath(string a, string b) =>
+        string.Equals(Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     /// <summary>A Run's best Generation from its <c>best.json</c> (<c>{"generation": 3, "model": "net/gen-0003.onnx"}</c>), or null.</summary>
     static (int Gen, string File)? BestOf(string run)

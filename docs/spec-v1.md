@@ -276,7 +276,7 @@ Budget is counted in **desktop-hours** (hours with the whole Windows desktop tra
 
   The winners of 1 and 2 shape the main Run. Value-target mixing and playout cap randomisation run only if budget is left; otherwise they move past v1.
 - **Main Run: cap of 300 desktop-hours** (≈ 3–4 weeks of nights and weekends). Sanity check after `7wd bench`: 300 hours should buy ≈ 500k+ Self-Play games; if far fewer, raise it with the owner rather than quietly cutting quality.
-- **Stop** at whichever comes first: **plateau** (Anchor Elo hasn't risen by more than its error bar over the last 20 Generations, i.e. 4 Anchor Matches) or **cap**.
+- **Stop** at whichever comes first: **plateau** (Anchor Elo hasn't risen by more than its error bar over the last 20 Generations, i.e. 4 Anchor Matches) or **cap**. Once networks outgrow the Anchor, a stronger **Reference** (MCTS at 20,000 simulations, on the Ladder) is matched alongside it, and the plateau test uses whichever of the two still has headroom (ticket 28). The main Run's cap is 150 desktop-hours (owner, 2026-10-14).
 - **Warm-start triggers** (each stops the Run and flags why; the owner decides whether to start the warm-start sibling Run): science wins under 1% of Self-Play games over Generations 6–10, or no Anchor Elo progress by Generation 20. The warm start trains the network to imitate games between the Heuristic presets, then continues with Self-Play (alternative: mix in 10–20% of games against the presets, fading to 0).
 
 ### Tuning procedure

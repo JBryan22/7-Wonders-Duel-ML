@@ -186,7 +186,7 @@ def test_start_continues_the_current_pilot_then_moves_on_when_it_is_finished(que
                                                  "reason": "cap: 20.0 desktop-hours used (cap 20)",
                                                  "active_seconds": 72000}), encoding="utf-8")
     assert control.queue_after(one).name == "pilot-two"
-    assert loop_module.next_pilot_hint(one) == ". Start training moves on to the next pilot, pilot-two"
+    assert loop_module.next_pilot_hint(one) == ". Start training moves on to the next Run in the queue, pilot-two"
     lines = control.status_lines()
     assert lines[0].startswith("> one: stopped (cap") and lines[-1] == "(Start training moves on to pilot-two)"
 
@@ -195,7 +195,7 @@ def test_start_continues_the_current_pilot_then_moves_on_when_it_is_finished(que
     two = (queue / "two").resolve()
     assert spawned == [two] and control.current_run() == two
     assert (two / "config.yaml").is_file()  # created from the queue's config
-    assert any("moving on to the next pilot in the queue: pilot-two" in s for s in said)
+    assert any("moving on to the next Run in the queue: pilot-two" in s for s in said)
 
     # Starting again continues pilot two (it isn't finished), never goes back to one.
     spawned.clear()
@@ -204,9 +204,9 @@ def test_start_continues_the_current_pilot_then_moves_on_when_it_is_finished(que
 
     (two / "status.json").write_text(json.dumps({"state": "done", "reason": "finished Generation 2"}),
                                      encoding="utf-8")
-    with pytest.raises(RunError, match="every pilot in the queue"):
+    with pytest.raises(RunError, match="every Run in the queue"):
         control.start(None, say=said.append)
-    assert control.status_lines()[-1] == "(every pilot in the queue is finished)"
+    assert control.status_lines()[-1] == "(every Run in the queue is finished)"
 
 
 def test_a_faulted_pilot_or_a_run_outside_the_queue_is_not_skipped(queue, monkeypatch):
@@ -241,7 +241,7 @@ def test_the_pilots_differ_from_the_baseline_only_where_they_should():
     small = load_config(CONFIGS / "pilot-small.yaml")
     desktop = load_config(CONFIGS / "desktop.yaml")
     assert small.selfplay == desktop.selfplay and small.network == desktop.network
-    assert (small.stop.cap_hours, small.matches.anchor_every, small.stop.plateau_generations) == (20, 2, None)
+    assert (small.stop.cap_hours, small.matches.anchor_every, small.stop.plateau_generations) == (10, 2, None)
     medium = load_config(CONFIGS / "pilot-medium.yaml")
     assert (medium.network.width, medium.network.blocks, medium.selfplay.games) == (512, 6, 40_000)
     assert medium.selfplay.device == medium.matches.device == "cuda"

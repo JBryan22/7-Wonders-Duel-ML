@@ -207,8 +207,8 @@ class StatusWriter:
         previous = read_status(self.root)
         self.base_seconds = float(previous.get("active_seconds") or 0.0)
         self.clock = ActiveClock(clock)
-        self.fields: dict = {k: previous[k] for k in ("finished_generations", "elo", "anchor", "anchor_elo", "best",
-                                                      "cap_hours") if k in previous}
+        self.fields: dict = {k: previous[k] for k in ("finished_generations", "elo", "anchor", "anchor_elo", "reference",
+                                                      "reference_elo", "best", "cap_hours") if k in previous}
         self.progress = None  # a callable giving e.g. "812/2000 games", or None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -325,6 +325,9 @@ def status_line(root: Path, name: str | None = None) -> str:
     if s.get("anchor"):
         anchor_elo = s.get("anchor_elo", latest_anchor_elo(root))
         parts.append(f"Anchor {s['anchor']}" + (f" = Anchor Elo {anchor_elo:.0f}" if anchor_elo is not None else ""))
+    if s.get("reference"):
+        ref_elo = s.get("reference_elo")
+        parts.append(f"reference {s['reference']}" + (f" = Elo {ref_elo:.0f}" if ref_elo is not None else ""))
     if s.get("best") is not None:
         parts.append(f"best Generation {s['best']}")
     hours = float(s.get("active_seconds") or 0) / 3600

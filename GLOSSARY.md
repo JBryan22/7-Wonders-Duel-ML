@@ -37,7 +37,11 @@ _Avoid_: Series, tournament, benchmark
 
 **Anchor**:
 The fixed non-neural Agent that neural networks are periodically matched against, so their strength stays on the shared Agent Ladder scale.
-_Avoid_: Baseline, reference agent
+_Avoid_: Baseline (and don't call it the reference: that is the Reference below)
+
+**Reference**:
+A stronger fixed Agent than the Anchor (the same MCTS with 20× the simulations), rated on the Agent Ladder and matched alongside the Anchor once networks outgrow it, so progress stays measurable; the plateau test follows whichever of the two still has headroom.
+_Avoid_: Strong anchor, second anchor
 
 **Encoding**:
 The versioned mapping between an Observation or a Move and the numbers a neural network reads and outputs.

@@ -5,7 +5,7 @@ it starts. A Run stops itself on the first of:
 
 - **cap**: the Run has trained for `stop.cap_hours` desktop-hours (hours with the loop running; pauses don't count).
   Checked between Generations, so the Run overshoots by at most one Generation.
-- **plateau**: the Anchor Elo hasn't risen by more than its error bar over the last `stop.plateau_generations`
+- **plateau**: the Anchor (or reference, see below) Elo hasn't risen by more than its error bar over the last `stop.plateau_generations`
   Generations (20 = 4 Anchor Matches at one every 5): the best Anchor Elo measured after Generation g-20 is at most
   one error bar (the half-width of its 95% interval) above the last one measured at or before g-20.
 - **warm-start trigger "science"**: when Generation `science_to` finishes, science wins were under
@@ -16,6 +16,11 @@ it starts. A Run stops itself on the first of:
 The warm-start triggers are checked only on their own Generation, so starting the Run again after one (the owner
 decided not to warm-start) simply continues. The cap and the plateau hold again at every start: going on anyway is
 an explicit `7wd-train start --ignore-stop`, which loop.py records in the Run's overrides.json.
+
+With a reference (`matches.reference`, a stronger fixed opponent played on the Anchor's Generations), the plateau
+and no-progress tests use whichever of the two still has headroom: the one the latest Generation measured scored
+lowest against (normally the reference; the Anchor saturates as the network passes it, and near 100% a score can't
+show progress any more). Each series is only ever compared with itself.
 
 Anchor Elo here is the Elo implied by the Anchor Match score (400·log10(p/(1-p)), relative to the Anchor; scores of
 0 or 1 are taken as half a game from them). Adding the Anchor's own rating only shifts every point by the same amount,
@@ -62,10 +67,12 @@ def elo_of(p: float, games: int) -> float:
     return 400 * math.log10(p / (1 - p))
 
 
-def anchor_points(rows: Iterable[Mapping], games: int) -> list[AnchorPoint]:
+def anchor_points(rows: Iterable[Mapping], games: int, prefix: str = "anchor") -> list[AnchorPoint]:
+    """The Elo points of one series of fixed-opponent Matches: the Anchor (columns anchor_*) or the reference
+    (ref_*)."""
     points = []
     for r in rows:
-        p, lo, hi = value(r.get("anchor_score")), value(r.get("anchor_low")), value(r.get("anchor_high"))
+        p, lo, hi = value(r.get(f"{prefix}_score")), value(r.get(f"{prefix}_low")), value(r.get(f"{prefix}_high"))
         if p is None:
             continue
         lo = p if lo is None else lo
@@ -75,7 +82,31 @@ def anchor_points(rows: Iterable[Mapping], games: int) -> list[AnchorPoint]:
     return points
 
 
-def plateau(points: list[AnchorPoint], last: int, span: int) -> StopReason | None:
+@dataclass(frozen=True)
+class Series:
+    name: str                   # "Anchor" or "reference": how messages call it
+    points: list[AnchorPoint]
+
+
+def latest_score(rows: Iterable[Mapping], prefix: str) -> float | None:
+    scores = [value(r.get(f"{prefix}_score")) for r in rows]
+    return next((x for x in reversed(scores) if x is not None), None)
+
+
+def headroom_series(config: RunConfig, rows: list[Mapping]) -> Series:
+    """The fixed-opponent series the plateau and no-progress tests use: of the Anchor and the reference (when the
+    config has one), the one the newest measurement scored lowest against: it has the most room left to show
+    progress. The Anchor while the reference hasn't been measured."""
+    m = config.matches
+    chosen = Series("Anchor", anchor_points(rows, 2 * m.pairs))
+    if m.reference:
+        ref, anchor = latest_score(rows, "ref"), latest_score(rows, "anchor")
+        if ref is not None and (anchor is None or ref <= anchor):
+            chosen = Series("reference", anchor_points(rows, 2 * (m.reference_pairs or m.pairs), "ref"))
+    return chosen
+
+
+def plateau(points: list[AnchorPoint], last: int, span: int, name: str = "Anchor") -> StopReason | None:
     before = [p for p in points if p.generation <= last - span]
     recent = [p for p in points if p.generation > last - span]
     if not before or not recent:
@@ -84,11 +115,11 @@ def plateau(points: list[AnchorPoint], last: int, span: int) -> StopReason | Non
     rise = best.elo - base.elo
     if rise > best.error:
         return None
-    return StopReason("plateau", f"plateau: the Anchor Elo rose {rise:+.0f} (error bar {best.error:.0f}) over the last "
-                                 f"{span} Generations ({len(recent)} Anchor Matches since Generation {base.generation})")
+    return StopReason("plateau", f"plateau: the {name} Elo rose {rise:+.0f} (error bar {best.error:.0f}) over the last "
+                                 f"{span} Generations ({len(recent)} {name} Matches since Generation {base.generation})")
 
 
-def no_progress(points: list[AnchorPoint], by: int) -> StopReason | None:
+def no_progress(points: list[AnchorPoint], by: int, name: str = "Anchor") -> StopReason | None:
     points = [p for p in points if p.generation <= by]
     if len(points) < 2:
         return None
@@ -96,7 +127,7 @@ def no_progress(points: list[AnchorPoint], by: int) -> StopReason | None:
     rise = best.elo - first.elo
     if rise > best.error:
         return None
-    return StopReason("no-progress", f"warm-start trigger: no Anchor Elo progress by Generation {by} (best "
+    return StopReason("no-progress", f"warm-start trigger: no {name} Elo progress by Generation {by} (best "
                                      f"{rise:+.0f} vs Generation {first.generation}, error bar {best.error:.0f})")
 
 
@@ -124,9 +155,10 @@ def check(config: RunConfig, rows: list[Mapping], hours: float, ignore: Iterable
     if not rows:
         return None
     last = int(value(rows[-1]["generation"]))
-    points = anchor_points(rows, 2 * config.matches.pairs)
+    series = headroom_series(config, rows)
+    points = series.points
     if s.plateau_generations is not None and "plateau" not in ignore:
-        reason = plateau(points, last, s.plateau_generations)
+        reason = plateau(points, last, s.plateau_generations, series.name)
         if reason:
             return reason
     if at_start:
@@ -136,7 +168,7 @@ def check(config: RunConfig, rows: list[Mapping], hours: float, ignore: Iterable
         if reason:
             return reason
     if s.progress_by is not None and last == s.progress_by:
-        reason = no_progress(points, s.progress_by)
+        reason = no_progress(points, s.progress_by, series.name)
         if reason:
             return reason
     return None
