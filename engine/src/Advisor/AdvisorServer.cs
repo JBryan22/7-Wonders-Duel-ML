@@ -194,6 +194,9 @@ public sealed class AdvisorServer : IDisposable
         });
 
         app.MapGet("/api/state", () => Respond(() => { }, save: false));
+        // Every card, Wonder and Progress token in icons and words, and the icon legend (ticket 37): static, loaded once.
+        var catalog = CardText.Catalog();
+        app.MapGet("/api/catalog", () => Results.Ok(catalog));
         app.MapPost("/api/new", (NewGameRequest r) => Respond(() =>
         {
             var settings = _store.LoadSettings() with
@@ -443,7 +446,7 @@ public sealed class AdvisorServer : IDisposable
         var thinking = _session.AiToMove && _aiError is null;
         return new PlayView(ai.Label, ai.Spec, ai.Searches ? ai.Simulations : null, _session.AiSeat, thinking,
             thinking ? $"{ai.Label} is thinking…" : null, _aiLast, _aiError, _aiAdvice, ai.Takebacks, _session.CanTakeBack,
-            _store.Tally(ai.Spec, ai.Label), _store.AiResultsPath);
+            _store.Tally(ai.Spec, ai.Label), _store.AiResultsPath, MoveText.SinceOwnersMove(_session));
     }
 
     /// <summary>
@@ -783,7 +786,8 @@ public sealed record TtsChoiceView(int Index, string Text, IReadOnlyList<string>
 /// the results are kept.
 /// </summary>
 public sealed record PlayView(string Opponent, string Spec, int? Simulations, int AiSeat, bool Thinking, string? Message,
-    string? LastAi, string? Error, bool Advice, int Takebacks, bool CanTakeBack, TallyView Tally, string ResultsFile);
+    string? LastAi, string? Error, bool Advice, int Takebacks, bool CanTakeBack, TallyView Tally, string ResultsFile,
+    AiMoveView[] AiMoves);
 
 /// <summary>The opponents for the new-game screen, the runs folder they were read from, and the remembered choices.</summary>
 public sealed record OpponentsResponse(string? RunsFolder, IReadOnlyList<OpponentOption> Opponents, NewGameSettings Settings);

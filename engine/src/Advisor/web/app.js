@@ -234,6 +234,99 @@ function h(tag, attrs = {}, ...children) {
 }
 
 
+// ------------------------------------------------------------------ readable cards (ticket 37)
+// Every card, Wonder and Progress token in icons and words comes from the server's catalog (built from the card data),
+// so the page holds no per-card text. Elements about one carry data-ref="card:baths" (or wonder:..., token:...); hovering
+// (or tapping) one shows its full details, with the prices right now when the element has them (el._prices).
+
+let catalog = null;
+async function loadCatalog() {
+  try { catalog = await (await fetch('/api/catalog')).json(); } catch { catalog = null; }
+}
+
+function info(ref) {
+  if (!catalog || !ref) return null;
+  const [kind, id] = ref.split(':');
+  return (kind === 'card' ? catalog.cards : kind === 'wonder' ? catalog.wonders : catalog.tokens)[id] ?? null;
+}
+
+// One compact icon line: effect, then cost (the card faces have their own layout).
+function iconLine(ref, { cost = true } = {}) {
+  const i = info(ref);
+  if (!i) return null;
+  return h('span', { class: 'icons' },
+    i.effectIcons ? h('span', { class: 'eff' }, i.effectIcons) : null,
+    cost && i.kind !== 'token' ? h('span', { class: 'cost', title: `Cost: ${i.costText}` }, i.costIcons || 'free') : null);
+}
+
+// A small chip for a card, Wonder or token: colour, name and effect icons; details on hover.
+function chip(ref, name, cls = '') {
+  const i = info(ref);
+  const colour = i?.kind === 'card' ? `c-${i.color}` : 'light';
+  return h('span', { class: `chip ${colour} ${cls}`, 'data-ref': ref }, name ?? i?.name ?? ref,
+    i?.effectIcons ? h('span', { class: 'chip-icons' }, i.effectIcons) : null);
+}
+
+// The full details of one card, Wonder or token, and the prices right now if known.
+function infoBlock(ref, prices) {
+  const i = info(ref);
+  if (!i) return null;
+  const box = h('div', { class: 'info' },
+    h('div', { class: 'info-head' }, h('b', {}, i.name), h('span', { class: `info-type t-${i.color}` }, i.type)));
+  if (i.kind !== 'token') box.append(h('div', {}, h('span', { class: 'k' }, 'Cost '),
+    i.costIcons ? h('span', { class: 'big-icons' }, i.costIcons) : null, h('span', { class: 'muted' }, ` ${i.costText}`)));
+  box.append(h('div', {}, h('span', { class: 'k' }, 'Effect '), h('span', { class: 'big-icons' }, i.effectIcons)));
+  box.append(h('ul', {}, i.effect.map(e => h('li', {}, e))));
+  if (prices?.length) box.append(h('div', { class: 'info-prices' }, prices.map(p => h('div', { class: p.affordable ? '' : 'cant' },
+    h('b', {}, priceText(p).replace(/^[a-z]/, c => c.toUpperCase())),
+    p.detail.length ? h('div', { class: 'small muted' }, p.detail.join(' ')) : null))));
+  return box;
+}
+
+// Hover/tap details.
+function showTip(el, pinned) {
+  const tip = $('tip');
+  const block = infoBlock(el.dataset.ref, el._prices);
+  if (!block) return;
+  tip.replaceChildren(block);
+  tip.hidden = false;
+  tip.classList.toggle('pinned', !!pinned);
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, ht = tip.offsetHeight;
+  let left = r.right + 8;
+  if (left + w > window.innerWidth - 8) left = Math.max(8, r.left - w - 8);
+  let top = Math.min(Math.max(8, r.top), window.innerHeight - ht - 8);
+  tip.style.left = `${left}px`;
+  tip.style.top = `${Math.max(8, top)}px`;
+}
+function hideTip() { const tip = $('tip'); if (tip) tip.hidden = true; }
+document.addEventListener('mouseover', (e) => {
+  const el = e.target.closest?.('[data-ref]');
+  if (el && !$('popover').contains(el)) showTip(el, false);
+});
+document.addEventListener('mouseout', (e) => {
+  const el = e.target.closest?.('[data-ref]');
+  if (el && !el.contains(e.relatedTarget) && !$('tip').classList.contains('pinned')) hideTip();
+});
+// Tap (touch) or click on something without its own action shows its details until the next click.
+document.addEventListener('click', (e) => {
+  const el = e.target.closest?.('[data-ref]');
+  if (el && !el.closest('button, .acc, .pulse, .pick, #popover')) { showTip(el, true); e.stopPropagation(); return; }
+  if (!e.target.closest?.('#tip')) hideTip();
+}, true);
+
+// The icon key.
+function legendPanel() {
+  if (!catalog) return null;
+  const open = localStorage.getItem('7wd-legend') !== 'closed';
+  const d = h('details', { class: 'legend-box', open },
+    h('summary', {}, 'Icon key'),
+    h('div', { class: 'legend-grid' }, catalog.legend.map(l => h('span', {}, h('b', {}, l.icon), ' ', l.meaning))),
+    h('div', { class: 'small muted' }, 'Hover (or tap) any card, Wonder or token for its full text and what it costs right now.'));
+  d.addEventListener('toggle', () => localStorage.setItem('7wd-legend', d.open ? 'open' : 'closed'));
+  return d;
+}
+
 // ------------------------------------------------------------------ Tabletop Simulator (spec A9)
 // While following, the server reads the TTS table about once a second and enters what it shows; the page polls the
 // small /api/tts box and fetches the whole state again when the server's change counter moves.
@@ -305,6 +398,7 @@ function ttsPanel(t) {
 function render() {
   hoverRow = null; // the hovered row is redrawn, so it no longer has the mouse
   hidePopover();
+  hideTip();
   const err = $('error');
   err.hidden = !view?.error;
   err.textContent = view?.error ?? '';
@@ -332,6 +426,7 @@ function render() {
     h('section', {}, boardPanel(game)),
     h('aside', {}, sidePanel(game)));
   drawMarkers(shownRow(view.advice));
+  flashAiMoves(game);
   watchAdvice();
   watchTts();
   watchAi();
@@ -365,7 +460,7 @@ function playPanel(p) {
   panel.append(h('div', {}, h('b', {}, p.opponent), h('span', { class: 'muted small' },
     ` · P${p.aiSeat + 1}${p.simulations ? ` · ${p.simulations.toLocaleString('en')} simulations per Move` : ''}`)));
   if (p.thinking) panel.append(h('div', { class: 'thinking ai-status' }, h('span', { class: 'spinner' }), p.message));
-  else if (p.lastAi) panel.append(h('div', { class: 'ai-last' }, p.lastAi));
+  else if (p.aiMoves?.length) panel.append(h('div', { class: 'ai-last' }, p.aiMoves.map(m => h('div', {}, m.text))));
   if (p.error) panel.append(h('div', { class: 'small', style: 'color:var(--err)' }, p.error, ' ',
     h('button', { class: 'btn ghost', onclick: () => call('POST', '/api/play/retry') }, 'Ask the AI again')));
   panel.append(h('div', { class: 'tally' }, p.tally.text));
@@ -382,18 +477,50 @@ const badge = (share, top) => h('span', { class: `badge${top ? ' top' : ''}`, ti
 
 function boardPanel(g) {
   const panel = h('div', { class: 'panel' });
-  if (view.play && !g.result) panel.append(h('div', { class: `ai-banner${aiTurn(g) ? ' thinking' : ''}` },
-    aiTurn(g) ? [h('span', { class: 'spinner' }), view.play.message ?? 'The AI is to move'] : view.play.lastAi ?? 'Your move.',
-    !aiTurn(g) && view.play.lastAi ? h('span', { class: 'muted' }, ' · your move') : null));
+  if (view.play) panel.append(aiBanner(g));
   const tray = trayFor(g);
   if (tray) panel.append(tray);
   if (g.pyramid) panel.append(h('h2', {}, `Age ${['', 'I', 'II', 'III'][g.age]}`), pyramid(g));
   else if (g.age === 0) panel.append(h('p', { class: 'muted' }, 'Setup: the first player, the Progress tokens and the Wonder draft.'));
   if (g.age > 0) panel.append(track(g.conflict));
   if (g.boardTokens.length) panel.append(h('div', { class: 'board-tokens' }, 'Progress tokens on the board: ',
-    g.boardTokens.map(t => h('span', { class: 'chip light' }, t.name))));
+    g.boardTokens.map(t => chip(`token:${t.id}`, t.name))));
   panel.append(h('div', { class: 'cities' }, g.players.map(p => city(p, g))));
+  const key = legendPanel();
+  if (key) panel.append(key);
   return panel;
+}
+
+// The big "AI played" banner (ticket 37): the AI's Moves since your last Move, in plain words, until you move again.
+function aiBanner(g) {
+  const moves = view.play.aiMoves ?? [];
+  const thinking = aiTurn(g);
+  const box = h('div', { class: `ai-banner${thinking && !moves.length ? ' thinking' : ''}`, id: 'ai-banner' });
+  if (moves.length) box.append(h('div', { class: 'ai-moves' }, moves.map(m => h('div', { class: 'ai-move' }, m.text))));
+  if (thinking) box.append(h('div', { class: 'ai-next' }, h('span', { class: 'spinner' }), view.play.message ?? 'The AI is to move'));
+  else if (!g.result) box.append(h('div', { class: 'ai-next you' }, 'Your move.'));
+  return box;
+}
+
+// Highlights what the AI's last Moves touched: the emptied pyramid slot stays outlined while the banner shows, and the
+// card, Wonder or token it went to flashes once (not again on every redraw).
+let flashedKey = null;
+function flashAiMoves(g) {
+  const moves = view?.play?.aiMoves ?? [];
+  const key = JSON.stringify(moves);
+  const fresh = key !== flashedKey;
+  flashedKey = key;
+  if (!moves.length) return;
+  const ai = g.seat === 0 ? 1 : 0;
+  for (const m of moves) {
+    if (m.slot != null && g.pyramid && g.pyramid.age === m.age) {
+      const ghost = document.querySelector(`.pyramid .card[data-slot="${m.slot}"]`);
+      if (ghost) { ghost.classList.add('ai-took'); ghost.title = 'The AI took this card'; if (fresh) ghost.classList.add('flash'); }
+    }
+    if (!fresh) continue;
+    const ref = m.wonder ? `wonder:${m.wonder}` : m.card ? `card:${m.card}` : m.token ? `token:${m.token}` : null;
+    if (ref) document.querySelectorAll(`.city[data-player="${ai}"] [data-ref="${ref}"]`).forEach(el => el.classList.add('flash'));
+  }
 }
 
 function sidePanel(g) {
@@ -415,7 +542,7 @@ function sidePanel(g) {
       h('div', { class: 'small muted', style: 'margin-top:6px' }, 'Saved after every entry to ', g.savedTo)),
   ];
   if (g.discard.length) panels.push(h('div', { class: 'panel' }, h('h2', {}, `Discard pile (${g.discard.length})`),
-    g.discard.map(c => h('span', { class: `chip c-${c.color}` }, c.name))));
+    g.discard.map(c => chip(`card:${c.id}`, c.name))));
   queueMicrotask(() => { const el = $('log'); if (el) el.scrollTop = el.scrollHeight; });
   return panels;
 }
@@ -443,9 +570,11 @@ function pyramid(g) {
     const el = h('div', {
       class: classes.join(' '),
       style: `left:${s.col * colStep}px;top:${s.row * rowStep}px;z-index:${s.row + 1}`,
-      title: s.card ? s.card.name : `slot ${s.name}`,
+      title: s.card || s.face === 'empty' ? null : `slot ${s.name}: face down`,
       'data-slot': s.slot,
-    }, h('span', { class: 'slotname' }, s.name), s.card ? s.card.name : '');
+      'data-ref': s.card ? `card:${s.card.id}` : null,
+    }, h('span', { class: 'slotname' }, s.name), s.card ? cardFace(s, p.pricePlayer, s.accessible) : null);
+    if (s.card) el._prices = s.prices;
     const b = mine ? view.advice?.badges.find(x => x.slot === s.slot) : null;
     if (b) el.append(badge(b.share, b.top));
     if (mine) el.addEventListener('click', (e) => cardMenu(e, s));
@@ -462,19 +591,42 @@ function pyramid(g) {
   return h('div', { class: `pyramid-wrap${dim ? ' dim' : ''}` }, box);
 }
 
+// A face-up card in the pyramid: name, effect icons, cost icons and chain; an accessible card also shows its price now.
+function cardFace(s, pricePlayer, accessible) {
+  const i = info(`card:${s.card.id}`);
+  const face = [h('div', { class: 'cname' }, s.card.name)];
+  if (!i) return face;
+  face.push(h('div', { class: 'cbody' },
+    h('div', { class: 'ceff' }, i.effectIcons),
+    h('div', { class: 'ccost' }, h('span', { class: 'cc' }, i.costIcons || 'free'),
+      i.chainFrom ? h('span', { class: 'cchain' }, `🔗 ${i.chainFrom}`) : null)));
+  const price = accessible ? s.prices?.[pricePlayer] : null;
+  if (price) face.push(h('div', { class: `cprice${price.chain ? ' chain' : ''}${price.affordable ? '' : ' cant'}` }, priceText(price)));
+  return face;
+}
+
+// 'you pay 3🪙', 'AI pays 5🪙', 'free for you', '🔗 free for the AI'.
+function priceText(p) {
+  if (p.total > 0) return `${p.who === 'you' ? 'you pay' : `${p.who} pays`} ${p.short}`;
+  return `${p.chain ? '🔗 ' : ''}free for ${p.who === 'AI' ? 'the AI' : p.who}`;
+}
+
 function cardMenu(event, slot) {
   const pop = $('popover');
-  pop.replaceChildren(h('div', { class: 'ptitle' }, slot.card.name));
+  hideTip();
+  pop.replaceChildren(infoBlock(`card:${slot.card.id}`, slot.prices) ?? h('div', { class: 'ptitle' }, slot.card.name),
+    h('div', { class: 'ptitle' }, 'Take it:'));
   for (const a of slot.actions) {
     const share = a.enabled ? shareOf(a.line) : null;
-    pop.append(h('button', { disabled: !a.enabled, onclick: () => enter(a.line) }, a.label,
+    pop.append(h('button', { disabled: !a.enabled, onclick: () => enter(a.line), class: `act-${a.kind}` }, a.label,
+      a.refs?.length ? h('span', { class: 'menu-icons' }, info(a.refs[0])?.effectIcons) : null,
       share === null ? null : badge(share, isBestKey(a.line))));
     if (!a.enabled && a.reason) pop.append(h('div', { class: 'why' }, a.reason));
   }
   pop.hidden = false;
   const r = event.currentTarget.getBoundingClientRect();
-  pop.style.left = `${Math.min(r.left, window.innerWidth - 260)}px`;
-  pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8)}px`;
+  pop.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${Math.max(8, Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 8))}px`;
   event.stopPropagation();
 }
 function hidePopover() { $('popover').hidden = true; }
@@ -492,7 +644,7 @@ function slotPicker(slot) {
     list.replaceChildren(...shown.map(c => {
       const b = h('button', { disabled: !c.enabled, class: c.enabled && first ? 'first' : '', onclick: () => { close(); enter(`${slot.revealPrefix} ${c.id}`); } },
         h('span', { class: `tile-dot dot c-${c.color}`, style: 'display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px' }),
-        c.name, c.reason ? h('span', { class: 'why' }, c.reason) : null);
+        c.name, ' ', iconLine(c.ref), c.reason ? h('span', { class: 'why' }, c.reason) : null);
       if (c.enabled) first = false;
       return b;
     }));
@@ -526,7 +678,12 @@ function trayFor(g) {
     h('div', { class: 'tiles' }, g.decision.tiles.map(t => {
       const key = t.then ? `${t.line}\n${t.then}` : t.line;  // a Statue pair: both lines
       const share = shareOf(key);
-      return h('button', { class: 'tile', onclick: () => enter(t.line, t.then) }, t.label, share === null ? null : badge(share, isBestKey(key)));
+      const cost = !['mausoleum', 'messe', 'destroy', 'libertykeep', 'libertygive'].includes(t.kind);
+      return h('button', { class: `tile${t.refs?.length ? ' rich' : ''}`, onclick: () => enter(t.line, t.then),
+        'data-ref': t.refs?.length === 1 ? t.refs[0] : null },
+        h('span', { class: 'tile-label' }, t.label, share === null ? null : badge(share, isBestKey(key))),
+        t.refs?.length === 1 ? h('span', { class: 'tile-icons' }, iconLine(t.refs[0], { cost })) : null,
+        t.refs?.length === 2 ? h('span', { class: 'tile-icons pair' }, t.refs.map(r => h('span', { 'data-ref': r }, info(r)?.effectIcons))) : null);
     })));
   return null;
 }
@@ -542,18 +699,21 @@ function revealTray(r) {
   }
   if (r.count === 1) {
     tray.append(h('div', { class: 'tiles' }, r.options.map(o =>
-      h('button', { class: 'tile', disabled: !o.enabled, title: o.reason ?? '', onclick: () => enter(`${r.linePrefix} ${o.id}`) }, o.name))));
+      h('button', { class: `tile${o.ref ? ' rich' : ''}`, disabled: !o.enabled, title: o.reason ?? '', 'data-ref': o.ref, onclick: () => enter(`${r.linePrefix} ${o.id}`) },
+        h('span', { class: 'tile-label' }, o.name), o.ref ? h('span', { class: 'tile-icons' }, iconLine(o.ref)) : null))));
     return tray;
   }
   multiPick = multiPick.filter(id => r.options.some(o => o.id === id && o.enabled));
   tray.append(h('div', { class: 'tiles' }, r.options.map(o => h('button', {
-    class: `tile${multiPick.includes(o.id) ? ' sel' : ''}`, disabled: !o.enabled, title: o.reason ?? '',
+    class: `tile${o.ref ? ' rich' : ''}${multiPick.includes(o.id) ? ' sel' : ''}`, disabled: !o.enabled, title: o.reason ?? '',
     onclick: () => {
       multiPick = multiPick.includes(o.id) ? multiPick.filter(x => x !== o.id)
         : multiPick.length < r.count ? [...multiPick, o.id] : multiPick;
       render();
     },
-  }, o.color ? h('span', { class: `dot c-${o.color}` }) : null, o.name))));
+    'data-ref': o.ref,
+  }, h('span', { class: 'tile-label' }, o.color ? h('span', { class: `dot c-${o.color}` }) : null, o.name),
+    o.ref ? h('span', { class: 'tile-icons' }, iconLine(o.ref)) : null))));
   tray.append(h('div', { class: 'tray-actions' },
     h('span', { class: 'muted small' }, `${multiPick.length} of ${r.count} chosen`),
     h('button', { class: 'btn', disabled: multiPick.length !== r.count, onclick: () => enter(`${r.linePrefix} ${multiPick.join(' ')}`) }, 'Confirm')));
@@ -592,14 +752,23 @@ function track(c) {
 }
 
 function city(p, g) {
-  const wonders = p.wonders.map(w => h('div', { class: `wonder${w.built ? ' built' : ''}${w.removed ? ' removed' : ''}`, title: w.summary },
-    h('span', {}, w.name), h('span', { class: 'muted' }, w.built ? `built (Age ${w.card.age})` : w.removed ? 'removed' : w.summary)));
-  return h('div', { class: `city${p.toDecide ? ' todecide' : ''}` },
+  const wonders = p.wonders.map(w => {
+    const i = info(`wonder:${w.id}`);
+    const price = w.prices?.[0];
+    const el = h('div', { class: `wonder${w.built ? ' built' : ''}${w.removed ? ' removed' : ''}`, 'data-ref': `wonder:${w.id}` },
+      h('span', { class: 'wname' }, w.built ? '🏛️ ' : '', w.name),
+      h('span', { class: 'weff' }, i?.effectIcons ?? w.summary),
+      h('span', { class: 'wcost' }, w.built ? 'built' : w.removed ? 'removed'
+        : [h('span', {}, i?.costIcons ?? ''), price ? h('span', { class: `wprice${price.affordable ? '' : ' cant'}` }, priceText(price)) : null]));
+    if (price) el._prices = w.prices;
+    return el;
+  });
+  return h('div', { class: `city${p.toDecide ? ' todecide' : ''}`, 'data-player': p.index },
     h('div', { class: 'head' }, h('b', {}, p.label, p.first ? ' · first' : ''), h('span', {}, `${p.coins} coins · ${p.vp} VP`)),
     p.production ? h('div', { class: 'muted' }, 'Production: ', p.production) : null,
     p.science.length ? h('div', { class: 'muted' }, 'Science: ', p.science.join(', ')) : null,
-    h('div', { style: 'margin:4px 0' }, p.cards.length ? p.cards.map(c => h('span', { class: `chip c-${c.color}` }, c.name)) : h('span', { class: 'muted' }, 'No cards yet')),
-    p.tokens.length ? h('div', {}, p.tokens.map(t => h('span', { class: 'chip light' }, '● ', t.name))) : null,
+    h('div', { style: 'margin:4px 0' }, p.cards.length ? p.cards.map(c => chip(`card:${c.id}`, c.name)) : h('span', { class: 'muted' }, 'No cards yet')),
+    p.tokens.length ? h('div', {}, p.tokens.map(t => chip(`token:${t.id}`, t.name))) : null,
     wonders);
 }
 
@@ -720,5 +889,5 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-call('GET', '/api/state');
+loadCatalog().then(() => call('GET', '/api/state'));
 loadOpponents();
