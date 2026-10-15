@@ -25,6 +25,15 @@ Spec: `docs/spec-v1.md`.
 - **Fix found while testing:** Generation 0's Match folder was named after the opponent's Agent spec, which fails on Windows for specs with a colon (`mcts:sims=50`); Match folders now replace such characters, and Generation 0's Match against the Anchor is saved as `gen-0000-vs-anchor`. Also `pilot-small.yaml`'s cap now says 10 like the other pilots (pilot 1 itself was stopped at 12.7 h).
 - **Tests:** C# Engine 342, Agents 98, Advisor 83; Python 74 (8 in `test_main_run.py`).
 
+### 2026-10-14: slow after a shortcut restart (Windows power throttling), fixed
+
+- **Symptom:** started from a shell, Generation 1's Self-Play ran at 1,507 positions/s and its Match took ~5 min. After the owner's pause (14:00) and restart with "Start training" (14:39), Self-Play ran at 316-331 positions/s (Generations 2-3) and the Generation 3 Match took ~51 min; the Self-Play `dotnet` used ~3 of 16 cores. Pilot 1's ~4 h Generation 5 was probably the same thing.
+- **Cause:** Windows 11 power throttling (EcoQoS, "efficiency mode"). The loop and its 7wd children run windowless in the background, and their ProcessPowerThrottling ControlMask was 0, so Windows' background heuristic decided and throttled them. Priority (normal), affinity (all 16 CPUs) and the launch flags were not the cause: a benchmark launched with the same flags from a shell ran at full speed (1,516-1,538 positions/s).
+- **Evidence:** calling `SetProcessInformation(ProcessPowerThrottling)` (opt out of execution-speed throttling) on the live, slow Self-Play process took it from 3.2 to 10.9 cores within seconds, with nothing else changed.
+- **Fix:** the loop (`awake.full_speed()`, at startup, logged as "full speed: opted out of Windows power throttling") and the 7wd CLI (`PowerThrottling.OptOut()`, first thing in `Program.cs`) opt themselves out of execution-speed and timer-resolution throttling. Both do nothing off Windows. Tests: `test_pilots.py` (Python) and `PowerThrottlingTests` (C#) check the state on Windows.
+- **After** (restarted with the desktop shortcut, 22:40): loop, Self-Play and Match processes show ControlMask 5 / StateMask 0 (opted out). Self-Play ran at a steady 24.5 games/s (~1,650 positions/s) with ~11.3 cores busy, and the Generation 4 Match took 4 min 43 s (vs ~51 min throttled). The session's average was 1,051 positions/s because it only had the last 11,687 games, where the slow drain at the end counts for more.
+- **Tests:** C# Engine 342, Agents 99, Advisor 83; Python 75 (+1 skipped, the Linux no-op).
+
 ### How the owner pauses and resumes
 
 - **Pause:** double-click **"Pause training"** on the desktop. The loop stops within ~30 s at a safe point (mid-Self-Play, mid-training or mid-Match all resume where they left off). Paused hours don't count toward the 150-hour cap. Pause before gaming or when the desktop is needed; Tabletop Simulator and the Advisor can run alongside training but everything will be slower.
