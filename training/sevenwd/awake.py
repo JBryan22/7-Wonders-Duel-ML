@@ -7,6 +7,10 @@ Linux: `systemd-inhibit --what=sleep:idle` around a `cat` that waits on our stdi
 when the loop dies. Without systemd-inhibit it does nothing.
 
 Held by loop.py from start to pause / stop / exit. SEVENWD_KEEP_AWAKE=0 switches it off.
+
+full_speed(): Windows 11 power throttling ("EcoQoS", Task Manager's efficiency mode) can put a windowless background
+process on the efficient cores at low clocks. Started from the "Start training" shortcut, the loop and its 7wd children
+ran Self-Play at ~320 instead of ~1,500 positions/s (ticket 28). The loop and the 7wd CLI each opt themselves out.
 """
 from __future__ import annotations
 
@@ -30,6 +34,52 @@ def set_thread_execution_state(flags: int) -> int:
     f.argtypes = [ctypes.c_uint32]
     f.restype = ctypes.c_uint32
     return int(f(flags))
+
+
+PROCESS_POWER_THROTTLING = 4  # PROCESS_INFORMATION_CLASS
+POWER_THROTTLING_VERSION = 1
+THROTTLE_EXECUTION_SPEED = 0x1
+THROTTLE_IGNORE_TIMER_RESOLUTION = 0x4
+
+
+def _power_throttling_struct():
+    import ctypes
+
+    class State(ctypes.Structure):
+        _fields_ = [("Version", ctypes.c_uint32), ("ControlMask", ctypes.c_uint32), ("StateMask", ctypes.c_uint32)]
+    return State
+
+
+def full_speed() -> bool:
+    """Opt this process out of Windows power throttling; True if Windows accepted it (always False off Windows)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        state = _power_throttling_struct()(POWER_THROTTLING_VERSION,
+                                           THROTTLE_EXECUTION_SPEED | THROTTLE_IGNORE_TIMER_RESOLUTION, 0)
+        return bool(kernel32.SetProcessInformation(ctypes.c_void_p(kernel32.GetCurrentProcess()),
+                                                   PROCESS_POWER_THROTTLING, ctypes.byref(state),
+                                                   ctypes.sizeof(state)))
+    except (OSError, AttributeError):
+        return False
+
+
+def power_throttling() -> tuple[int, int] | None:
+    """This process's (ControlMask, StateMask) on Windows; None elsewhere or if Windows won't say."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        state = _power_throttling_struct()(POWER_THROTTLING_VERSION, 0, 0)
+        if kernel32.GetProcessInformation(ctypes.c_void_p(kernel32.GetCurrentProcess()), PROCESS_POWER_THROTTLING,
+                                          ctypes.byref(state), ctypes.sizeof(state)):
+            return state.ControlMask, state.StateMask
+    except (OSError, AttributeError):
+        pass
+    return None
 
 
 class KeepAwake:

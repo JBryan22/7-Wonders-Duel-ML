@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import stopping
-from .awake import KeepAwake
+from .awake import KeepAwake, full_speed
 from .config import ConfigError, RunConfig, load_config
 from .export import export_onnx, read_metadata
 from .manifest import REPO_ROOT, Manifest, load_manifest
@@ -1012,6 +1012,8 @@ def main(argv: list[str] | None = None) -> int:
     state, reason, kind, code = "done", None, None, 0
     awake = KeepAwake()  # no idle sleep while the loop runs; released on pause, stop and exit
     try:
+        if full_speed():
+            loop.say("full speed: opted out of Windows power throttling (efficiency mode)")
         if awake.acquire():
             loop.say(f"keeping the computer awake while training: {awake.how}")
         loop.cli = Cli.locate(args.cli, say=loop.say)

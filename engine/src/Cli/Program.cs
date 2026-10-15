@@ -45,6 +45,9 @@ const string Usage = """
                                        data/encoding/v1.json (regenerate it with --out after an Encoding change)
     """;
 
+// Full speed even when started windowless in the background (the training loop): Windows would otherwise throttle it.
+PowerThrottling.OptOut();
+
 try
 {
     return args switch

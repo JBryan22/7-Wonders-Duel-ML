@@ -99,6 +99,20 @@ def test_keep_awake_holds_off_idle_sleep_until_released(monkeypatch):
     assert awake.set_thread_execution_state(awake.ES_CONTINUOUS) == awake.ES_CONTINUOUS  # released
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="power throttling is a Windows thing")
+def test_full_speed_opts_out_of_windows_power_throttling():
+    assert awake.full_speed()
+    control, state = awake.power_throttling()
+    assert control & awake.THROTTLE_EXECUTION_SPEED  # we decide, not Windows' background heuristic
+    assert not state & awake.THROTTLE_EXECUTION_SPEED  # and we said: no throttling
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the off-Windows no-op")
+def test_full_speed_does_nothing_off_windows():
+    assert awake.full_speed() is False
+    assert awake.power_throttling() is None
+
+
 def test_keep_awake_can_be_switched_off(monkeypatch):
     monkeypatch.setenv("SEVENWD_KEEP_AWAKE", "0")
     k = awake.KeepAwake()
