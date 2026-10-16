@@ -60,3 +60,24 @@ public sealed record ZeusDiscardReveal(int Card) : Reveal
 {
     public override string ToString() => MoveLog.Format(this);
 }
+
+/// <summary>
+/// Pantheon, the Gate ("reveal gate zeus baal enki isis mars"): the top card of each Mythology deck that still has
+/// cards, in Mythology order. Public (R3). It comes right after the Gate's activation; the <c>gate</c> decision follows
+/// (after <c>reveal enki</c> if Enki is among them).
+/// </summary>
+public sealed record GateReveal(int[] Divinities) : Reveal
+{
+    public override string ToString() => MoveLog.Format(this);
+}
+
+/// <summary>
+/// Pantheon, the Divine Theater ("reveal P1 theater greek zeus hades aphrodite"): every card of the chosen deck, top
+/// first. Private (R3): only <see cref="Player"/>, the Theater's owner, sees it; the opponent learns only the Divinity
+/// then activated. The <c>theater</c> decision follows.
+/// </summary>
+public sealed record TheaterReveal(int Player, Mythology Mythology, int[] Divinities) : Reveal
+{
+    public override int Audience => Player;
+    public override string ToString() => MoveLog.Format(this);
+}

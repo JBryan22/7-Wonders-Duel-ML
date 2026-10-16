@@ -101,7 +101,7 @@ The effects are from [PRB pp.11-15]. Names ↔ Mythology also come from [PRB]. T
 | | **Isis** | Build one of your Wonders for free using a card from the discard pile. | `isis <card> <wonder>`. |
 | | **Ra** | Steal one of the opponent's **unbuilt** Wonders. | `ra <wonder>`. The FAQ allows 5 Wonders vs 2, but still only 7 built in total. |
 | Roman | **Mars** | 2 shields. | No. |
-| | **Minerva** | Place the Minerva pawn on any space of the Military track (capitals allowed). The Conflict pawn stops on entering it, and Minerva is then discarded. | `minerva <space>` (19 spaces). |
+| | **Minerva** | Place the Minerva pawn on any space of the Military track (capitals allowed). If the Conflict pawn would enter it, the pawn stops before it (rulebook p. 13: "it instead stops moving"), and Minerva is then discarded. | `minerva <space>` (19 spaces). |
 | | **Neptune** | Discard one Military token without effect, then apply another one (either side) and discard it. | `neptune-discard <token>`, then `neptune-apply <token>` (≤4 each). |
 | — | **Gate** | **Reveal** the top card of each Mythology deck. Activate one of them for free, and put the others back face down on their decks. | `gate <divinity>` (≤5). A **Reveal** of up to 5 deck tops. |
 

@@ -24,6 +24,15 @@ namespace SevenWondersDuel.Engine;
 /// P1 anubis pyramids                        (Anubis: a built Wonder of either player)
 /// P1 isis baths pyramids                    (Isis: the discarded card, then the Wonder)
 /// P1 ra pyramids                            (Ra: the opponent's unbuilt Wonder)
+/// reveal gate zeus baal enki isis mars      (the Gate: each non-empty deck's top, in Mythology order; public)
+/// P1 gate zeus                              (the Gate: the deck top activated)
+/// P1 theater-deck greek                     (the Divine Theater: the deck looked through)
+/// reveal P1 theater greek zeus hades        (private to P1: the whole deck, top first)
+/// P1 theater zeus                           (the card activated; public)
+/// P1 theater-order hades                    (private to P1: the unused card put on top)
+/// P1 minerva -3                             (Military track space -9..9, positive toward P2's capital)
+/// P1 neptune-discard P1:5                   (Military tokens by the side they lie on and their coins)
+/// P1 neptune-apply P2:2
 /// </code>
 /// </summary>
 internal static class PantheonLog
@@ -39,6 +48,8 @@ internal static class PantheonLog
             r.Tokens.Select(t => $"{SlotName(2, t.Slot)} {OfferingSlug(t.Offering)}")),
         EnkiReveal r => "reveal enki " + string.Join(' ', r.Tokens.Select(TokenSlug)),
         ZeusDiscardReveal r => "reveal discarded " + CardSlug(r.Card),
+        GateReveal r => "reveal gate " + string.Join(' ', r.Divinities.Select(DivinitySlug)),
+        TheaterReveal r => $"reveal P{r.Player + 1} theater {MythologySlug(r.Mythology)} " + string.Join(' ', r.Divinities.Select(DivinitySlug)),
         _ => null,
     };
 
@@ -55,6 +66,13 @@ internal static class PantheonLog
         MoveKind.Anubis => $"anubis {WonderSlug(move.Wonder)}",
         MoveKind.Isis => $"isis {CardSlug(move.Card)} {WonderSlug(move.Wonder)}",
         MoveKind.Ra => $"ra {WonderSlug(move.Wonder)}",
+        MoveKind.Gate => $"gate {DivinitySlug(move.Divinity)}",
+        MoveKind.TheaterDeck => $"theater-deck {MythologySlug((Mythology)move.Card)}",
+        MoveKind.Theater => $"theater {DivinitySlug(move.Divinity)}",
+        MoveKind.TheaterOrder => $"theater-order {DivinitySlug(move.Divinity)}",
+        MoveKind.Minerva => $"minerva {move.MilitarySpace}",
+        MoveKind.NeptuneDiscard => $"neptune-discard {MilitaryTokenSlug(move.MilitaryToken)}",
+        MoveKind.NeptuneApply => $"neptune-apply {MilitaryTokenSlug(move.MilitaryToken)}",
         _ => null,
     };
 
@@ -82,12 +100,22 @@ internal static class PantheonLog
                 case "discarded":
                     if (t.Length != 3) throw new FormatException("Expected 'reveal discarded <card>'");
                     return new ZeusDiscardReveal(GameData.AnyCardIndex(t[2]));
+                case "gate":
+                    if (t.Length < 3) throw new FormatException("Expected 'reveal gate <divinity> ...'");
+                    return new GateReveal(t.Skip(2).Select(PantheonData.DivinityIndex).ToArray());
+            }
+            if (t.Length > 2 && t[2] == "theater" && t[1] is "P1" or "P2")
+            {
+                if (t.Length < 5) throw new FormatException("Expected 'reveal P<n> theater <mythology> <divinity> ...'");
+                return new TheaterReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]),
+                    t.Skip(4).Select(PantheonData.DivinityIndex).ToArray());
             }
             if (t.Length > 2 && t[2] == "divinities" && t[1] is "P1" or "P2")
             {
-                if (t.Length != 6) throw new FormatException("Expected 'reveal P<n> divinities <mythology> <divinity> <divinity>'");
+                if (t.Length is not (5 or 6))
+                    throw new FormatException("Expected 'reveal P<n> divinities <mythology> <divinity> <divinity>' (one divinity when the deck holds one)");
                 return new DivinityDrawReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]),
-                    [PantheonData.DivinityIndex(t[4]), PantheonData.DivinityIndex(t[5])]);
+                    t.Skip(4).Select(PantheonData.DivinityIndex).ToArray());
             }
             return null;
         }
@@ -105,6 +133,23 @@ internal static class PantheonLog
         {
             if (t.Length != 3) throw new FormatException("Expected 'P<n> offer <values>' (e.g. 'offer 2+4', 'offer none')");
             return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.Offer(ParseOfferings(t[2])));
+        }
+        if (t.Length > 1 && t[0] is "P1" or "P2"
+            && t[1] is "gate" or "theater-deck" or "theater" or "theater-order" or "minerva" or "neptune-discard" or "neptune-apply")
+        {
+            if (t.Length != 3) throw new FormatException($"Expected 'P<n> {t[1]} <argument>'");
+            var move = t[1] switch
+            {
+                "gate" => Move.Gate(PantheonData.DivinityIndex(t[2])),
+                "theater-deck" => Move.TheaterDeck(PantheonData.MythologyOf(t[2])),
+                "theater" => Move.Theater(PantheonData.DivinityIndex(t[2])),
+                "theater-order" => Move.TheaterOrder(PantheonData.DivinityIndex(t[2])),
+                "minerva" => Move.Minerva(int.TryParse(t[2], out var space) && Math.Abs(space) <= GameState.CapitalDistance ? space
+                    : throw new FormatException($"'{t[2]}' is not a Military track space (-{GameState.CapitalDistance} to {GameState.CapitalDistance})")),
+                "neptune-discard" => Move.NeptuneDiscard(ParseMilitaryToken(t[2])),
+                _ => Move.NeptuneApply(ParseMilitaryToken(t[2])),
+            };
+            return new MoveEntry(t[0] == "P1" ? 0 : 1, move);
         }
         if (t.Length > 1 && t[0] is "P1" or "P2" && t[1] is "enki" or "snake" or "steal" or "hades" or "zeus" or "anubis" or "isis" or "ra")
         {
@@ -126,6 +171,17 @@ internal static class PantheonLog
             return new MoveEntry(t[0] == "P1" ? 0 : 1, move);
         }
         return null;
+    }
+
+    /// <summary>A Military token as "P1:5": the player on whose side it lies (who would lose the coins), then its coins.</summary>
+    static string MilitaryTokenSlug(int token) => token is >= 0 and < GameState.MilitaryTokenCount
+        ? $"P{token / 2 + 1}:{GameState.MilitaryTokenCoins(token)}" : $"#{token}";
+
+    static int ParseMilitaryToken(string text)
+    {
+        for (var token = 0; token < GameState.MilitaryTokenCount; token++)
+            if (MilitaryTokenSlug(token) == text) return token;
+        throw new FormatException($"'{text}' is not a Military token (P1:2, P1:5, P2:2 or P2:5)");
     }
 
     /// <summary>Offering tokens by value, smallest first ("2+4"), or "none".</summary>

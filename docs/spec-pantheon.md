@@ -71,7 +71,7 @@ Where sources disagreed ([expansions.md §12](research/expansions.md)), the Engi
 - **Zeus:** the slot's card goes to the discard pile; a face-down card is first named by a `reveal discarded <card>` (public). The player takes any token on it (R2). Newly accessible cards are revealed as usual.
 - **Anubis:** the Age card under the Wonder goes to the discard pile; the Wonder becomes unbuilt and can be rebuilt; effects already gained stay. The removed 8th Wonder stays removed.
 - **Ra:** the stolen Wonder joins the thief's Wonders; at most 7 built in total still holds.
-- **Minerva:** the pawn sits on a Military space; the Conflict Pawn stops when it enters that space, and Minerva is then discarded.
+- **Minerva:** the pawn sits on a Military space (capitals allowed); if the Conflict Pawn would enter that space, it stops where it is (the rest of its move is lost, nothing is looted there), and Minerva is then discarded. Rulebook p. 13: "If the Conflict pawn would enter the space which contains the Minerva pawn, it instead stops moving" (so Minerva on your capital saves it once).
 - **Grand Temples:** built like any Age III card (cost in expansions.md §3), or free while holding that Mythology's token (R9). End score 5 / 12 / 21 VP for 1 / 2 / 3 Temples.
 - **New Progress tokens:** Mysticism (2 VP per Mythology and Offering token still held), Poliorcetics (each forward Conflict Pawn space costs the opponent 1 coin), Engineering (any card showing a chain symbol under its cost costs 1 coin, not a chain build).
 - The FAQ rulings in expansions.md §3 hold (Nisaba/Ishtar symbols count for pairs and supremacy; an unchosen Enki's tokens go back to the box; Neptune may pick a token on either side).

@@ -20,6 +20,8 @@ public sealed class PantheonState : ExpansionState
     public const int EmptySpace = -1;
     /// <summary>A deck position whose card nobody has seen.</summary>
     public const int Unknown = -1;
+    /// <summary>The Minerva pawn is not on the Military track.</summary>
+    public const int NoMinerva = sbyte.MinValue;
 
     const int Mythologies = 5;
 
@@ -52,6 +54,12 @@ public sealed class PantheonState : ExpansionState
     internal sbyte SnakeCard = -1;
     /// <summary>The slot whose face-down card Zeus is discarding, until its <c>reveal discarded</c>; otherwise -1.</summary>
     internal sbyte ZeusSlot = -1;
+    /// <summary>True from the Gate's activation until its <c>reveal gate</c> names the deck tops.</summary>
+    internal bool GatePending;
+    /// <summary>The Mythology deck the Divine Theater looks through, until its private <c>reveal theater</c>; otherwise -1.</summary>
+    internal sbyte TheaterPending = -1;
+    /// <summary>The Military track space (-9..9, like the Conflict Pawn) holding the Minerva pawn, or <see cref="NoMinerva"/>.</summary>
+    internal sbyte MinervaSpace = NoMinerva;
     internal SetupStep Awaiting;
 
     [Flags]
@@ -111,6 +119,14 @@ public sealed class PantheonState : ExpansionState
     public bool AwaitingZeusDiscard => ZeusSlot >= 0;
     /// <summary>The slot Zeus is emptying while <see cref="AwaitingZeusDiscard"/>, otherwise -1.</summary>
     public int ZeusTarget => ZeusSlot;
+    /// <summary>True while the Gate waits for its public Reveal of the deck tops.</summary>
+    public bool AwaitingGateReveal => GatePending;
+    /// <summary>True while the Divine Theater waits for its private Reveal of a whole deck.</summary>
+    public bool AwaitingTheaterReveal => TheaterPending >= 0;
+    /// <summary>The deck the Divine Theater is about to reveal while <see cref="AwaitingTheaterReveal"/>.</summary>
+    public Mythology TheaterDeck => (Mythology)TheaterPending;
+    /// <summary>The Military track space holding the Minerva pawn (-9..9), or <see cref="NoMinerva"/>.</summary>
+    public int Minerva => MinervaSpace;
 
     public bool AwaitingMythologyTokens => (Awaiting & SetupStep.MythologyTokens) != 0;
     public bool AwaitingPantheon => (Awaiting & SetupStep.Pantheon) != 0;
@@ -150,6 +166,9 @@ public sealed class PantheonState : ExpansionState
         o.Astarte.CopyTo(Astarte, 0);
         SnakeCard = o.SnakeCard;
         ZeusSlot = o.ZeusSlot;
+        GatePending = o.GatePending;
+        TheaterPending = o.TheaterPending;
+        MinervaSpace = o.MinervaSpace;
         Awaiting = o.Awaiting;
     }
 
@@ -167,7 +186,8 @@ public sealed class PantheonState : ExpansionState
         && Draw.AsSpan().SequenceEqual(o.Draw)
         && EnkiTokens == o.EnkiTokens && Awaiting == o.Awaiting
         && ActivatedBy.AsSpan().SequenceEqual(o.ActivatedBy) && Astarte.AsSpan().SequenceEqual(o.Astarte)
-        && SnakeCard == o.SnakeCard && ZeusSlot == o.ZeusSlot;
+        && SnakeCard == o.SnakeCard && ZeusSlot == o.ZeusSlot
+        && GatePending == o.GatePending && TheaterPending == o.TheaterPending && MinervaSpace == o.MinervaSpace;
 
     public override void Write(BinaryWriter w)
     {
@@ -188,6 +208,9 @@ public sealed class PantheonState : ExpansionState
         w.Write(Astarte);
         w.Write(SnakeCard);
         w.Write(ZeusSlot);
+        w.Write(GatePending);
+        w.Write(TheaterPending);
+        w.Write(MinervaSpace);
     }
 
     /// <summary>A few lines for <see cref="StatePrinter"/>.</summary>
@@ -221,6 +244,7 @@ public sealed class PantheonState : ExpansionState
         if (HasDraw) lines.Add($"Drawn: {Slug(Draw[0])} {Slug(Draw[1])}");
         if (EnkiTokens != 0) lines.Add($"Enki's tokens: {ProgressTokens.Names(EnkiTokens)}");
         if (SnakeCard >= 0) lines.Add($"Nisaba's Snake: {GameData.Card(SnakeCard).Id}");
+        if (MinervaSpace != NoMinerva) lines.Add($"Minerva: Military track space {MinervaSpace}");
         return string.Join('\n', lines) + '\n';
     }
 }

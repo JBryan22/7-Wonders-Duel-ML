@@ -92,6 +92,15 @@ internal abstract class ExpansionModule
     /// <summary>The Conflict Pawn has just moved one space toward <paramref name="player"/>'s opponent's capital (not reaching it).</summary>
     public virtual void PawnAdvanced(GameState s, int player) { }
 
+    /// <summary>
+    /// True if the Conflict Pawn cannot enter <paramref name="position"/> (Pantheon's Minerva): it stops before it and
+    /// the rest of its move is lost. The module clears whatever blocked it.
+    /// </summary>
+    public virtual bool PawnBlocked(GameState s, int position) => false;
+
+    /// <summary>A Wonder whose power the base game does not know has just been built: queue its decision, if any.</summary>
+    public virtual void WonderPower(GameState s, int player, int wonder) { }
+
     /// <summary>How many more times a player shows a scientific symbol, beyond green cards and Progress tokens.</summary>
     public virtual int ExtraSymbols(GameState s, int player, ScienceSymbol symbol) => 0;
 

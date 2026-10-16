@@ -2,7 +2,7 @@ namespace SevenWondersDuel.Engine;
 
 /// <summary>The kinds of Move. Expansion kinds come after the base ones (Pantheon: <see cref="Divinity"/> onward).</summary>
 public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity, Activate, Offer,
-    Enki, Snake, Steal, Hades, Zeus, Anubis, Isis, Ra }
+    Enki, Snake, Steal, Hades, Zeus, Anubis, Isis, Ra, Gate, TheaterDeck, Theater, TheaterOrder, Minerva, NeptuneDiscard, NeptuneApply }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -18,7 +18,10 @@ public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Dra
 /// holds the Progress token in <see cref="Card"/>; <see cref="MoveKind.Snake"/>, <see cref="MoveKind.Steal"/> and
 /// <see cref="MoveKind.Hades"/> the card; <see cref="MoveKind.Zeus"/> the structure slot in <see cref="Card"/> and the
 /// Age in <see cref="Wonder"/> (see <see cref="Slot"/>); <see cref="MoveKind.Anubis"/> and <see cref="MoveKind.Ra"/>
-/// the Wonder; <see cref="MoveKind.Isis"/> the discarded card and the Wonder.
+/// the Wonder; <see cref="MoveKind.Isis"/> the discarded card and the Wonder. <see cref="MoveKind.Gate"/>,
+/// <see cref="MoveKind.Theater"/> and <see cref="MoveKind.TheaterOrder"/> hold a Divinity in <see cref="Card"/>,
+/// <see cref="MoveKind.TheaterDeck"/> a <see cref="Data.Mythology"/>, <see cref="MoveKind.Minerva"/> a Military track
+/// space (see <see cref="MilitarySpace"/>), and the Neptune Moves a Military token index (see <see cref="MilitaryToken"/>).
 /// </summary>
 public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
 {
@@ -83,9 +86,35 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     public static Move Isis(int card, int wonder) => new(MoveKind.Isis, card, wonder);
     /// <summary>"ra pyramids" (Ra): take one of the opponent's unbuilt Wonders.</summary>
     public static Move Ra(int wonder) => new(MoveKind.Ra, -1, wonder);
+    /// <summary>"gate zeus" (the Gate): activate one of the deck tops it revealed, for free; the others go back on their decks.</summary>
+    public static Move Gate(int divinity) => new(MoveKind.Gate, divinity);
+    /// <summary>"theater-deck greek" (the Divine Theater): the Mythology deck its owner looks through (privately).</summary>
+    public static Move TheaterDeck(Data.Mythology mythology) => new(MoveKind.TheaterDeck, (int)mythology);
+    /// <summary>"theater zeus" (the Divine Theater): activate one card of the deck for free. Public.</summary>
+    public static Move Theater(int divinity) => new(MoveKind.Theater, divinity);
+    /// <summary>
+    /// "theater-order hades" (the Divine Theater): which of the 2 unused cards goes back on top of the deck. A
+    /// <b>private</b> Move (R3): only its player sees it (<see cref="MoveEntry.Audience"/>).
+    /// </summary>
+    public static Move TheaterOrder(int divinity) => new(MoveKind.TheaterOrder, divinity);
+    /// <summary>
+    /// "minerva -3" (Minerva): put the Minerva pawn on a Military track space, -9..9 counted like
+    /// <see cref="GameState.ConflictPawn"/> (positive toward P2's capital; the capitals are -9 and 9).
+    /// </summary>
+    public static Move Minerva(int space) => new(MoveKind.Minerva, space);
+    /// <summary>"neptune-discard P1:5" (Neptune): discard a Military token without effect (<see cref="GameState.MilitaryToken"/> index).</summary>
+    public static Move NeptuneDiscard(int token) => new(MoveKind.NeptuneDiscard, token);
+    /// <summary>"neptune-apply P2:2" (Neptune): the opponent loses that token's coins (whichever side it lies on), and it is discarded.</summary>
+    public static Move NeptuneApply(int token) => new(MoveKind.NeptuneApply, token);
 
     /// <summary>The Divinity a <see cref="MoveKind.Divinity"/> Move places or an <see cref="MoveKind.Activate"/> Move activates, or -1.</summary>
-    public int Divinity => Kind is MoveKind.Divinity or MoveKind.Activate ? Card : -1;
+    public int Divinity => Kind is MoveKind.Divinity or MoveKind.Activate or MoveKind.Gate or MoveKind.Theater or MoveKind.TheaterOrder ? Card : -1;
+    /// <summary>The Military track space (-9..9) of a <see cref="MoveKind.Minerva"/> Move; meaningless for other Moves.</summary>
+    public int MilitarySpace => Card;
+    /// <summary>The Military token (<see cref="GameState.MilitaryToken"/> index) a Neptune Move names, or -1.</summary>
+    public int MilitaryToken => Kind is MoveKind.NeptuneDiscard or MoveKind.NeptuneApply ? Card : -1;
+    /// <summary>True for a Move only its player sees (R3: the Divine Theater's <c>theater-order</c>).</summary>
+    public bool IsPrivate => Kind == MoveKind.TheaterOrder;
     /// <summary>The Offering tokens an <see cref="MoveKind.Offer"/> Move spends (one bit per Offering index), or -1.</summary>
     public int Offerings => Kind == MoveKind.Offer ? Card : -1;
     /// <summary>The Pantheon space (0..5) a <see cref="MoveKind.Divinity"/> Move places on, or -1.</summary>
@@ -166,6 +195,26 @@ public enum DecisionKind : byte
     Isis,
     /// <summary>Pantheon, Ra: take one of the opponent's unbuilt Wonders. Never pushed when they have none.</summary>
     Ra,
+    /// <summary>Pantheon, the Gate: activate one of the deck tops it revealed (a public <c>reveal gate</c> comes first).</summary>
+    Gate,
+    /// <summary>The Divine Theater (Pantheon Wonder): choose the Mythology deck to look through. Never pushed when every deck is empty.</summary>
+    TheaterDeck,
+    /// <summary>
+    /// The Divine Theater: activate one card of the deck for free, after its private Reveal. <see cref="PendingDecision.Wonder"/>
+    /// holds the <see cref="Data.Mythology"/>.
+    /// </summary>
+    Theater,
+    /// <summary>
+    /// The Divine Theater: which of the 2 unused cards goes on top of the deck (a private Move, R3).
+    /// <see cref="PendingDecision.Wonder"/> holds the Divinity being activated, whose effect follows.
+    /// </summary>
+    TheaterOrder,
+    /// <summary>Pantheon, Minerva: put the Minerva pawn on one of the 19 Military track spaces.</summary>
+    Minerva,
+    /// <summary>Pantheon, Neptune: discard a Military token without effect. Never pushed when none is left.</summary>
+    NeptuneDiscard,
+    /// <summary>Pantheon, Neptune: apply another Military token against the opponent. Never pushed when none is left.</summary>
+    NeptuneApply,
 }
 
 /// <summary>
@@ -181,20 +230,22 @@ public enum StepKind : byte { Reveal, Decision, GameOver }
 /// <summary>One line of the Move Log: a Move or a Reveal.</summary>
 public abstract record LogEntry
 {
+    /// <summary>The only player who sees this entry, or -1 for both (private Reveals, and Pantheon's private <c>theater-order</c> Move).</summary>
+    public virtual int Audience => -1;
+
     public override string ToString() => MoveLog.Format(this);
 }
 
 /// <summary>A Move made by a player ("P1 build lumber-yard").</summary>
 public sealed record MoveEntry(int Player, Move Move) : LogEntry
 {
+    public override int Audience => Move.IsPrivate ? Player : -1;
+
     public override string ToString() => MoveLog.Format(this);
 }
 
 /// <summary>A chance outcome at the moment it becomes known (ADR 0002). <see cref="Audience"/> is -1 for both players.</summary>
-public abstract record Reveal : LogEntry
-{
-    public virtual int Audience => -1;
-}
+public abstract record Reveal : LogEntry;
 
 /// <summary>Who plays first ("reveal first P1").</summary>
 public sealed record FirstPlayerReveal(int Player) : Reveal

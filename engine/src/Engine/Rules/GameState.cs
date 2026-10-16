@@ -781,6 +781,10 @@ public sealed class GameState
                 // §3.1.10). Their Reveal (AwaitingReturnedCards) comes after the flips, then liberty-keep and -give.
                 PushDecision(new PendingDecision(DecisionKind.LibertyKeep, player, wonder));
                 break;
+            default:
+                // An expansion Wonder's power (Pantheon's Divine Theater).
+                _module?.WonderPower(this, player, wonder);
+                break;
         }
     }
 
@@ -842,6 +846,8 @@ public sealed class GameState
         var step = player == 0 ? 1 : -1;
         for (var i = 0; i < shields; i++)
         {
+            // Pantheon's Minerva: the pawn would enter her space, so it stops here and the rest of the move is lost.
+            if (_module is not null && _module.PawnBlocked(this, ConflictPawn + step)) return;
             ConflictPawn += step;
             var lead = MilitaryLead(player);
             if (lead >= CapitalDistance)
@@ -1177,6 +1183,9 @@ public sealed class GameState
         _wonders[1 - thief] &= (ushort)~(1 << wonder);
         _wonders[thief] |= (ushort)(1 << wonder);
     }
+
+    /// <summary>Pantheon's Neptune: a Military token leaves the board (whatever its effect, the caller applies it).</summary>
+    internal void RemoveMilitaryToken(int token) => _militaryTokens &= (byte)~(1 << token);
 
     /// <summary>Test setup: puts the pawn on a space without looting.</summary>
     internal void SetConflictPawn(int position) => ConflictPawn = position;
