@@ -1,3 +1,5 @@
+using SevenWondersDuel.Engine.Data;
+
 namespace SevenWondersDuel.Engine;
 
 /// <summary>
@@ -89,6 +91,16 @@ internal abstract class ExpansionModule
 
     /// <summary>The Conflict Pawn has just moved one space toward <paramref name="player"/>'s opponent's capital (not reaching it).</summary>
     public virtual void PawnAdvanced(GameState s, int player) { }
+
+    /// <summary>How many more times a player shows a scientific symbol, beyond green cards and Progress tokens.</summary>
+    public virtual int ExtraSymbols(GameState s, int player, ScienceSymbol symbol) => 0;
+
+    /// <summary>Coins a player can spend that are kept apart from the treasury (and safe from coin losses).</summary>
+    public virtual int ExtraCoins(GameState s, int player) => 0;
+
+    /// <summary>Takes <paramref name="amount"/> of the <see cref="ExtraCoins"/> (the treasury is spent first).</summary>
+    public virtual void SpendExtraCoins(GameState s, int player, int amount) =>
+        throw new InvalidOperationException("The expansion keeps no coins apart");
 
     /// <summary>Adds this expansion's VP to one player's points per <see cref="ScoreCategory"/>.</summary>
     public virtual void Score(GameState s, int player, Span<int> points) { }

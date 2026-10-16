@@ -6,9 +6,12 @@ namespace SevenWondersDuel.Engine;
 /// The Pantheon expansion (spec-pantheon P-A3, P-A4), switched on by <c>expansion=pantheon</c>. Its data is
 /// <see cref="PantheonData"/>, its state <see cref="PantheonState"/>.
 /// <para>
-/// So far (ticket 02): the bigger pools (16 Wonders with both promos, 13 Progress tokens), the Age I Mythology tokens
-/// and the Divinity draws they cause, the Age II setup (the Gate, the Pantheon and Enki Reveals, the Offering tokens),
-/// Age III's Grand Temples in place of the Guilds, and the 3 new Progress tokens. Activating the Pantheon comes next.
+/// So far (tickets 02-03): the bigger pools (16 Wonders with both promos, 13 Progress tokens), the Age I Mythology
+/// tokens and the Divinity draws they cause, the Age II setup (the Gate, the Pantheon and Enki Reveals, the Offering
+/// tokens), Age III's Grand Temples in place of the Guilds, the 3 new Progress tokens, and activating the Pantheon
+/// (cost, the Sanctuary, Offering tokens, Astarte's coins) with the effects that need no decision: Ishtar, Astarte,
+/// Tanit, Aphrodite, Mars. The other Divinities and the Gate are activated and paid for, but their effects come in
+/// tickets 04-05 (until then they do nothing, like an impossible effect).
 /// </para>
 /// </summary>
 internal sealed class PantheonModule : ExpansionModule
@@ -25,6 +28,9 @@ internal sealed class PantheonModule : ExpansionModule
     static readonly int Poliorcetics = PantheonData.TokenIndex("poliorcetics");
     static readonly int Engineering = PantheonData.TokenIndex("engineering");
     static readonly int Enki = PantheonData.DivinityIndex("enki");
+    static readonly int Sanctuary = PantheonData.WonderIndex("sanctuary");
+    /// <summary>What the Sanctuary takes off its owner's activation costs.</summary>
+    public const int SanctuaryDiscount = 2;
     static readonly ushort Wonders = (ushort)PantheonData.Wonders.Aggregate(0, (m, w) => m | 1 << w.Index);
     static readonly ushort Tokens = (ushort)PantheonData.Tokens.Aggregate(0, (m, t) => m | 1 << t.Index);
     /// <summary>Per Mythology: its 3 Divinities, one bit per Divinity index.</summary>
@@ -281,6 +287,7 @@ internal sealed class PantheonModule : ExpansionModule
 
     public override int LegalMoves(GameState s, Span<Move> buffer)
     {
+        if (s.Pending(0).Kind == DecisionKind.Offer) return LegalOffers(s, buffer);
         if (s.Pending(0).Kind != DecisionKind.PlaceDivinity) return -1;
         var p = P(s);
         var n = 0;
@@ -292,9 +299,26 @@ internal sealed class PantheonModule : ExpansionModule
 
     public override bool TryWhyIllegal(GameState s, Move move, out string? why)
     {
-        if (s.Pending(0).Kind != DecisionKind.PlaceDivinity)
+        var decision = s.Pending(0);
+        if (decision.Kind == DecisionKind.Offer)
         {
-            why = move.Kind == MoveKind.Divinity ? "no drawn Divinity is waiting to be placed" : null;
+            why = WhyOfferIllegal(s, move, decision);
+            return true;
+        }
+        if (decision.Kind == DecisionKind.TakeCard && move.Kind == MoveKind.Activate)
+        {
+            why = WhyActivateIllegal(s, decision.Player, move.Divinity);
+            return true;
+        }
+        if (decision.Kind != DecisionKind.PlaceDivinity)
+        {
+            why = move.Kind switch
+            {
+                MoveKind.Divinity => "no drawn Divinity is waiting to be placed",
+                MoveKind.Activate => "the Pantheon is activated instead of taking a card",
+                MoveKind.Offer => "no activation is waiting for its Offering tokens",
+                _ => null,
+            };
             return why is not null;
         }
         var p = P(s);
@@ -309,6 +333,19 @@ internal sealed class PantheonModule : ExpansionModule
 
     public override bool TryApply(GameState s, Move move, PendingDecision decision)
     {
+        if (move.Kind == MoveKind.Activate)
+        {
+            // R8: a player holding Offering tokens chooses which to spend, unless there is nothing to pay.
+            if (ActivationCost(s, decision.Player, move.Divinity) > 0 && P(s).HeldOfferings[decision.Player] != 0)
+                s.PushDecision(new PendingDecision(DecisionKind.Offer, decision.Player, move.Divinity));
+            else Activate(s, decision.Player, move.Divinity, 0);
+            return true;
+        }
+        if (decision.Kind == DecisionKind.Offer)
+        {
+            Activate(s, decision.Player, decision.Wonder, move.Offerings);
+            return true;
+        }
         if (decision.Kind != DecisionKind.PlaceDivinity) return false;
         // Placed face down; the other card goes back on top of its deck, known only to this player. The take-card
         // decision of the next turn is already queued behind (the token was taken as the turn ended).
@@ -320,6 +357,133 @@ internal sealed class PantheonModule : ExpansionModule
         PutOnTop(p, (Mythology)decision.Wonder, other, (byte)(1 << decision.Player));
         p.Draw[0] = p.Draw[1] = -1;
         return true;
+    }
+
+    // ---------------------------------------------------------------- activating the Pantheon
+
+    /// <summary>The Pantheon space holding a face-up Divinity (or the Gate), or -1.</summary>
+    static int SpaceOf(PantheonState p, int divinity)
+    {
+        for (var space = 0; space < PantheonData.SpaceCount; space++)
+            if (p.Spaces[space] == divinity && !p.IsFaceDown(space)) return space;
+        return -1;
+    }
+
+    /// <summary>
+    /// What activating a card in the Pantheon costs a player (P-A4): their cost for its space, doubled for the Gate,
+    /// minus 2 with the Sanctuary (never below 0).
+    /// </summary>
+    public static int ActivationCost(GameState s, int player, int divinity)
+    {
+        var space = SpaceOf(P(s), divinity);
+        var cost = PantheonData.Spaces[space].Cost(player) * (divinity == PantheonData.Gate ? 2 : 1);
+        if ((s.BuiltWonders(player) & 1 << Sanctuary) != 0) cost -= SanctuaryDiscount;
+        return Math.Max(0, cost);
+    }
+
+    /// <summary>The coins a set of Offering tokens is worth (one bit per Offering index).</summary>
+    public static int OfferingValue(int offerings)
+    {
+        var value = 0;
+        foreach (var o in PantheonData.Offerings)
+            if ((offerings & 1 << o.Index) != 0) value += o.Value;
+        return value;
+    }
+
+    /// <summary>The Pantheon is activated from Age II, instead of taking a card, if the player can pay with everything they have.</summary>
+    public override int AddTakeCardMoves(GameState s, int player, Span<Move> buffer, int count)
+    {
+        if (s.Age < 2) return count;
+        var p = P(s);
+        var means = s.SpendableCoins(player) + OfferingValue(p.HeldOfferings[player]);
+        for (var space = 0; space < PantheonData.SpaceCount; space++)
+        {
+            var d = p.Spaces[space];
+            if (d >= 0 && !p.IsFaceDown(space) && ActivationCost(s, player, d) <= means) buffer[count++] = Move.Activate(d);
+        }
+        return count;
+    }
+
+    static string? WhyActivateIllegal(GameState s, int player, int divinity)
+    {
+        if (s.Age < 2) return "the Pantheon can be activated from Age II";
+        if (divinity < 0 || divinity >= PantheonData.Divinities.Length) return "unknown Divinity";
+        var id = PantheonData.Divinities[divinity].Id;
+        var p = P(s);
+        if (SpaceOf(p, divinity) < 0) return $"{id} is not face up in the Pantheon";
+        var cost = ActivationCost(s, player, divinity);
+        var offerings = OfferingValue(p.HeldOfferings[player]);
+        return cost <= s.SpendableCoins(player) + offerings ? null
+            : $"activating {id} costs {cost} coins, P{player + 1} has {s.SpendableCoins(player)}"
+                + (offerings > 0 ? $" and Offering tokens worth {offerings}" : "");
+    }
+
+    /// <summary>R8: any held tokens that, with the player's coins, cover the cost (overpaying is allowed, no change given).</summary>
+    static bool CanOffer(GameState s, int player, int cost, int offerings) =>
+        (offerings & ~P(s).HeldOfferings[player]) == 0 && OfferingValue(offerings) + s.SpendableCoins(player) >= cost;
+
+    static int LegalOffers(GameState s, Span<Move> buffer)
+    {
+        var decision = s.Pending(0);
+        var cost = ActivationCost(s, decision.Player, decision.Wonder);
+        var n = 0;
+        for (var offerings = 0; offerings < 1 << PantheonData.Offerings.Length; offerings++)
+            if (CanOffer(s, decision.Player, cost, offerings)) buffer[n++] = Move.Offer(offerings);
+        return n;
+    }
+
+    static string? WhyOfferIllegal(GameState s, Move move, PendingDecision decision)
+    {
+        if (move.Kind != MoveKind.Offer)
+            return $"the decision is which Offering tokens to spend on {PantheonData.Divinities[decision.Wonder].Id}";
+        if (move.Offerings < 0 || move.Offerings >= 1 << PantheonData.Offerings.Length) return "unknown Offering tokens";
+        if ((move.Offerings & ~P(s).HeldOfferings[decision.Player]) != 0)
+            return $"P{decision.Player + 1} does not hold all of those Offering tokens";
+        var cost = ActivationCost(s, decision.Player, decision.Wonder);
+        return CanOffer(s, decision.Player, cost, move.Offerings) ? null
+            : $"activating {PantheonData.Divinities[decision.Wonder].Id} costs {cost} coins: those tokens and P{decision.Player + 1}'s {s.SpendableCoins(decision.Player)} coins do not cover it";
+    }
+
+    /// <summary>
+    /// Pays (the Offering tokens spent, then coins: the treasury first, then Astarte's, R7), takes the card off its
+    /// space (which stays empty) and applies its effect; the turn then ends unless the effect queued a decision.
+    /// </summary>
+    static void Activate(GameState s, int player, int divinity, int offerings)
+    {
+        var p = P(s);
+        var cost = ActivationCost(s, player, divinity);
+        p.HeldOfferings[player] &= (byte)~offerings;
+        s.Spend(player, Math.Max(0, cost - OfferingValue(offerings)));
+        p.Spaces[SpaceOf(p, divinity)] = (sbyte)PantheonState.EmptySpace;
+        p.ActivatedBy[player] |= (ushort)(1 << divinity);
+
+        // The effects without a decision (Aphrodite's VP are scored at the end). The others come in tickets 04-05.
+        var def = PantheonData.Divinities[divinity];
+        if (def.Coins > 0) s.SetCoins(player, s.Coins(player) + def.Coins);
+        if (def.ProtectedCoins > 0) p.Astarte[player] += (byte)def.ProtectedCoins;
+        if (def.Shields > 0) s.AddShields(player, def.Shields);
+        if (def.Science is { } symbol && !s.IsOver) s.GainSymbol(player, symbol);
+        s.FinishDecision();
+    }
+
+    /// <summary>Ishtar's symbol (Law): it counts for pairs and supremacy (FAQ).</summary>
+    public override int ExtraSymbols(GameState s, int player, ScienceSymbol symbol)
+    {
+        var n = 0;
+        var activated = P(s).ActivatedBy[player];
+        if (activated == 0) return 0;
+        foreach (var d in new Bits(activated))
+            if (PantheonData.Divinities[d].Science == symbol) n++;
+        return n;
+    }
+
+    public override int ExtraCoins(GameState s, int player) => P(s).Astarte[player];
+
+    public override void SpendExtraCoins(GameState s, int player, int amount)
+    {
+        var p = P(s);
+        if (amount > p.Astarte[player]) throw new InvalidOperationException($"P{player + 1} cannot pay {amount} more coins");
+        p.Astarte[player] -= (byte)amount;
     }
 
     // ---------------------------------------------------------------- turns
@@ -372,9 +536,16 @@ internal sealed class PantheonModule : ExpansionModule
         if (s.HasToken(player, Poliorcetics)) s.LoseCoins(1 - player, 1);
     }
 
-    /// <summary>Grand Temples: 5 / 12 / 21 VP for 1 / 2 / 3. Mysticism: 2 VP per Mythology and Offering token held (Progress).</summary>
+    /// <summary>
+    /// Grand Temples: 5 / 12 / 21 VP for 1 / 2 / 3. Mysticism: 2 VP per Mythology and Offering token held (Progress).
+    /// Divinities: Aphrodite's 9 VP and 1 VP per Astarte coin left.
+    /// </summary>
     public override void Score(GameState s, int player, Span<int> points)
     {
+        var activated = P(s).ActivatedBy[player];
+        if (activated != 0)
+            foreach (var d in new Bits(activated)) points[(int)ScoreCategory.Divinities] += PantheonData.Divinities[d].VictoryPoints;
+        points[(int)ScoreCategory.Divinities] += P(s).Astarte[player];
         var temples = (s.City(player) & PantheonData.TempleSet).Count;
         if (temples > 0) points[(int)ScoreCategory.Temples] += PantheonData.TemplePoints[temples - 1];
         if (s.HasToken(player, Mysticism))

@@ -183,6 +183,8 @@ public sealed class GameState
         if (_tokens[player] != 0)
             foreach (var t in ProgressTokens.In(_tokens[player]))
                 if (GameData.Token(t).Science == symbol) n++;
+        // An expansion's symbols (Pantheon: Ishtar's Law).
+        if (_module is not null) n += _module.ExtraSymbols(this, player, symbol);
         return n;
     }
 
@@ -204,6 +206,11 @@ public sealed class GameState
 
     public AgeLayout Layout => GameData.Layout(Age);
     public int Coins(int player) => _coins[player];
+    /// <summary>
+    /// What a player can spend: the treasury, plus coins an expansion keeps apart (Pantheon: Astarte's, R7). Equal to
+    /// <see cref="Coins"/> in a base game.
+    /// </summary>
+    public int SpendableCoins(int player) => _module is null ? _coins[player] : _coins[player] + _module.ExtraCoins(this, player);
     public CardSet City(int player) => _city[player];
     public CardSet DiscardPile => _discard;
     /// <summary>Every card whose identity has been revealed so far.</summary>
@@ -520,7 +527,7 @@ public sealed class GameState
             MoveKind.Discard => null,
             MoveKind.Wonder => WhyWonderIllegal(decision.Player, move.Wonder),
             _ => CanAffordBuild(decision.Player, move.Card) ? null
-                : $"{GameData.Card(move.Card).Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {_coins[decision.Player]}",
+                : $"{GameData.Card(move.Card).Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {SpendableCoins(decision.Player)}",
         };
     }
 
@@ -532,12 +539,12 @@ public sealed class GameState
             : !OwnsWonder(player, wonder) ? $"P{player + 1} does not own {id}"
             : IsWonderBuilt(wonder) ? $"{id} is already built"
             : !CanAffordWonder(player, wonder)
-                ? $"{id} costs {Payment.QuoteWonder(this, player, wonder).Total} coins, player has {_coins[player]}"
+                ? $"{id} costs {Payment.QuoteWonder(this, player, wonder).Total} coins, player has {SpendableCoins(player)}"
             : null;
     }
 
-    bool CanAffordBuild(int player, int card) => Payment.Quote(this, player, card).Total <= _coins[player];
-    bool CanAffordWonder(int player, int wonder) => Payment.QuoteWonder(this, player, wonder).Total <= _coins[player];
+    bool CanAffordBuild(int player, int card) => Payment.Quote(this, player, card).Total <= SpendableCoins(player);
+    bool CanAffordWonder(int player, int wonder) => Payment.QuoteWonder(this, player, wonder).Total <= SpendableCoins(player);
 
     /// <summary>The opponent's cards a destroying Wonder can send to the discard pile.</summary>
     CardSet DestroyTargets(int player, int wonder) => _city[1 - player] & CardSets.OfColor[(int)DestroyColorOf(wonder)];
@@ -660,7 +667,7 @@ public sealed class GameState
     /// The Statue of Liberty's given card is built here, once its owner's card has resolved (its token pick
     /// included): it goes to the opponent of the player whose turn it is, who may then owe a token pick, or win.
     /// </summary>
-    void FinishDecision()
+    internal void FinishDecision()
     {
         if (!IsOver && _queueCount == 0 && _libertyGiven >= 0)
         {
@@ -689,7 +696,7 @@ public sealed class GameState
         {
             var chained = Payment.IsChained(this, player, card);
             var quote = Payment.Quote(this, player, card);
-            _coins[player] -= quote.Total;
+            Spend(player, quote.Total);
             // Economy: the opponent's trading coins (after discounts, not printed costs) go to its owner.
             if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
             AddToCity(player, card);
@@ -726,7 +733,7 @@ public sealed class GameState
         var def = GameData.Wonder(wonder);
         var opponent = 1 - player;
         var quote = Payment.QuoteWonder(this, player, wonder);
-        _coins[player] -= quote.Total;
+        Spend(player, quote.Total);
         if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
         _wondersBuilt[player] |= (ushort)(1 << wonder);
         _wonderCard[wonder] = (sbyte)card;
@@ -792,7 +799,7 @@ public sealed class GameState
     /// different symbols win at once; otherwise a completed pair asks for a Progress token while any remain on the
     /// board (compulsory, spec A3). Each symbol exists twice, so a pair forms at most once (rules-reference §6).
     /// </summary>
-    void GainSymbol(int player, ScienceSymbol symbol)
+    internal void GainSymbol(int player, ScienceSymbol symbol)
     {
         if (DistinctSymbols(player) >= ScienceSupremacySymbols)
         {
@@ -1112,6 +1119,17 @@ public sealed class GameState
     }
 
     internal void SetCoins(int player, int coins) => _coins[player] = coins;
+
+    /// <summary>
+    /// Pays <paramref name="amount"/> (already known to be affordable): from the treasury first, then from the coins an
+    /// expansion keeps apart (Pantheon: Astarte's, R7). A base game only ever takes from the treasury.
+    /// </summary>
+    internal void Spend(int player, int amount)
+    {
+        var fromTreasury = _module is null ? amount : Math.Min(amount, _coins[player]);
+        _coins[player] -= fromTreasury;
+        if (fromTreasury < amount) _module!.SpendExtraCoins(this, player, amount - fromTreasury);
+    }
 
     /// <summary>A coin loss to the bank (all the player has, if fewer).</summary>
     internal void LoseCoins(int player, int coins) => _coins[player] = Math.Max(0, _coins[player] - coins);

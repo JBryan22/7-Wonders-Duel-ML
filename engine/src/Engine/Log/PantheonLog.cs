@@ -13,6 +13,8 @@ namespace SevenWondersDuel.Engine;
 /// reveal offerings 1.0 offering-3 1.2 offering-2 1.4 offering-4
 /// reveal enki law economy                   (only if Enki is in the Pantheon)
 /// reveal temples 0.1 3.0 5.2                (Age III: Grand Temple backs instead of Guild backs)
+/// P1 activate aphrodite                     (from Age II, instead of taking a card; "activate gate" for the Gate)
+/// P1 offer 2+4                              (the Offering tokens spent, by value; "offer none")
 /// </code>
 /// </summary>
 internal static class PantheonLog
@@ -33,6 +35,8 @@ internal static class PantheonLog
     public static string? FormatMove(Move move) => move.Kind switch
     {
         MoveKind.Divinity => $"divinity {DivinitySlug(move.Divinity)} {move.Space + 1}",
+        MoveKind.Activate => $"activate {DivinitySlug(move.Divinity)}",
+        MoveKind.Offer => "offer " + OfferingsText(move.Offerings),
         _ => null,
     };
 
@@ -68,7 +72,35 @@ internal static class PantheonLog
             if (t.Length != 4) throw new FormatException("Expected 'P<n> divinity <divinity> <space>'");
             return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.PlaceDivinity(PantheonData.DivinityIndex(t[2]), Space(t[3])));
         }
+        if (t.Length > 1 && t[1] == "activate" && t[0] is "P1" or "P2")
+        {
+            if (t.Length != 3) throw new FormatException("Expected 'P<n> activate <divinity|gate>'");
+            return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.Activate(PantheonData.DivinityIndex(t[2])));
+        }
+        if (t.Length > 1 && t[1] == "offer" && t[0] is "P1" or "P2")
+        {
+            if (t.Length != 3) throw new FormatException("Expected 'P<n> offer <values>' (e.g. 'offer 2+4', 'offer none')");
+            return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.Offer(ParseOfferings(t[2])));
+        }
         return null;
+    }
+
+    /// <summary>Offering tokens by value, smallest first ("2+4"), or "none".</summary>
+    static string OfferingsText(int offerings) => offerings == 0 ? "none"
+        : string.Join('+', PantheonData.Offerings.Where(o => (offerings & 1 << o.Index) != 0).Select(o => o.Value));
+
+    static int ParseOfferings(string text)
+    {
+        if (text == "none") return 0;
+        var mask = 0;
+        foreach (var part in text.Split('+'))
+        {
+            var o = Array.FindIndex(PantheonData.Offerings, o => o.Value.ToString() == part);
+            if (o < 0 || (mask & 1 << o) != 0)
+                throw new FormatException($"'{text}' is not a set of Offering tokens (values {string.Join(", ", PantheonData.Offerings.Select(x => x.Value))}, joined by '+', or 'none')");
+            mask |= 1 << o;
+        }
+        return mask;
     }
 
     static IEnumerable<(string A, string B)> Pairs(string[] t, int from, string expected)

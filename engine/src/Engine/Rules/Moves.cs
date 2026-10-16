@@ -1,7 +1,7 @@
 namespace SevenWondersDuel.Engine;
 
-/// <summary>The kinds of Move. Expansion kinds come after the base ones (Pantheon: <see cref="Divinity"/>).</summary>
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity }
+/// <summary>The kinds of Move. Expansion kinds come after the base ones (Pantheon: <see cref="Divinity"/> onward).</summary>
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity, Activate, Offer }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -11,7 +11,9 @@ public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Dra
 /// <see cref="Wonder"/> is the Wonder a <see cref="MoveKind.Draft"/> Move drafts or a <see cref="MoveKind.Wonder"/>
 /// Move builds (the tucked Age card is then in <see cref="Card"/>); -1 for every other Move.
 /// A Pantheon <see cref="MoveKind.Divinity"/> Move holds the Divinity in <see cref="Card"/> and the Pantheon space
-/// (0..5) in <see cref="Wonder"/> (see <see cref="Divinity"/> and <see cref="Space"/>).
+/// (0..5) in <see cref="Wonder"/> (see <see cref="Divinity"/> and <see cref="Space"/>); an <see cref="MoveKind.Activate"/>
+/// Move holds the Divinity (or the Gate) in <see cref="Card"/>, an <see cref="MoveKind.Offer"/> Move the Offering tokens
+/// spent as a mask in <see cref="Card"/> (see <see cref="Offerings"/>).
 /// </summary>
 public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
 {
@@ -46,8 +48,21 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     /// </summary>
     public static Move PlaceDivinity(int divinity, int space) => new(MoveKind.Divinity, divinity, space);
 
-    /// <summary>The Divinity a <see cref="MoveKind.Divinity"/> Move places, or -1.</summary>
-    public int Divinity => Kind == MoveKind.Divinity ? Card : -1;
+    /// <summary>
+    /// "activate aphrodite", "activate gate" (Pantheon, from Age II): a main action instead of taking a card. Pays the
+    /// player's cost for the card's space (Offering tokens are chosen by a following <c>offer</c> decision).
+    /// </summary>
+    public static Move Activate(int divinity) => new(MoveKind.Activate, divinity);
+    /// <summary>
+    /// "offer 2+4", "offer none" (Pantheon): the Offering tokens spent on the activation just chosen, one bit per
+    /// Offering index; coins pay the rest (R8).
+    /// </summary>
+    public static Move Offer(int offerings) => new(MoveKind.Offer, offerings);
+
+    /// <summary>The Divinity a <see cref="MoveKind.Divinity"/> Move places or an <see cref="MoveKind.Activate"/> Move activates, or -1.</summary>
+    public int Divinity => Kind is MoveKind.Divinity or MoveKind.Activate ? Card : -1;
+    /// <summary>The Offering tokens an <see cref="MoveKind.Offer"/> Move spends (one bit per Offering index), or -1.</summary>
+    public int Offerings => Kind == MoveKind.Offer ? Card : -1;
     /// <summary>The Pantheon space (0..5) a <see cref="MoveKind.Divinity"/> Move places on, or -1.</summary>
     public int Space => Kind == MoveKind.Divinity ? Wonder : -1;
 
@@ -99,12 +114,18 @@ public enum DecisionKind : byte
     /// the draw's private Reveal; <see cref="PendingDecision.Wonder"/> holds the <see cref="Data.Mythology"/>.
     /// </summary>
     PlaceDivinity,
+    /// <summary>
+    /// Pantheon: which Offering tokens to spend on the activation just chosen (R8). Pushed only when the player holds
+    /// any and the cost is above 0; <see cref="PendingDecision.Wonder"/> holds the Divinity (or Gate) being activated,
+    /// which stays on its space until the payment.
+    /// </summary>
+    Offer,
 }
 
 /// <summary>
 /// A choice the Game State is waiting on, owned by the player who must make it. <see cref="Wonder"/> is the Wonder
 /// whose power asked for it (Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive), the Mythology of a
-/// Pantheon <see cref="DecisionKind.PlaceDivinity"/>, or -1.
+/// Pantheon <see cref="DecisionKind.PlaceDivinity"/>, the Divinity of a Pantheon <see cref="DecisionKind.Offer"/>, or -1.
 /// </summary>
 public readonly record struct PendingDecision(DecisionKind Kind, int Player, int Wonder = -1);
 

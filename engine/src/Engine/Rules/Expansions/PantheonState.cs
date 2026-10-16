@@ -44,6 +44,10 @@ public sealed class PantheonState : ExpansionState
     internal readonly sbyte[] Draw = new sbyte[2];
     /// <summary>The 2 Progress tokens on Enki (from its Reveal until it is activated), one bit per token.</summary>
     internal ushort EnkiTokens;
+    /// <summary>Per player: the Divinities (and the Gate) activated, one bit per Divinity index.</summary>
+    internal readonly ushort[] ActivatedBy = new ushort[2];
+    /// <summary>Per player: Astarte's coins left (R7: spendable after the treasury, never lost, 1 VP each).</summary>
+    internal readonly byte[] Astarte = new byte[2];
     internal SetupStep Awaiting;
 
     [Flags]
@@ -93,6 +97,10 @@ public sealed class PantheonState : ExpansionState
     /// <summary>The drawn cards (top first) while <see cref="HasDraw"/>.</summary>
     public int Drawn(int i) => Draw[i];
     public ushort Enki => EnkiTokens;
+    /// <summary>The Divinities (and the Gate) a player has activated, one bit per Divinity index.</summary>
+    public ushort Activated(int player) => ActivatedBy[player];
+    /// <summary>Astarte's coins a player has left.</summary>
+    public int AstarteCoins(int player) => Astarte[player];
 
     public bool AwaitingMythologyTokens => (Awaiting & SetupStep.MythologyTokens) != 0;
     public bool AwaitingPantheon => (Awaiting & SetupStep.Pantheon) != 0;
@@ -128,6 +136,8 @@ public sealed class PantheonState : ExpansionState
         DivinitiesSeen = o.DivinitiesSeen;
         o.Draw.CopyTo(Draw, 0);
         EnkiTokens = o.EnkiTokens;
+        o.ActivatedBy.CopyTo(ActivatedBy, 0);
+        o.Astarte.CopyTo(Astarte, 0);
         Awaiting = o.Awaiting;
     }
 
@@ -143,7 +153,8 @@ public sealed class PantheonState : ExpansionState
         && DeckAudience.AsSpan().SequenceEqual(o.DeckAudience)
         && DivinitiesSeen == o.DivinitiesSeen
         && Draw.AsSpan().SequenceEqual(o.Draw)
-        && EnkiTokens == o.EnkiTokens && Awaiting == o.Awaiting;
+        && EnkiTokens == o.EnkiTokens && Awaiting == o.Awaiting
+        && ActivatedBy.AsSpan().SequenceEqual(o.ActivatedBy) && Astarte.AsSpan().SequenceEqual(o.Astarte);
 
     public override void Write(BinaryWriter w)
     {
@@ -160,6 +171,8 @@ public sealed class PantheonState : ExpansionState
         foreach (var d in Draw) w.Write(d);
         w.Write(EnkiTokens);
         w.Write((byte)Awaiting);
+        foreach (var a in ActivatedBy) w.Write(a);
+        w.Write(Astarte);
     }
 
     /// <summary>A few lines for <see cref="StatePrinter"/>.</summary>
@@ -183,6 +196,9 @@ public sealed class PantheonState : ExpansionState
                 .Select(m => MythologyTokens(p, m.Mythology) == 1 ? m.Id : $"{m.Id} x2")
                 .Concat(PantheonData.Offerings.Where(o => (HeldOfferings[p] & 1 << o.Index) != 0).Select(o => o.Id)).ToList();
             if (held.Count > 0) lines.Add($"P{p + 1} holds: {string.Join(' ', held)}");
+            if (ActivatedBy[p] != 0)
+                lines.Add($"P{p + 1} activated: {string.Join(' ', new Bits(ActivatedBy[p]).ToArray().Select(Slug))}"
+                    + (Astarte[p] > 0 ? $" (Astarte's coins: {Astarte[p]})" : ""));
         }
         var onSlots = Enumerable.Range(0, GameState.SlotCount).Where(i => SlotTokens[i] != NoToken && age > 0)
             .Select(i => $"{GameData.Layout(age).SlotName(i)} {TokenSlug(SlotTokens[i])}").ToList();

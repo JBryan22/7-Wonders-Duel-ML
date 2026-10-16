@@ -9,7 +9,7 @@ public enum VictoryType : byte { Civilian, Military, Science }
 /// The civilian score categories (rules-reference §10), in display order. Growable: expansion categories come after
 /// the base ones (<see cref="ScoreSheet.BaseCategoryCount"/>) and are always 0 in a base game.
 /// </summary>
-public enum ScoreCategory : byte { Blue, Green, Yellow, Guilds, Wonders, Progress, Coins, Military, Temples }
+public enum ScoreCategory : byte { Blue, Green, Yellow, Guilds, Wonders, Progress, Coins, Military, Temples, Divinities }
 
 /// <summary>One player's victory points by category.</summary>
 public sealed class ScoreSheet : IEquatable<ScoreSheet>
