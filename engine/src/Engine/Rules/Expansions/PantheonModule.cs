@@ -6,12 +6,13 @@ namespace SevenWondersDuel.Engine;
 /// The Pantheon expansion (spec-pantheon P-A3, P-A4), switched on by <c>expansion=pantheon</c>. Its data is
 /// <see cref="PantheonData"/>, its state <see cref="PantheonState"/>.
 /// <para>
-/// So far (tickets 02-03): the bigger pools (16 Wonders with both promos, 13 Progress tokens), the Age I Mythology
+/// So far (tickets 02-04): the bigger pools (16 Wonders with both promos, 13 Progress tokens), the Age I Mythology
 /// tokens and the Divinity draws they cause, the Age II setup (the Gate, the Pantheon and Enki Reveals, the Offering
 /// tokens), Age III's Grand Temples in place of the Guilds, the 3 new Progress tokens, and activating the Pantheon
-/// (cost, the Sanctuary, Offering tokens, Astarte's coins) with the effects that need no decision: Ishtar, Astarte,
-/// Tanit, Aphrodite, Mars. The other Divinities and the Gate are activated and paid for, but their effects come in
-/// tickets 04-05 (until then they do nothing, like an impossible effect).
+/// (cost, the Sanctuary, Offering tokens, Astarte's coins) with the effects that need no decision (Ishtar, Astarte,
+/// Tanit, Aphrodite, Mars) and those with one (Enki, Nisaba, Baal, Hades, Zeus, Anubis, Isis, Ra). Minerva, Neptune
+/// and the Gate are activated and paid for, but their effects come in ticket 05 (until then they do nothing, like an
+/// impossible effect).
 /// </para>
 /// </summary>
 internal sealed class PantheonModule : ExpansionModule
@@ -28,6 +29,15 @@ internal sealed class PantheonModule : ExpansionModule
     static readonly int Poliorcetics = PantheonData.TokenIndex("poliorcetics");
     static readonly int Engineering = PantheonData.TokenIndex("engineering");
     static readonly int Enki = PantheonData.DivinityIndex("enki");
+    static readonly int Nisaba = PantheonData.DivinityIndex("nisaba");
+    static readonly int Baal = PantheonData.DivinityIndex("baal");
+    static readonly int Hades = PantheonData.DivinityIndex("hades");
+    static readonly int Zeus = PantheonData.DivinityIndex("zeus");
+    static readonly int Anubis = PantheonData.DivinityIndex("anubis");
+    static readonly int Isis = PantheonData.DivinityIndex("isis");
+    static readonly int Ra = PantheonData.DivinityIndex("ra");
+    static readonly CardSet BrownAndGrey = CardSets.OfColor[(int)CardColor.Brown] | CardSets.OfColor[(int)CardColor.Grey];
+    static readonly CardSet Green = CardSets.OfColor[(int)CardColor.Green];
     static readonly int Sanctuary = PantheonData.WonderIndex("sanctuary");
     /// <summary>What the Sanctuary takes off its owner's activation costs.</summary>
     public const int SanctuaryDiscount = 2;
@@ -76,11 +86,12 @@ internal sealed class PantheonModule : ExpansionModule
     static bool AwaitingDraw(GameState s) =>
         s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity && !P(s).HasDraw;
 
-    public override bool AwaitingReveal(GameState s) => P(s).Awaiting != 0 || AwaitingDraw(s);
+    public override bool AwaitingReveal(GameState s) => P(s).Awaiting != 0 || AwaitingDraw(s) || P(s).AwaitingZeusDiscard;
 
     public override bool TryApply(GameState s, Reveal reveal)
     {
-        if (reveal is not (MythologyTokensReveal or DivinityDrawReveal or PantheonReveal or OfferingsReveal or EnkiReveal))
+        if (reveal is not (MythologyTokensReveal or DivinityDrawReveal or PantheonReveal or OfferingsReveal or EnkiReveal
+            or ZeusDiscardReveal))
             return false;
         if (s.SlotsToReveal != 0) throw new InvalidOperationException("The structure's cards are revealed first");
         switch (reveal)
@@ -90,6 +101,7 @@ internal sealed class PantheonModule : ExpansionModule
             case PantheonReveal r: ApplyPantheon(s, r); break;
             case OfferingsReveal r: ApplyOfferings(s, r); break;
             case EnkiReveal r: ApplyEnki(s, r); break;
+            case ZeusDiscardReveal r: ApplyZeusDiscard(s, r); break;
         }
         return true;
     }
@@ -194,9 +206,27 @@ internal sealed class PantheonModule : ExpansionModule
         p.Awaiting &= ~PantheonState.SetupStep.Enki;
     }
 
+    /// <summary>Zeus's face-down card is named, goes to the discard pile, and its token goes to Zeus's activator (R2).</summary>
+    static void ApplyZeusDiscard(GameState s, ZeusDiscardReveal r)
+    {
+        var p = P(s);
+        if (!p.AwaitingZeusDiscard) throw new InvalidOperationException("Zeus is not discarding a face-down card");
+        var slot = p.ZeusSlot;
+        if (!GameData.IsCard(r.Card) || !s.UnseenPoolFor(slot).Contains(r.Card))
+            throw new InvalidOperationException(
+                $"{(GameData.IsCard(r.Card) ? GameData.Card(r.Card).Id : "?")} cannot be the face-down card in {GameData.Layout(s.Age).SlotName(slot)}");
+        p.ZeusSlot = -1;
+        ZeusDiscards(s, s.CurrentPlayer, slot, r.Card);
+    }
+
     public override Reveal NextReveal(GameState s, Rng rng)
     {
         var p = P(s);
+        if (p.AwaitingZeusDiscard)
+        {
+            var pool = s.UnseenPoolFor(p.ZeusSlot);
+            return new ZeusDiscardReveal(pool.ElementAt(rng.Next(pool.Count)));
+        }
         if (p.AwaitingMythologyTokens)
         {
             // 5 of the 10 tokens (2 per Mythology), uniformly, on the R1 slots in order.
@@ -288,6 +318,7 @@ internal sealed class PantheonModule : ExpansionModule
     public override int LegalMoves(GameState s, Span<Move> buffer)
     {
         if (s.Pending(0).Kind == DecisionKind.Offer) return LegalOffers(s, buffer);
+        if (s.Pending(0).Kind > DecisionKind.Offer) return LegalEffectMoves(s, s.Pending(0), buffer);
         if (s.Pending(0).Kind != DecisionKind.PlaceDivinity) return -1;
         var p = P(s);
         var n = 0;
@@ -310,6 +341,11 @@ internal sealed class PantheonModule : ExpansionModule
             why = WhyActivateIllegal(s, decision.Player, move.Divinity);
             return true;
         }
+        if (decision.Kind > DecisionKind.Offer)
+        {
+            why = WhyEffectMoveIllegal(s, decision, move);
+            return true;
+        }
         if (decision.Kind != DecisionKind.PlaceDivinity)
         {
             why = move.Kind switch
@@ -317,6 +353,7 @@ internal sealed class PantheonModule : ExpansionModule
                 MoveKind.Divinity => "no drawn Divinity is waiting to be placed",
                 MoveKind.Activate => "the Pantheon is activated instead of taking a card",
                 MoveKind.Offer => "no activation is waiting for its Offering tokens",
+                > MoveKind.Offer => $"no {move.Kind.ToString().ToLowerInvariant()} decision is pending",
                 _ => null,
             };
             return why is not null;
@@ -344,6 +381,11 @@ internal sealed class PantheonModule : ExpansionModule
         if (decision.Kind == DecisionKind.Offer)
         {
             Activate(s, decision.Player, decision.Wonder, move.Offerings);
+            return true;
+        }
+        if (decision.Kind > DecisionKind.Offer)
+        {
+            ApplyEffectMove(s, decision.Player, move);
             return true;
         }
         if (decision.Kind != DecisionKind.PlaceDivinity) return false;
@@ -457,23 +499,194 @@ internal sealed class PantheonModule : ExpansionModule
         p.Spaces[SpaceOf(p, divinity)] = (sbyte)PantheonState.EmptySpace;
         p.ActivatedBy[player] |= (ushort)(1 << divinity);
 
-        // The effects without a decision (Aphrodite's VP are scored at the end). The others come in tickets 04-05.
+        // The effects without a decision (Aphrodite's VP are scored at the end), then the decision of those with one.
+        // Minerva, Neptune and the Gate come in ticket 05.
         var def = PantheonData.Divinities[divinity];
         if (def.Coins > 0) s.SetCoins(player, s.Coins(player) + def.Coins);
         if (def.ProtectedCoins > 0) p.Astarte[player] += (byte)def.ProtectedCoins;
         if (def.Shields > 0) s.AddShields(player, def.Shields);
         if (def.Science is { } symbol && !s.IsOver) s.GainSymbol(player, symbol);
+        if (!s.IsOver && EffectDecision(s, player, divinity) is { } kind) s.PushDecision(new PendingDecision(kind, player));
         s.FinishDecision();
     }
 
-    /// <summary>Ishtar's symbol (Law): it counts for pairs and supremacy (FAQ).</summary>
+    // ---------------------------------------------------------------- the Divinities' decisions
+
+    /// <summary>
+    /// The decision a Divinity's effect asks for, or null if it has none or nothing to choose from (then it does nothing,
+    /// FAQ). Zeus always has a card to discard: the Pantheon is activated instead of taking one, so the structure is not empty.
+    /// </summary>
+    static DecisionKind? EffectDecision(GameState s, int player, int divinity)
+    {
+        var opponent = 1 - player;
+        if (divinity == Enki) return P(s).EnkiTokens != 0 ? DecisionKind.Enki : null;
+        if (divinity == Nisaba) return !(s.City(opponent) & Green).IsEmpty ? DecisionKind.Snake : null;
+        if (divinity == Baal) return !(s.City(opponent) & BrownAndGrey).IsEmpty ? DecisionKind.Steal : null;
+        if (divinity == Hades) return !s.DiscardPile.IsEmpty ? DecisionKind.Hades : null;
+        if (divinity == Zeus) return s.CardsLeftInAge > 0 ? DecisionKind.Zeus : null;
+        if (divinity == Anubis) return (s.BuiltWonders(0) | s.BuiltWonders(1)) != 0 ? DecisionKind.Anubis : null;
+        if (divinity == Isis) return !s.DiscardPile.IsEmpty && s.BuildableWonders(player) != 0 ? DecisionKind.Isis : null;
+        if (divinity == Ra) return s.BuildableWonders(opponent) != 0 ? DecisionKind.Ra : null;
+        return null;
+    }
+
+    static int LegalEffectMoves(GameState s, PendingDecision decision, Span<Move> buffer)
+    {
+        var player = decision.Player;
+        var opponent = 1 - player;
+        var n = 0;
+        switch (decision.Kind)
+        {
+            case DecisionKind.Enki:
+                foreach (var t in ProgressTokens.In(P(s).EnkiTokens)) buffer[n++] = Move.Enki(t);
+                break;
+            case DecisionKind.Snake:
+                foreach (var c in (s.City(opponent) & Green).Cards()) buffer[n++] = Move.Snake(c);
+                break;
+            case DecisionKind.Steal:
+                foreach (var c in (s.City(opponent) & BrownAndGrey).Cards()) buffer[n++] = Move.Steal(c);
+                break;
+            case DecisionKind.Hades:
+                foreach (var c in s.DiscardPile.Cards()) buffer[n++] = Move.Hades(c);
+                break;
+            case DecisionKind.Zeus:
+                for (var slot = 0; slot < GameState.SlotCount; slot++)
+                    if (s.IsOccupied(slot)) buffer[n++] = Move.Zeus(slot, s.Age);
+                break;
+            case DecisionKind.Anubis:
+                foreach (var w in GameState.WondersIn((ushort)(s.BuiltWonders(0) | s.BuiltWonders(1)))) buffer[n++] = Move.Anubis(w);
+                break;
+            case DecisionKind.Isis:
+                foreach (var c in s.DiscardPile.Cards())
+                    foreach (var w in GameState.WondersIn(s.BuildableWonders(player))) buffer[n++] = Move.Isis(c, w);
+                break;
+            case DecisionKind.Ra:
+                foreach (var w in GameState.WondersIn(s.BuildableWonders(opponent))) buffer[n++] = Move.Ra(w);
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown Pantheon decision {decision.Kind}");
+        }
+        return n;
+    }
+
+    static string? WhyEffectMoveIllegal(GameState s, PendingDecision decision, Move move)
+    {
+        var player = decision.Player;
+        var opponent = 1 - player;
+        var expected = decision.Kind switch
+        {
+            DecisionKind.Enki => (MoveKind.Enki, "which of Enki's Progress tokens to keep"),
+            DecisionKind.Snake => (MoveKind.Snake, "which of the opponent's green cards gets Nisaba's Snake"),
+            DecisionKind.Steal => (MoveKind.Steal, "which of the opponent's brown or grey cards Baal steals"),
+            DecisionKind.Hades => (MoveKind.Hades, "which discarded card Hades builds"),
+            DecisionKind.Zeus => (MoveKind.Zeus, "which structure slot's card Zeus discards"),
+            DecisionKind.Anubis => (MoveKind.Anubis, "which built Wonder Anubis unbuilds"),
+            DecisionKind.Isis => (MoveKind.Isis, "which discarded card Isis builds which of your Wonders with"),
+            DecisionKind.Ra => (MoveKind.Ra, "which of the opponent's unbuilt Wonders Ra takes"),
+            _ => throw new InvalidOperationException($"Unknown Pantheon decision {decision.Kind}"),
+        };
+        if (move.Kind != expected.Item1) return "the decision is " + expected.Item2;
+        static string CardId(int c) => GameData.IsCard(c) ? GameData.Card(c).Id : "?";
+        static string WonderId(int w) => GameData.IsWonder(w) ? GameData.Wonder(w).Id : "?";
+        switch (move.Kind)
+        {
+            case MoveKind.Enki:
+                return GameData.IsToken(move.Token) && (P(s).EnkiTokens & 1 << move.Token) != 0 ? null
+                    : $"{(GameData.IsToken(move.Token) ? GameData.Token(move.Token).Id : "?")} is not on Enki";
+            case MoveKind.Snake:
+                return GameData.IsCard(move.Card) && (s.City(opponent) & Green).Contains(move.Card) ? null
+                    : $"{CardId(move.Card)} is not a green card in P{opponent + 1}'s city";
+            case MoveKind.Steal:
+                return GameData.IsCard(move.Card) && (s.City(opponent) & BrownAndGrey).Contains(move.Card) ? null
+                    : $"{CardId(move.Card)} is not a brown or grey card in P{opponent + 1}'s city";
+            case MoveKind.Hades:
+                return GameData.IsCard(move.Card) && s.DiscardPile.Contains(move.Card) ? null
+                    : $"{CardId(move.Card)} is not in the discard pile";
+            case MoveKind.Zeus:
+                return move.Wonder != s.Age ? $"the structure is Age {s.Age}'s"
+                    : move.Slot is < 0 or >= GameState.SlotCount || !s.IsOccupied(move.Slot) ? "that slot holds no card"
+                    : null;
+            case MoveKind.Anubis:
+                return GameData.IsWonder(move.Wonder) && s.IsWonderBuilt(move.Wonder) ? null : $"{WonderId(move.Wonder)} is not built";
+            case MoveKind.Isis:
+                return !GameData.IsCard(move.Card) || !s.DiscardPile.Contains(move.Card) ? $"{CardId(move.Card)} is not in the discard pile"
+                    : !GameData.IsWonder(move.Wonder) || (s.BuildableWonders(player) & 1 << move.Wonder) == 0
+                        ? $"{WonderId(move.Wonder)} is not an unbuilt Wonder of P{player + 1}'s"
+                    : null;
+            default: // Ra
+                return GameData.IsWonder(move.Wonder) && (s.BuildableWonders(opponent) & 1 << move.Wonder) != 0 ? null
+                    : $"{WonderId(move.Wonder)} is not an unbuilt Wonder of P{opponent + 1}'s";
+        }
+    }
+
+    /// <summary>Applies a Divinity's decision; the turn then ends unless something more was queued (a token pick, a Wonder's power).</summary>
+    static void ApplyEffectMove(GameState s, int player, Move move)
+    {
+        var p = P(s);
+        var opponent = 1 - player;
+        switch (move.Kind)
+        {
+            case MoveKind.Enki:
+                // The other token goes back to the box (it is out of the box only while on Enki).
+                p.EnkiTokens = 0;
+                s.TakeToken(player, move.Token);
+                break;
+            case MoveKind.Snake:
+                // Nisaba now shows the card's symbol too (FAQ: it counts for pairs and supremacy).
+                p.SnakeCard = (sbyte)move.Card;
+                s.GainSymbol(player, GameData.Card(move.Card).Science!.Value);
+                break;
+            case MoveKind.Steal:
+                s.RemoveFromCity(opponent, move.Card);
+                s.AddToCity(player, move.Card);
+                break;
+            case MoveKind.Hades:
+                s.TakeFromDiscard(move.Card);
+                s.Build(player, move.Card, free: true);
+                break;
+            case MoveKind.Zeus:
+                if (s.SlotCard(move.Slot) < 0)
+                {
+                    // A face-down card: its public Reveal names it first (reveal discarded), then the turn goes on.
+                    p.ZeusSlot = (sbyte)move.Slot;
+                    return;
+                }
+                ZeusDiscards(s, player, move.Slot, s.SlotCard(move.Slot));
+                return;
+            case MoveKind.Anubis:
+                s.UnbuildWonder(move.Wonder);
+                break;
+            case MoveKind.Isis:
+                s.TakeFromDiscard(move.Card);
+                s.BuildWonder(player, move.Card, move.Wonder, free: true);
+                break;
+            case MoveKind.Ra:
+                s.StealWonder(player, move.Wonder);
+                break;
+        }
+        s.FinishDecision();
+    }
+
+    /// <summary>Zeus's card goes to the discard pile and the player who used Zeus takes any token on it (R2).</summary>
+    static void ZeusDiscards(GameState s, int player, int slot, int card)
+    {
+        s.DiscardFromSlot(slot, card);
+        TakeSlotToken(s, player, slot);
+        s.FinishDecision();
+    }
+
+    /// <summary>
+    /// Ishtar's symbol (Law), and Nisaba's copy of the symbol under its Snake: both count for pairs and supremacy (FAQ).
+    /// </summary>
     public override int ExtraSymbols(GameState s, int player, ScienceSymbol symbol)
     {
         var n = 0;
-        var activated = P(s).ActivatedBy[player];
+        var p = P(s);
+        var activated = p.ActivatedBy[player];
         if (activated == 0) return 0;
         foreach (var d in new Bits(activated))
             if (PantheonData.Divinities[d].Science == symbol) n++;
+        if ((activated & 1 << Nisaba) != 0 && p.SnakeCard >= 0 && GameData.Card(p.SnakeCard).Science == symbol) n++;
         return n;
     }
 
@@ -496,21 +709,25 @@ internal sealed class PantheonModule : ExpansionModule
     public override void EndOfTurn(GameState s)
     {
         var p = P(s);
-        var player = s.CurrentPlayer;
         for (var slot = 0; slot < GameState.SlotCount; slot++)
+            if (p.SlotTokens[slot] != PantheonState.NoToken && s.IsAccessible(slot)) TakeSlotToken(s, s.CurrentPlayer, slot);
+    }
+
+    /// <summary>A player takes the token on a slot, if any (an Offering token is just held).</summary>
+    static void TakeSlotToken(GameState s, int player, int slot)
+    {
+        var p = P(s);
+        var token = p.SlotTokens[slot];
+        if (token == PantheonState.NoToken) return;
+        p.SlotTokens[slot] = (sbyte)PantheonState.NoToken;
+        if (token >= PantheonState.OfferingToken)
         {
-            var token = p.SlotTokens[slot];
-            if (token == PantheonState.NoToken || !s.IsAccessible(slot)) continue;
-            p.SlotTokens[slot] = (sbyte)PantheonState.NoToken;
-            if (token >= PantheonState.OfferingToken)
-            {
-                p.HeldOfferings[player] |= (byte)(1 << (token - PantheonState.OfferingToken));
-                continue;
-            }
-            p.HeldMythology[player * Mythologies + token]++;
-            if (Array.IndexOf(p.Spaces, (sbyte)PantheonState.EmptySpace) >= 0)
-                s.PushDecision(new PendingDecision(DecisionKind.PlaceDivinity, player, token));
+            p.HeldOfferings[player] |= (byte)(1 << (token - PantheonState.OfferingToken));
+            return;
         }
+        p.HeldMythology[player * Mythologies + token]++;
+        if (Array.IndexOf(p.Spaces, (sbyte)PantheonState.EmptySpace) >= 0)
+            s.PushDecision(new PendingDecision(DecisionKind.PlaceDivinity, player, token));
     }
 
     // ---------------------------------------------------------------- payment, military, scoring

@@ -50,3 +50,13 @@ public sealed record EnkiReveal(int[] Tokens) : Reveal
 {
     public override string ToString() => MoveLog.Format(this);
 }
+
+/// <summary>
+/// Pantheon, Zeus on a face-down card ("reveal discarded baths"): the card going to the discard pile, drawn from what
+/// the slot's back could hide. Public (the discard pile is). It comes right after the <c>zeus</c> Move, before the
+/// flips of the cards it uncovered.
+/// </summary>
+public sealed record ZeusDiscardReveal(int Card) : Reveal
+{
+    public override string ToString() => MoveLog.Format(this);
+}

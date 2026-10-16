@@ -141,7 +141,7 @@ public static class MoveLog
     public static LogEntry ParseEntry(string line, GameState state)
     {
         var t = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (PantheonLog.TryParse(t) is { } pantheon) return pantheon;
+        if (PantheonLog.TryParse(t, state) is { } pantheon) return pantheon;
         if (t[0] == "reveal")
         {
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));

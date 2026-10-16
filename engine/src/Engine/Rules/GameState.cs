@@ -26,8 +26,11 @@ public sealed class GameState
     public const int GuildsPerGame = 3;
     public const int StartingCoins = 7;
     public const int SlotCount = 20;
-    /// <summary>Upper bound on legal Moves in any position, for caller-supplied buffers.</summary>
-    public const int MaxMoves = 128;
+    /// <summary>
+    /// Upper bound on legal Moves in any position, for caller-supplied buffers. The base game needs at most 6 accessible
+    /// cards x 6 Moves; Pantheon's Isis (discard pile x own unbuilt Wonders: at most 63 cards x 5 Wonders) sets it.
+    /// </summary>
+    public const int MaxMoves = 320;
     /// <summary>Spaces from the centre to a capital: the pawn reaching it is military supremacy (rules-reference §8).</summary>
     public const int CapitalDistance = 9;
     /// <summary>Military tokens on the board at the start: a 2-coin and a 5-coin token on each side.</summary>
@@ -434,8 +437,9 @@ public sealed class GameState
                 foreach (var c in _libertyOffer.Cards()) buffer[n++] = Move.LibertyGive(c);
                 break;
             default:
-                // Which Wonders the player can afford does not depend on the card taken.
-                Span<int> wonders = stackalloc int[DraftOfferSize];
+                // Which Wonders the player can afford does not depend on the card taken. Pantheon's Ra can give a
+                // player more than 4 Wonders.
+                Span<int> wonders = stackalloc int[DraftSize];
                 var wonderCount = 0;
                 foreach (var w in WondersIn(BuildableWonders(player)))
                     if (CanAffordWonder(player, w)) wonders[wonderCount++] = w;
@@ -688,7 +692,7 @@ public sealed class GameState
     /// nothing and earns no Urbanism coins (rules-reference §12 mistake 4); everything else applies as usual,
     /// including a science pair or win.
     /// </summary>
-    void Build(int player, int card, bool free = false)
+    internal void Build(int player, int card, bool free = false)
     {
         var def = GameData.Card(card);
         var opponent = 1 - player;
@@ -728,13 +732,16 @@ public sealed class GameState
     /// it takes effect when the turn ends, after the Reveals of newly accessible cards.
     /// The choice powers (Zeus, Circus Maximus, Mausoleum, Great Library, the Messe, the Statue of Liberty) then queue their decision.
     /// </summary>
-    void BuildWonder(int player, int card, int wonder)
+    internal void BuildWonder(int player, int card, int wonder, bool free = false)
     {
         var def = GameData.Wonder(wonder);
         var opponent = 1 - player;
-        var quote = Payment.QuoteWonder(this, player, wonder);
-        Spend(player, quote.Total);
-        if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
+        if (!free)
+        {
+            var quote = Payment.QuoteWonder(this, player, wonder);
+            Spend(player, quote.Total);
+            if (HasToken(opponent, ProgressTokens.Economy)) _coins[opponent] += quote.TradeCoins;
+        }
         _wondersBuilt[player] |= (ushort)(1 << wonder);
         _wonderCard[wonder] = (sbyte)card;
 
@@ -1110,8 +1117,8 @@ public sealed class GameState
         for (var r = 0; r < Resources.Count; r++) _production[player * Resources.Count + r] += produce[r];
     }
 
-    /// <summary>Takes a card out of a city (a Zeus / Circus Maximus destroy) and updates the cached production.</summary>
-    void RemoveFromCity(int player, int card)
+    /// <summary>Takes a card out of a city (a Zeus / Circus Maximus destroy, Baal) and updates the cached production.</summary>
+    internal void RemoveFromCity(int player, int card)
     {
         _city[player] = _city[player].Without(card);
         var produce = GameData.Card(card).Produce;
@@ -1136,6 +1143,40 @@ public sealed class GameState
 
     /// <summary>Test setup: puts a card in the discard pile.</summary>
     internal void AddToDiscard(int card) => _discard = _discard.With(card);
+
+    /// <summary>Takes a card out of the discard pile (Hades, Isis).</summary>
+    internal void TakeFromDiscard(int card) => _discard = _discard.Without(card);
+
+    /// <summary>
+    /// Pantheon's Zeus: the card in a structure slot goes to the discard pile (named now if it was face down). Cards it
+    /// covered become accessible and are revealed as usual.
+    /// </summary>
+    internal void DiscardFromSlot(int slot, int card)
+    {
+        _slots[slot] = Empty;
+        _occupied &= ~(1u << slot);
+        _discard = _discard.With(card);
+        _seen = _seen.With(card);
+    }
+
+    /// <summary>
+    /// Pantheon's Anubis: a built Wonder becomes unbuilt and its Age card goes to the discard pile. What the Wonder
+    /// gave stays given, and a Wonder that left the game (the 8th) stays out.
+    /// </summary>
+    internal void UnbuildWonder(int wonder)
+    {
+        _discard = _discard.With(_wonderCard[wonder]);
+        _wonderCard[wonder] = -1;
+        _wondersBuilt[0] &= (ushort)~(1 << wonder);
+        _wondersBuilt[1] &= (ushort)~(1 << wonder);
+    }
+
+    /// <summary>Pantheon's Ra: an unbuilt Wonder changes owner (at most 7 Wonders are still built in a game).</summary>
+    internal void StealWonder(int thief, int wonder)
+    {
+        _wonders[1 - thief] &= (ushort)~(1 << wonder);
+        _wonders[thief] |= (ushort)(1 << wonder);
+    }
 
     /// <summary>Test setup: puts the pawn on a space without looting.</summary>
     internal void SetConflictPawn(int position) => ConflictPawn = position;

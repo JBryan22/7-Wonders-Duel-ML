@@ -20,9 +20,9 @@ public class PantheonActivationTests
     /// that decision, both players' coins and Offering tokens cleared, and the Pantheon set to <paramref name="spaces"/>
     /// (space 1 first; null = empty). Nobody has built the Sanctuary; <paramref name="where"/> may ask for more.
     /// </summary>
-    static Game AgeTwo(int player, params string?[] spaces) => AgeTwoWhere(player, _ => true, spaces);
+    internal static Game AgeTwo(int player, params string?[] spaces) => AgeTwoWhere(player, _ => true, spaces);
 
-    static Game AgeTwoWhere(int player, Func<GameState, bool> where, params string?[] spaces)
+    internal static Game AgeTwoWhere(int player, Func<GameState, bool> where, params string?[] spaces)
     {
         for (ulong seed = 0; seed < 400; seed++)
         {
@@ -450,7 +450,7 @@ public class PantheonActivationTests
     }
 
     /// <summary>The player to move (the opponent, after an activation) discards an accessible card; Reveals follow.</summary>
-    static void OpponentDiscards(Game game)
+    internal static void OpponentDiscards(Game game)
     {
         var s = game.State;
         var chance = new RandomChanceSource(99);

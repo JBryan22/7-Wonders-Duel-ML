@@ -15,6 +15,15 @@ namespace SevenWondersDuel.Engine;
 /// reveal temples 0.1 3.0 5.2                (Age III: Grand Temple backs instead of Guild backs)
 /// P1 activate aphrodite                     (from Age II, instead of taking a card; "activate gate" for the Gate)
 /// P1 offer 2+4                              (the Offering tokens spent, by value; "offer none")
+/// P1 enki law                               (Enki: the token kept)
+/// P1 snake study                            (Nisaba: the opponent's green card)
+/// P1 steal quarry                           (Baal: the opponent's brown or grey card)
+/// P1 hades baths                            (Hades: the discarded card built)
+/// P1 zeus 2.3                               (Zeus: always by slot of the current Age, the card may be face down)
+/// reveal discarded baths                    (Zeus's face-down card, public, before the flips)
+/// P1 anubis pyramids                        (Anubis: a built Wonder of either player)
+/// P1 isis baths pyramids                    (Isis: the discarded card, then the Wonder)
+/// P1 ra pyramids                            (Ra: the opponent's unbuilt Wonder)
 /// </code>
 /// </summary>
 internal static class PantheonLog
@@ -29,6 +38,7 @@ internal static class PantheonLog
         OfferingsReveal r => "reveal offerings " + string.Join(' ',
             r.Tokens.Select(t => $"{SlotName(2, t.Slot)} {OfferingSlug(t.Offering)}")),
         EnkiReveal r => "reveal enki " + string.Join(' ', r.Tokens.Select(TokenSlug)),
+        ZeusDiscardReveal r => "reveal discarded " + CardSlug(r.Card),
         _ => null,
     };
 
@@ -37,11 +47,22 @@ internal static class PantheonLog
         MoveKind.Divinity => $"divinity {DivinitySlug(move.Divinity)} {move.Space + 1}",
         MoveKind.Activate => $"activate {DivinitySlug(move.Divinity)}",
         MoveKind.Offer => "offer " + OfferingsText(move.Offerings),
+        MoveKind.Enki => $"enki {TokenSlug(move.Token)}",
+        MoveKind.Snake => $"snake {CardSlug(move.Card)}",
+        MoveKind.Steal => $"steal {CardSlug(move.Card)}",
+        MoveKind.Hades => $"hades {CardSlug(move.Card)}",
+        MoveKind.Zeus => $"zeus {(move.Wonder is >= 1 and <= GameState.AgeCount ? SlotName(move.Wonder, move.Slot) : $"#{move.Slot}")}",
+        MoveKind.Anubis => $"anubis {WonderSlug(move.Wonder)}",
+        MoveKind.Isis => $"isis {CardSlug(move.Card)} {WonderSlug(move.Wonder)}",
+        MoveKind.Ra => $"ra {WonderSlug(move.Wonder)}",
         _ => null,
     };
 
-    /// <summary>Parses a Pantheon line (already split on spaces), or returns null if it is not one.</summary>
-    public static LogEntry? TryParse(string[] t)
+    /// <summary>
+    /// Parses a Pantheon line (already split on spaces), or returns null if it is not one. The state supplies the
+    /// current Age for Zeus's slot.
+    /// </summary>
+    public static LogEntry? TryParse(string[] t, GameState state)
     {
         if (t[0] == "reveal" && t.Length > 1)
         {
@@ -58,6 +79,9 @@ internal static class PantheonLog
                         .Select(p => (Slot(2, p.A), PantheonData.OfferingIndex(p.B))).ToArray());
                 case "enki":
                     return new EnkiReveal(t.Skip(2).Select(GameData.AnyTokenIndex).ToArray());
+                case "discarded":
+                    if (t.Length != 3) throw new FormatException("Expected 'reveal discarded <card>'");
+                    return new ZeusDiscardReveal(GameData.AnyCardIndex(t[2]));
             }
             if (t.Length > 2 && t[2] == "divinities" && t[1] is "P1" or "P2")
             {
@@ -81,6 +105,25 @@ internal static class PantheonLog
         {
             if (t.Length != 3) throw new FormatException("Expected 'P<n> offer <values>' (e.g. 'offer 2+4', 'offer none')");
             return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.Offer(ParseOfferings(t[2])));
+        }
+        if (t.Length > 1 && t[0] is "P1" or "P2" && t[1] is "enki" or "snake" or "steal" or "hades" or "zeus" or "anubis" or "isis" or "ra")
+        {
+            var isis = t[1] == "isis";
+            if (t.Length != (isis ? 4 : 3))
+                throw new FormatException(isis ? "Expected 'P<n> isis <card> <wonder>'" : $"Expected 'P<n> {t[1]} <argument>'");
+            var move = t[1] switch
+            {
+                "enki" => Move.Enki(GameData.AnyTokenIndex(t[2])),
+                "snake" => Move.Snake(GameData.AnyCardIndex(t[2])),
+                "steal" => Move.Steal(GameData.AnyCardIndex(t[2])),
+                "hades" => Move.Hades(GameData.AnyCardIndex(t[2])),
+                "zeus" => state.Age >= 1 ? Move.Zeus(Slot(state.Age, t[2]), state.Age)
+                    : throw new FormatException($"Slot '{t[2]}' named before any Age has started"),
+                "anubis" => Move.Anubis(GameData.AnyWonderIndex(t[2])),
+                "isis" => Move.Isis(GameData.AnyCardIndex(t[2]), GameData.AnyWonderIndex(t[3])),
+                _ => Move.Ra(GameData.AnyWonderIndex(t[2])),
+            };
+            return new MoveEntry(t[0] == "P1" ? 0 : 1, move);
         }
         return null;
     }
@@ -129,4 +172,6 @@ internal static class PantheonLog
     static string DivinitySlug(int d) => d >= 0 && d < PantheonData.Divinities.Length ? PantheonData.Divinities[d].Id : $"#{d}";
     static string OfferingSlug(int o) => o >= 0 && o < PantheonData.Offerings.Length ? PantheonData.Offerings[o].Id : $"#{o}";
     static string TokenSlug(int t) => GameData.IsToken(t) ? GameData.Token(t).Id : $"#{t}";
+    static string CardSlug(int c) => GameData.IsCard(c) ? GameData.Card(c).Id : $"#{c}";
+    static string WonderSlug(int w) => GameData.IsWonder(w) ? GameData.Wonder(w).Id : $"#{w}";
 }

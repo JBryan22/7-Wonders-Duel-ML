@@ -1,7 +1,8 @@
 namespace SevenWondersDuel.Engine;
 
 /// <summary>The kinds of Move. Expansion kinds come after the base ones (Pantheon: <see cref="Divinity"/> onward).</summary>
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity, Activate, Offer }
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity, Activate, Offer,
+    Enki, Snake, Steal, Hades, Zeus, Anubis, Isis, Ra }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -13,7 +14,11 @@ public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Dra
 /// A Pantheon <see cref="MoveKind.Divinity"/> Move holds the Divinity in <see cref="Card"/> and the Pantheon space
 /// (0..5) in <see cref="Wonder"/> (see <see cref="Divinity"/> and <see cref="Space"/>); an <see cref="MoveKind.Activate"/>
 /// Move holds the Divinity (or the Gate) in <see cref="Card"/>, an <see cref="MoveKind.Offer"/> Move the Offering tokens
-/// spent as a mask in <see cref="Card"/> (see <see cref="Offerings"/>).
+/// spent as a mask in <see cref="Card"/> (see <see cref="Offerings"/>). The Divinities' Moves: <see cref="MoveKind.Enki"/>
+/// holds the Progress token in <see cref="Card"/>; <see cref="MoveKind.Snake"/>, <see cref="MoveKind.Steal"/> and
+/// <see cref="MoveKind.Hades"/> the card; <see cref="MoveKind.Zeus"/> the structure slot in <see cref="Card"/> and the
+/// Age in <see cref="Wonder"/> (see <see cref="Slot"/>); <see cref="MoveKind.Anubis"/> and <see cref="MoveKind.Ra"/>
+/// the Wonder; <see cref="MoveKind.Isis"/> the discarded card and the Wonder.
 /// </summary>
 public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
 {
@@ -59,15 +64,37 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     /// </summary>
     public static Move Offer(int offerings) => new(MoveKind.Offer, offerings);
 
+    /// <summary>"enki law" (Pantheon): keep one of the 2 Progress tokens on Enki; the other goes back to the box.</summary>
+    public static Move Enki(int token) => new(MoveKind.Enki, token);
+    /// <summary>"snake study" (Nisaba): put the Snake on one of the opponent's green cards; Nisaba copies its symbol.</summary>
+    public static Move Snake(int card) => new(MoveKind.Snake, card);
+    /// <summary>"steal quarry" (Baal): take one of the opponent's brown or grey cards into your city.</summary>
+    public static Move Steal(int card) => new(MoveKind.Steal, card);
+    /// <summary>"hades baths" (Hades): build a card of the discard pile for free.</summary>
+    public static Move Hades(int card) => new(MoveKind.Hades, card);
+    /// <summary>
+    /// "zeus 2.3" (Zeus): put the card in this slot of the <paramref name="age"/> structure in the discard pile, face up
+    /// or face down (a face-down card is then named by a public <c>reveal discarded</c>). Slot-named, always.
+    /// </summary>
+    public static Move Zeus(int slot, int age) => new(MoveKind.Zeus, slot, age);
+    /// <summary>"anubis pyramids" (Anubis): unbuild a built Wonder of either player; its Age card goes to the discard pile.</summary>
+    public static Move Anubis(int wonder) => new(MoveKind.Anubis, -1, wonder);
+    /// <summary>"isis baths pyramids" (Isis): build one of your Wonders for free with a card of the discard pile.</summary>
+    public static Move Isis(int card, int wonder) => new(MoveKind.Isis, card, wonder);
+    /// <summary>"ra pyramids" (Ra): take one of the opponent's unbuilt Wonders.</summary>
+    public static Move Ra(int wonder) => new(MoveKind.Ra, -1, wonder);
+
     /// <summary>The Divinity a <see cref="MoveKind.Divinity"/> Move places or an <see cref="MoveKind.Activate"/> Move activates, or -1.</summary>
     public int Divinity => Kind is MoveKind.Divinity or MoveKind.Activate ? Card : -1;
     /// <summary>The Offering tokens an <see cref="MoveKind.Offer"/> Move spends (one bit per Offering index), or -1.</summary>
     public int Offerings => Kind == MoveKind.Offer ? Card : -1;
     /// <summary>The Pantheon space (0..5) a <see cref="MoveKind.Divinity"/> Move places on, or -1.</summary>
     public int Space => Kind == MoveKind.Divinity ? Wonder : -1;
+    /// <summary>The structure slot a <see cref="MoveKind.Zeus"/> Move empties, or -1 (the Age is in <see cref="Wonder"/>).</summary>
+    public int Slot => Kind == MoveKind.Zeus ? Card : -1;
 
-    /// <summary>The Progress token a <see cref="MoveKind.Token"/> or <see cref="MoveKind.Library"/> Move takes, or -1.</summary>
-    public int Token => Kind is MoveKind.Token or MoveKind.Library ? Card : -1;
+    /// <summary>The Progress token a <see cref="MoveKind.Token"/>, <see cref="MoveKind.Library"/> or <see cref="MoveKind.Enki"/> Move takes, or -1.</summary>
+    public int Token => Kind is MoveKind.Token or MoveKind.Library or MoveKind.Enki ? Card : -1;
 
     /// <summary>True for the Moves that answer a take-card decision: build, discard, or build a Wonder.</summary>
     public bool TakesCard => Kind is MoveKind.Build or MoveKind.Discard or MoveKind.Wonder;
@@ -120,6 +147,25 @@ public enum DecisionKind : byte
     /// which stays on its space until the payment.
     /// </summary>
     Offer,
+    /// <summary>Pantheon, Enki: keep one of the 2 Progress tokens on it (the other goes back to the box).</summary>
+    Enki,
+    /// <summary>Pantheon, Nisaba: put the Snake on one of the opponent's green cards. Never pushed when they have none.</summary>
+    Snake,
+    /// <summary>Pantheon, Baal: steal one of the opponent's brown or grey cards. Never pushed when they have none.</summary>
+    Steal,
+    /// <summary>Pantheon, Hades: build a card of the discard pile for free. Never pushed on an empty pile.</summary>
+    Hades,
+    /// <summary>Pantheon, Zeus: put any card of the structure, face up or face down, in the discard pile (by slot).</summary>
+    Zeus,
+    /// <summary>Pantheon, Anubis: unbuild a built Wonder of either player. Never pushed when none is built.</summary>
+    Anubis,
+    /// <summary>
+    /// Pantheon, Isis: build one of your Wonders for free with a card of the discard pile. Never pushed on an empty
+    /// pile or with no Wonder to build.
+    /// </summary>
+    Isis,
+    /// <summary>Pantheon, Ra: take one of the opponent's unbuilt Wonders. Never pushed when they have none.</summary>
+    Ra,
 }
 
 /// <summary>

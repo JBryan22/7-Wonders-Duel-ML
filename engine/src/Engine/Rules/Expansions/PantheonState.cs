@@ -48,6 +48,10 @@ public sealed class PantheonState : ExpansionState
     internal readonly ushort[] ActivatedBy = new ushort[2];
     /// <summary>Per player: Astarte's coins left (R7: spendable after the treasury, never lost, 1 VP each).</summary>
     internal readonly byte[] Astarte = new byte[2];
+    /// <summary>The opponent's green card under Nisaba's Snake (its symbol counts for Nisaba's activator too), or -1.</summary>
+    internal sbyte SnakeCard = -1;
+    /// <summary>The slot whose face-down card Zeus is discarding, until its <c>reveal discarded</c>; otherwise -1.</summary>
+    internal sbyte ZeusSlot = -1;
     internal SetupStep Awaiting;
 
     [Flags]
@@ -101,6 +105,12 @@ public sealed class PantheonState : ExpansionState
     public ushort Activated(int player) => ActivatedBy[player];
     /// <summary>Astarte's coins a player has left.</summary>
     public int AstarteCoins(int player) => Astarte[player];
+    /// <summary>The green card under Nisaba's Snake, or -1.</summary>
+    public int Snake => SnakeCard;
+    /// <summary>True while Zeus waits for the face-down card it discards to be named (<c>reveal discarded</c>).</summary>
+    public bool AwaitingZeusDiscard => ZeusSlot >= 0;
+    /// <summary>The slot Zeus is emptying while <see cref="AwaitingZeusDiscard"/>, otherwise -1.</summary>
+    public int ZeusTarget => ZeusSlot;
 
     public bool AwaitingMythologyTokens => (Awaiting & SetupStep.MythologyTokens) != 0;
     public bool AwaitingPantheon => (Awaiting & SetupStep.Pantheon) != 0;
@@ -138,6 +148,8 @@ public sealed class PantheonState : ExpansionState
         EnkiTokens = o.EnkiTokens;
         o.ActivatedBy.CopyTo(ActivatedBy, 0);
         o.Astarte.CopyTo(Astarte, 0);
+        SnakeCard = o.SnakeCard;
+        ZeusSlot = o.ZeusSlot;
         Awaiting = o.Awaiting;
     }
 
@@ -154,7 +166,8 @@ public sealed class PantheonState : ExpansionState
         && DivinitiesSeen == o.DivinitiesSeen
         && Draw.AsSpan().SequenceEqual(o.Draw)
         && EnkiTokens == o.EnkiTokens && Awaiting == o.Awaiting
-        && ActivatedBy.AsSpan().SequenceEqual(o.ActivatedBy) && Astarte.AsSpan().SequenceEqual(o.Astarte);
+        && ActivatedBy.AsSpan().SequenceEqual(o.ActivatedBy) && Astarte.AsSpan().SequenceEqual(o.Astarte)
+        && SnakeCard == o.SnakeCard && ZeusSlot == o.ZeusSlot;
 
     public override void Write(BinaryWriter w)
     {
@@ -173,6 +186,8 @@ public sealed class PantheonState : ExpansionState
         w.Write((byte)Awaiting);
         foreach (var a in ActivatedBy) w.Write(a);
         w.Write(Astarte);
+        w.Write(SnakeCard);
+        w.Write(ZeusSlot);
     }
 
     /// <summary>A few lines for <see cref="StatePrinter"/>.</summary>
@@ -205,6 +220,7 @@ public sealed class PantheonState : ExpansionState
         if (onSlots.Count > 0) lines.Add("Tokens on the structure: " + string.Join(' ', onSlots));
         if (HasDraw) lines.Add($"Drawn: {Slug(Draw[0])} {Slug(Draw[1])}");
         if (EnkiTokens != 0) lines.Add($"Enki's tokens: {ProgressTokens.Names(EnkiTokens)}");
+        if (SnakeCard >= 0) lines.Add($"Nisaba's Snake: {GameData.Card(SnakeCard).Id}");
         return string.Join('\n', lines) + '\n';
     }
 }
