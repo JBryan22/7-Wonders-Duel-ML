@@ -9,6 +9,13 @@ namespace SevenWondersDuel.Engine;
 /// Like the Great Library's draw, a placed face-down Divinity and a card put back on a deck are stored with their
 /// identity, because one player knows them (spec A4: the Observation hides what a player has not seen).
 /// </para>
+/// <para>
+/// A state that does not know them (an <see cref="Observation"/>, or a log kept with the opponent's private entries
+/// redacted, spec-pantheon P-A5) holds <see cref="Hidden"/> instead: a hidden draw, a face-down space showing only its
+/// Mythology (<see cref="HiddenSpace"/>), or an <see cref="Unknown"/> deck card whose audience bits still say who knows
+/// it. <see cref="SeenDivinities"/> is then what this state can name, so a deck's unseen cards are also the candidates
+/// for every hidden place of its Mythology; the <see cref="Determinizer"/> fills those places from them.
+/// </para>
 /// </summary>
 public sealed class PantheonState : ExpansionState
 {
@@ -20,6 +27,11 @@ public sealed class PantheonState : ExpansionState
     public const int EmptySpace = -1;
     /// <summary>A deck position whose card nobody has seen.</summary>
     public const int Unknown = -1;
+    /// <summary>
+    /// A Divinity this state does not know: a hidden draw entry, the Divinity of a redacted <c>divinity ?</c> or
+    /// <c>theater-order ?</c> Move, and (below it, see <see cref="HiddenSpace"/>) a hidden face-down space.
+    /// </summary>
+    public const int Hidden = -2;
     /// <summary>The Minerva pawn is not on the Military track.</summary>
     public const int NoMinerva = sbyte.MinValue;
 
@@ -42,7 +54,7 @@ public sealed class PantheonState : ExpansionState
     internal readonly byte[] DeckAudience = new byte[Mythologies * PantheonData.DeckSize];
     /// <summary>Divinities named by a Reveal so far, one bit per Divinity index: the rest of each deck is unseen.</summary>
     internal ushort DivinitiesSeen;
-    /// <summary>The 2 Divinities drawn for the pending <c>divinity</c> decision (top card first), or -1.</summary>
+    /// <summary>The 2 Divinities drawn for the pending <c>divinity</c> decision (top card first), or -1; <see cref="Hidden"/> when not known.</summary>
     internal readonly sbyte[] Draw = new sbyte[2];
     /// <summary>The 2 Progress tokens on Enki (from its Reveal until it is activated), one bit per token.</summary>
     internal ushort EnkiTokens;
@@ -95,9 +107,20 @@ public sealed class PantheonState : ExpansionState
     /// <summary>The Offering tokens a player holds, one bit per Offering index.</summary>
     public int OfferingTokens(int player) => HeldOfferings[player];
 
-    /// <summary>The Divinity (or Gate) on a Pantheon space (0..5), or <see cref="EmptySpace"/>.</summary>
+    /// <summary>
+    /// The Divinity (or Gate) on a Pantheon space (0..5), <see cref="EmptySpace"/>, or a face-down card this state does
+    /// not know (<see cref="HiddenSpace"/>, below <see cref="EmptySpace"/>).
+    /// </summary>
     public int Space(int space) => Spaces[space];
     public bool IsFaceDown(int space) => (FaceDown & 1 << space) != 0;
+    /// <summary>True for a face-down space whose Divinity this state does not know (only its Mythology).</summary>
+    public bool IsHidden(int space) => Spaces[space] <= Hidden;
+    /// <summary>The value of a hidden face-down space of Mythology <paramref name="m"/>: <see cref="Hidden"/> - m.</summary>
+    public static int HiddenSpace(Mythology m) => Hidden - (int)m;
+    /// <summary>The Mythology of the card on a non-empty space (public even while the card is face down); null for the Gate.</summary>
+    public Mythology? SpaceMythology(int space) => Spaces[space] <= Hidden
+        ? (Mythology)(Hidden - Spaces[space])
+        : PantheonData.Divinities[Spaces[space]].Mythology;
     /// <summary>Who placed the card on a space in Age I (meaningful for a placed Divinity).</summary>
     public int Placer(int space) => (PlacedByP2 & 1 << space) != 0 ? 1 : 0;
 
@@ -109,9 +132,11 @@ public sealed class PantheonState : ExpansionState
     /// <summary>The Divinities named by a Reveal so far, one bit per index.</summary>
     public ushort SeenDivinities => DivinitiesSeen;
 
-    /// <summary>True while a <c>divinity</c> decision has its 2 cards drawn.</summary>
-    public bool HasDraw => Draw[0] >= 0;
-    /// <summary>The drawn cards (top first) while <see cref="HasDraw"/>.</summary>
+    /// <summary>True while a <c>divinity</c> decision has its cards drawn (known or <see cref="DrawHidden"/>).</summary>
+    public bool HasDraw => Draw[0] != -1;
+    /// <summary>True while the pending draw is the opponent's and this state does not know it (each card <see cref="Hidden"/>).</summary>
+    public bool DrawHidden => Draw[0] == Hidden;
+    /// <summary>The drawn cards (top first) while <see cref="HasDraw"/>: a Divinity, <see cref="Hidden"/>, or -1 past a one-card draw.</summary>
     public int Drawn(int i) => Draw[i];
     public ushort Enki => EnkiTokens;
     /// <summary>The Divinities (and the Gate) a player has activated, one bit per Divinity index.</summary>
@@ -227,12 +252,15 @@ public sealed class PantheonState : ExpansionState
         static string Slug(int d) => PantheonData.Divinities[d].Id;
         var lines = new List<string>();
         var spaces = Enumerable.Range(0, PantheonData.SpaceCount).Select(i =>
-            $"{i + 1}:{(Spaces[i] < 0 ? "--" : IsFaceDown(i) ? $"{Slug(Spaces[i])}(face down, P{Placer(i) + 1})" : Slug(Spaces[i]))}");
+            $"{i + 1}:{(Spaces[i] == EmptySpace ? "--"
+                : IsHidden(i) ? $"?{PantheonData.MythologyDef(SpaceMythology(i)!.Value).Id}(face down, P{Placer(i) + 1})"
+                : IsFaceDown(i) ? $"{Slug(Spaces[i])}(face down, P{Placer(i) + 1})" : Slug(Spaces[i]))}");
         lines.Add("Pantheon: " + string.Join(' ', spaces));
         var decks = PantheonData.Mythologies.Select(m =>
         {
             var known = Enumerable.Range(0, DeckCount[(int)m.Mythology])
-                .Select(p => DeckCard(m.Mythology, p) is var c and >= 0 ? Slug(c) : "?");
+                .Select(p => DeckCard(m.Mythology, p) is var c and >= 0 ? Slug(c)
+                    : DeckKnownBy(m.Mythology, p) is var who and > 0 ? $"?(P{(who == 1 ? 1 : 2)} knows)" : "?");
             return $"{m.Id} [{string.Join(' ', known)}]";
         });
         lines.Add("Mythology decks (top first): " + string.Join(", ", decks));
@@ -249,7 +277,7 @@ public sealed class PantheonState : ExpansionState
         var onSlots = Enumerable.Range(0, GameState.SlotCount).Where(i => SlotTokens[i] != NoToken && age > 0)
             .Select(i => $"{GameData.Layout(age).SlotName(i)} {TokenSlug(SlotTokens[i])}").ToList();
         if (onSlots.Count > 0) lines.Add("Tokens on the structure: " + string.Join(' ', onSlots));
-        if (HasDraw) lines.Add($"Drawn: {string.Join(' ', Draw.Where(d => d >= 0).Select(d => Slug(d)))}");
+        if (HasDraw) lines.Add($"Drawn: {string.Join(' ', Draw.Where(d => d != -1).Select(d => d == Hidden ? "?" : Slug(d)))}");
         if (EnkiTokens != 0) lines.Add($"Enki's tokens: {ProgressTokens.Names(EnkiTokens)}");
         if (SnakeCard >= 0) lines.Add($"Nisaba's Snake: {GameData.Card(SnakeCard).Id}");
         if (MinervaSpace != NoMinerva) lines.Add($"Minerva: Military track space {MinervaSpace}");

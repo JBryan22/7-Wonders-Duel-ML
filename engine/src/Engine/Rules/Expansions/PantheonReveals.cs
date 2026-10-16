@@ -17,9 +17,19 @@ public sealed record MythologyTokensReveal((int Slot, Mythology Mythology)[] Tok
 /// ("reveal P1 divinities greek zeus hades"), top card first. Cards on top of the deck that are already known (a card
 /// put back by an earlier draw) are drawn first; the rest come from the deck's unseen cards. Private: only
 /// <see cref="Player"/> sees it (spec-pantheon P-A3). The <c>divinity</c> decision follows.
+/// <para>
+/// A <see cref="Redacted"/> draw ("reveal P2 divinities greek ? ?", every card <see cref="PantheonState.Hidden"/>) is
+/// how a log kept by the opponent records it (the Advisor, spec-pantheon P-A5): the placement that follows is then
+/// "P2 divinity ? 3".
+/// </para>
 /// </summary>
 public sealed record DivinityDrawReveal(int Player, Mythology Mythology, int[] Divinities) : Reveal
 {
+    /// <summary>The draw as logged by someone who did not see it: <paramref name="count"/> unknown cards (2, or 1 from a one-card deck).</summary>
+    public static DivinityDrawReveal Hidden(int player, Mythology mythology, int count) =>
+        new(player, mythology, Enumerable.Repeat(PantheonState.Hidden, count).ToArray());
+
+    public bool Redacted => Divinities.Length > 0 && Divinities.All(d => d == PantheonState.Hidden);
     public override int Audience => Player;
     public override string ToString() => MoveLog.Format(this);
 }
@@ -75,9 +85,18 @@ public sealed record GateReveal(int[] Divinities) : Reveal
 /// Pantheon, the Divine Theater ("reveal P1 theater greek zeus hades aphrodite"): every card of the chosen deck, top
 /// first. Private (R3): only <see cref="Player"/>, the Theater's owner, sees it; the opponent learns only the Divinity
 /// then activated. The <c>theater</c> decision follows.
+/// <para>
+/// A <see cref="Redacted"/> Reveal ("reveal P2 theater greek ? ? ?", every card <see cref="PantheonState.Hidden"/>) is
+/// how the opponent's log records it; their restack is then logged "P2 theater-order ?".
+/// </para>
 /// </summary>
 public sealed record TheaterReveal(int Player, Mythology Mythology, int[] Divinities) : Reveal
 {
+    /// <summary>The Reveal as logged by someone who did not see it: the deck's <paramref name="count"/> cards, unnamed.</summary>
+    public static TheaterReveal Hidden(int player, Mythology mythology, int count) =>
+        new(player, mythology, Enumerable.Repeat(PantheonState.Hidden, count).ToArray());
+
+    public bool Redacted => Divinities.Length > 0 && Divinities.All(d => d == PantheonState.Hidden);
     public override int Audience => Player;
     public override string ToString() => MoveLog.Format(this);
 }

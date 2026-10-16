@@ -105,6 +105,17 @@ public static class MoveLog
     static string TokenSlug(int token) => GameData.IsToken(token) ? GameData.Token(token).Id : $"#{token}";
     static string WonderSlug(int wonder) => GameData.IsWonder(wonder) ? GameData.Wonder(wonder).Id : $"#{wonder}";
 
+    /// <summary>
+    /// <paramref name="entry"/> as a log kept by <paramref name="viewer"/> records it: every private entry of the
+    /// opponent's redacted ("reveal P2 library ? ? ?", and Pantheon's, see <see cref="PantheonLog"/>), the rest unchanged.
+    /// Replaying a log redacted this way gives a state whose Observation for <paramref name="viewer"/> is the true one's.
+    /// </summary>
+    public static LogEntry AsSeenBy(LogEntry entry, int viewer) => entry switch
+    {
+        LibraryReveal { Redacted: false } l when l.Player != viewer => LibraryReveal.Hidden(l.Player),
+        _ => PantheonLog.AsSeenBy(entry, viewer),
+    };
+
     /// <summary>Parses a Move Log and replays it, checking every entry. Errors name the offending line.</summary>
     public static Game Parse(string text)
     {

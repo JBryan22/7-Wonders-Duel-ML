@@ -4,13 +4,23 @@
 
 **Blocked by:** 06
 
-**Status:** open
+**Status:** done
 
 Spec: `docs/spec-pantheon.md` (P-A5), on top of `docs/spec-v1.md`.
 
-- [ ] No-peeking test with different hidden Divinities and deck tops
-- [ ] Invariant: the Observation never holds private Pantheon knowledge before it is public
-- [ ] Determinized states are always legal and replayable
-- [ ] Base unchanged: determinism hashes, `FrozenGames/`, base 100k soak numbers, Encoding v1 and its manifest test (spec-pantheon P-A1)
+- [x] No-peeking test with different hidden Divinities and deck tops
+- [x] Invariant: the Observation never holds private Pantheon knowledge before it is public
+- [x] Determinized states are always legal and replayable
+- [x] Base unchanged: determinism hashes, `FrozenGames/`, base 100k soak numbers, Encoding v1 and its manifest test (spec-pantheon P-A1)
 
 ## Notes
+
+- **Representation (no new fields, so Pantheon bytes/hashes are unchanged):** a state that does not know something holds a sentinel. `PantheonState.Hidden` (-2) for a hidden draw entry and the Divinity of a redacted Move; `HiddenSpace(m)` = -2 - m for a hidden face-down space (`IsHidden`, `SpaceMythology`); a hidden deck card is `Unknown` but keeps its audience bits (`DeckKnownBy`). `HasDraw` is now true for a hidden draw too (`DrawHidden`). `SeenDivinities` in such a state = the Divinities it can name, so `UnseenIn(m)` is the candidate set for every hidden place of m. Real states never hold sentinels.
+- **Seam:** new `ExpansionModule.Hide(copy, player)` (called at the end of `GameState.Observe`) and `Determinize(world, rng)` (called by `Determinizer.Fill` after the Library fill; null module in base games, so base RNG draws are unchanged). `PantheonModule.Hide`: the opponent's draw, the opponent's face-down Divinities, every deck card the viewer is not in the audience of (R3: the Theater's unused cards and their order). `Determinize`: per Mythology, each hidden place gets a uniform unseen card without replacement; deck cards nobody has seen stay unknown (lazy Reveals).
+- **Advisor-mode redaction (Engine side):** `reveal P2 divinities greek ? ?` (`DivinityDrawReveal.Hidden`, `.Redacted`), `P2 divinity ? 4`, `reveal P2 theater greek ? ? ?` (one `?` per deck card, `TheaterReveal.Hidden`), `P2 theater-order ?`. Mixed `?`/names are refused. `MoveLog.AsSeenBy(entry, viewer)` (+ `PantheonLog.AsSeenBy`) redacts any entry for a viewer, the base Library draw included; the Advisor (ticket 12) can use it. In a hidden state: a hidden draw's only Moves are `divinity ? <space>`; the opponent's `theater <d>` may name any unseen card of the Mythology (it takes the first unknown deck position); `theater-order ?` is always legal and the only listed Move when a card is unknown; `reveal pantheon` accepts any unseen card of a hidden space's Mythology. Spec P-A5 updated with the exact forms.
+- **Soak:** Pantheon games now check, per decision and viewer with private Pantheon knowledge, that the Observation holds none of it (and nothing else changed, `SeenDivinities` = what it shows), that a Determinizer world looks the same to the viewer, has legal Moves and passes `CheckPantheon`; and after every entry, that each player's redacted log replayed gives exactly the true Observation. Sabotage check: disabling `Hide` fails the soak at once.
+- **Known limitation (accepted):** knowledge only history gives is forgotten. E.g. after your own Age I Divine Theater you know which card the opponent placed face down and which they then draw; once the draw is hidden, the two are exchangeable to the Determinizer. Rare (needs an Age I Theater on a Mythology the opponent already placed from, then their second token of it); never a leak, only a slightly weaker guess.
+- **Tests:** 460 Engine (9 new in `PantheonObservationTests`: hidden draw/placement/put-back, hidden draw's legal Moves, redacted log round trip and replay, Age II replay naming hidden spaces, Theater shows only the activated Divinity, `theater-order ?` and the Advisor's view before/after the restack, uniform fill over 3000 seeds, either restack order, sampled worlds legal/play out/replay over 60 random games), 107 Agents (2 new `PantheonNoPeekingTests`: PIMC and MCTS give identical results from two true states with different hidden Divinities/deck tops and the same Observation), 83 Advisor; Python 73 passed, 3 skipped.
+- **Base unchanged:** determinism hashes, `FrozenGames/`, Encoding v1 manifest, existing no-peeking tests pass untouched. Laptop base 100k soak 96,502 civilian (152 draws) / 3,395 / 103; messe,liberty 96,140 (135) / 3,715 / 145. Pantheon 100k soaks unchanged from 06 (none 96,472 (142) / 3,234 / 294; messe 96,509 (131) / 3,204 / 287; liberty 95,862 (118) / 3,741 / 397; messe,liberty 95,986 (115) / 3,646 / 368), all invariants hold; Pantheon soaks now take ~150-230 s per 100k on the laptop (the extra checks).
+- **For 08+:** agents get hidden states only through Observations; at their own decisions nothing they need is hidden. The Encoding (09) must encode hidden spaces (Mythology only), hidden draws and `DeckKnownBy` from the Observation, never the true state. The Advisor (12) should log the opponent's private lines via `MoveLog.AsSeenBy`.
+

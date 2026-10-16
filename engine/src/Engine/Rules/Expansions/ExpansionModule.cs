@@ -117,6 +117,18 @@ internal abstract class ExpansionModule
     public virtual void SpendExtraCoins(GameState s, int player, int amount) =>
         throw new InvalidOperationException("The expansion keeps no coins apart");
 
+    /// <summary>
+    /// <see cref="GameState.Observe"/>: hides from <paramref name="copy"/> (a copy of the state) what
+    /// <paramref name="player"/> has not seen of this expansion's private information.
+    /// </summary>
+    public virtual void Hide(GameState copy, int player) { }
+
+    /// <summary>
+    /// The <see cref="Determinizer"/>: fills uniformly, with <paramref name="rng"/>, what <see cref="Hide"/> (or a
+    /// redacted log) left unknown in <paramref name="world"/>, consistent with everything the state still shows.
+    /// </summary>
+    public virtual void Determinize(GameState world, Rng rng) { }
+
     /// <summary>Adds this expansion's VP to one player's points per <see cref="ScoreCategory"/>.</summary>
     public virtual void Score(GameState s, int player, Span<int> points) { }
 }

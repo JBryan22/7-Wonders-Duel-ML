@@ -14,6 +14,11 @@ namespace SevenWondersDuel.Engine;
 /// the Gate, and the Divine Theater Wonder (R3: the Gate's Reveal is public, the Theater's private to its owner, and
 /// so is the order it stacks the deck back in).
 /// </para>
+/// <para>
+/// Ticket 07 (P-A5): what each player may see (<see cref="Hide"/>), the Determinizer's fill (<see cref="Determinize"/>),
+/// and the rules for a state that does not know the opponent's private cards (an Observation, or the Advisor's log with
+/// "reveal P2 divinities greek ? ?", "P2 divinity ? 4", "reveal P2 theater greek ? ? ?", "P2 theater-order ?").
+/// </para>
 /// </summary>
 internal sealed class PantheonModule : ExpansionModule
 {
@@ -141,10 +146,24 @@ internal sealed class PantheonModule : ExpansionModule
             throw new InvalidOperationException($"P{decision.Player + 1} draws from the {PantheonData.MythologyDef(m).Id} deck");
         // The Gate or the Divine Theater may have thinned the deck in Age I: then the last card is drawn alone.
         var count = DrawCount(p, m);
+        var deck = (int)m * PantheonData.DeckSize;
+        if (r.Redacted)
+        {
+            // Logged by the opponent (spec-pantheon P-A5): the cards leave the deck unnamed. One this state knew (a
+            // card it put back) is now somewhere it cannot see, so it is unseen again: a candidate for every hidden place.
+            if (r.Divinities.Length != count)
+                throw new InvalidOperationException($"The {PantheonData.MythologyDef(m).Id} deck gives {count} card{(count == 1 ? "" : "s")}: '{string.Join(' ', Enumerable.Repeat("?", count))}'");
+            for (var i = 0; i < count; i++)
+            {
+                Unsee(p, p.DeckCards[deck + i]);
+                p.Draw[i] = PantheonState.Hidden;
+            }
+            RemoveTop(p, m, count);
+            return;
+        }
         if (r.Divinities.Length != count || r.Divinities.Distinct().Count() != count)
             throw new InvalidOperationException(count == 2 ? "A Mythology token draws 2 different Divinities"
                 : $"The {PantheonData.MythologyDef(m).Id} deck holds 1 card");
-        var deck = (int)m * PantheonData.DeckSize;
         for (var i = 0; i < count; i++)
         {
             var d = r.Divinities[i];
@@ -205,6 +224,15 @@ internal sealed class PantheonModule : ExpansionModule
         if (r.Player != player) throw new InvalidOperationException($"The Divine Theater is P{player + 1}'s, not P{r.Player + 1}'s");
         if (r.Mythology != m) throw new InvalidOperationException($"P{player + 1} looks through the {PantheonData.MythologyDef(m).Id} deck");
         var count = p.DeckCount[(int)m];
+        if (r.Redacted)
+        {
+            // Logged by the opponent (R3): the owner now knows every card of the deck; this state still names none it did not know.
+            if (r.Divinities.Length != count)
+                throw new InvalidOperationException($"The {PantheonData.MythologyDef(m).Id} deck holds {count} cards: '{string.Join(' ', Enumerable.Repeat("?", count))}'");
+            for (var i = 0; i < count; i++) p.DeckAudience[(int)m * PantheonData.DeckSize + i] |= (byte)(1 << player);
+            p.TheaterPending = -1;
+            return;
+        }
         if (r.Divinities.Length != count || r.Divinities.Distinct().Count() != count)
             throw new InvalidOperationException($"The {PantheonData.MythologyDef(m).Id} deck holds {count} different cards");
         var unseen = UnseenIn(p, m);
@@ -243,15 +271,26 @@ internal sealed class PantheonModule : ExpansionModule
         var p = P(s);
         if (!p.AwaitingPantheon) throw new InvalidOperationException("The Pantheon is revealed once, at Age II setup");
         var named = 0;
+        var seen = p.DivinitiesSeen;
         foreach (var (space, d) in r.Divinities)
         {
             if (space is < 0 or >= PantheonData.SpaceCount || !p.IsFaceDown(space) || (named & 1 << space) != 0)
                 throw new InvalidOperationException($"Pantheon space {space + 1} holds no face-down card to reveal");
-            if (d != p.Spaces[space])
+            if (p.IsHidden(space))
+            {
+                // A face-down card this state never saw (the opponent's, in a redacted log): any unseen card of its Mythology.
+                var m = p.SpaceMythology(space)!.Value;
+                if (!IsDivinity(d) || (DeckOf[(int)m] & ~seen & 1 << d) == 0)
+                    throw new InvalidOperationException($"{DivinityId(d)} is not an unseen {PantheonData.MythologyDef(m).Id} Divinity");
+                seen |= (ushort)(1 << d);
+            }
+            else if (d != p.Spaces[space])
                 throw new InvalidOperationException($"Pantheon space {space + 1} holds {PantheonData.Divinities[p.Spaces[space]].Id}");
             named |= 1 << space;
         }
         if (named != p.FaceDown) throw new InvalidOperationException("The Pantheon Reveal names every face-down card");
+        foreach (var (space, d) in r.Divinities) p.Spaces[space] = (sbyte)d;
+        p.DivinitiesSeen = seen;
         p.FaceDown = 0;
         p.Awaiting &= ~PantheonState.SetupStep.Pantheon;
         if (Array.IndexOf(p.Spaces, (sbyte)Enki) >= 0) p.Awaiting |= PantheonState.SetupStep.Enki;
@@ -413,6 +452,82 @@ internal sealed class PantheonModule : ExpansionModule
 
     static string SlotNames(int age, int[] slots) => string.Join(' ', slots.Select(GameData.Layout(age).SlotName));
 
+    // ---------------------------------------------------------------- hidden information (spec-pantheon P-A5)
+
+    /// <summary>A Divinity this state can no longer name: an unseen card again, a candidate for every hidden place of its Mythology.</summary>
+    static void Unsee(PantheonState p, int divinity)
+    {
+        if (divinity >= 0) p.DivinitiesSeen &= (ushort)~(1 << divinity);
+    }
+
+    /// <summary>
+    /// The Observation hides what <paramref name="player"/> has not seen (R3): the opponent's pending draw, the
+    /// Divinities the opponent placed face down (their Mythology and space stay public), and every deck card the
+    /// player is not in the audience of (a card the opponent put back, the Divine Theater's unused cards and their
+    /// order). Who knows each deck card stays public. Each hidden card is unseen again, so a deck's unseen cards are
+    /// exactly what can fill its Mythology's hidden places.
+    /// </summary>
+    public override void Hide(GameState copy, int player)
+    {
+        var p = P(copy);
+        var opponent = 1 - player;
+        if (p.HasDraw && !p.DrawHidden && copy.Pending(0).Player == opponent)
+            for (var i = 0; i < 2; i++)
+                if (p.Draw[i] >= 0)
+                {
+                    Unsee(p, p.Draw[i]);
+                    p.Draw[i] = PantheonState.Hidden;
+                }
+        for (var space = 0; space < PantheonData.SpaceCount; space++)
+            if (p.IsFaceDown(space) && p.Placer(space) == opponent && p.Spaces[space] >= 0)
+            {
+                Unsee(p, p.Spaces[space]);
+                p.Spaces[space] = (sbyte)PantheonState.HiddenSpace(PantheonData.Divinities[p.Spaces[space]].Mythology!.Value);
+            }
+        for (var at = 0; at < p.DeckCards.Length; at++)
+            if (p.DeckCards[at] >= 0 && (p.DeckAudience[at] & 1 << player) == 0)
+            {
+                Unsee(p, p.DeckCards[at]);
+                p.DeckCards[at] = PantheonState.Unknown;
+            }
+    }
+
+    /// <summary>
+    /// Fills every hidden place (a hidden face-down space, a hidden draw, a deck card someone knows but this state
+    /// does not) with a uniform unseen card of its Mythology, without replacement. Deck cards nobody has seen stay
+    /// unknown: their Reveals draw from what is left, so the result is the same as dealing every unknown up front.
+    /// </summary>
+    public override void Determinize(GameState world, Rng rng)
+    {
+        var p = P(world);
+        for (var m = 0; m < Mythologies; m++)
+        {
+            var unseen = UnseenIn(p, (Mythology)m);
+            var hidden = (sbyte)PantheonState.HiddenSpace((Mythology)m);
+            for (var space = 0; space < PantheonData.SpaceCount; space++)
+                if (p.Spaces[space] == hidden) p.Spaces[space] = Pick(p, ref unseen, rng);
+            if (p.DrawHidden && world.Pending(0).Wonder == m)
+                for (var i = 0; i < 2; i++)
+                    if (p.Draw[i] == PantheonState.Hidden) p.Draw[i] = Pick(p, ref unseen, rng);
+            for (var at = m * PantheonData.DeckSize; at < m * PantheonData.DeckSize + p.DeckCount[m]; at++)
+                if (p.DeckCards[at] == PantheonState.Unknown && p.DeckAudience[at] != 0) p.DeckCards[at] = Pick(p, ref unseen, rng);
+        }
+    }
+
+    /// <summary>A uniform card of <paramref name="unseen"/>, taken out of it and marked seen.</summary>
+    static sbyte Pick(PantheonState p, ref ushort unseen, Rng rng)
+    {
+        var n = System.Numerics.BitOperations.PopCount((uint)unseen);
+        if (n == 0) throw new InvalidOperationException("A hidden Divinity has no unseen card of its Mythology left to be");
+        var k = rng.Next(n);
+        var bits = (uint)unseen;
+        for (; k > 0; k--) bits &= bits - 1;
+        var d = System.Numerics.BitOperations.TrailingZeroCount(bits);
+        unseen &= (ushort)~(1 << d);
+        p.DivinitiesSeen |= (ushort)(1 << d);
+        return (sbyte)d;
+    }
+
     // ---------------------------------------------------------------- decisions
 
     public override int LegalMoves(GameState s, Span<Move> buffer)
@@ -422,6 +537,13 @@ internal sealed class PantheonModule : ExpansionModule
         if (s.Pending(0).Kind != DecisionKind.PlaceDivinity) return -1;
         var p = P(s);
         var n = 0;
+        // An opponent's draw this state does not know: only the space can be told ("divinity ? 3").
+        if (p.DrawHidden)
+        {
+            for (var space = 0; space < PantheonData.SpaceCount; space++)
+                if (p.Spaces[space] == PantheonState.EmptySpace) buffer[n++] = Move.PlaceDivinity(PantheonState.Hidden, space);
+            return n;
+        }
         for (var i = 0; i < 2 && p.Draw[i] >= 0; i++)
             for (var space = 0; space < PantheonData.SpaceCount; space++)
                 if (p.Spaces[space] == PantheonState.EmptySpace) buffer[n++] = Move.PlaceDivinity(p.Draw[i], space);
@@ -460,9 +582,11 @@ internal sealed class PantheonModule : ExpansionModule
         }
         var p = P(s);
         why = move.Kind != MoveKind.Divinity ? "the decision is which drawn Divinity to place, and on which empty Pantheon space"
+            : p.DrawHidden ? (move.Divinity != PantheonState.Hidden ? "the draw is hidden: the placed Divinity is '?'" : null)
             : move.Divinity < 0 || move.Divinity != p.Draw[0] && move.Divinity != p.Draw[1]
                 ? $"{(move.Divinity >= 0 && move.Divinity < PantheonData.Divinities.Length ? PantheonData.Divinities[move.Divinity].Id : "?")} was not drawn"
-            : move.Space is < 0 or >= PantheonData.SpaceCount ? $"there is no Pantheon space {move.Space + 1}"
+            : null;
+        why ??= move.Space is < 0 or >= PantheonData.SpaceCount ? $"there is no Pantheon space {move.Space + 1}"
             : p.Spaces[move.Space] != PantheonState.EmptySpace ? $"Pantheon space {move.Space + 1} is taken"
             : null;
         return true;
@@ -492,11 +616,22 @@ internal sealed class PantheonModule : ExpansionModule
         // Placed face down; the other card goes back on top of its deck, known only to this player. The take-card
         // decision of the next turn is usually queued behind (the token was taken as the turn ended).
         var p = P(s);
-        var other = p.Draw[0] == move.Divinity ? p.Draw[1] : p.Draw[0];
-        p.Spaces[move.Space] = (sbyte)move.Divinity;
+        var m = (Mythology)decision.Wonder;
+        if (p.DrawHidden)
+        {
+            // The opponent's placement as this state sees it: a face-down card of the Mythology, and an unknown card
+            // back on top that only they know.
+            p.Spaces[move.Space] = (sbyte)PantheonState.HiddenSpace(m);
+            if (p.Draw[1] == PantheonState.Hidden) PutOnTop(p, m, PantheonState.Unknown, (byte)(1 << decision.Player));
+        }
+        else
+        {
+            var other = p.Draw[0] == move.Divinity ? p.Draw[1] : p.Draw[0];
+            p.Spaces[move.Space] = (sbyte)move.Divinity;
+            if (other >= 0) PutOnTop(p, m, other, (byte)(1 << decision.Player));
+        }
         p.FaceDown |= (byte)(1 << move.Space);
         if (decision.Player == 1) p.PlacedByP2 |= (byte)(1 << move.Space);
-        if (other >= 0) PutOnTop(p, (Mythology)decision.Wonder, other, (byte)(1 << decision.Player));
         p.Draw[0] = p.Draw[1] = -1;
         // A token Zeus took (in Age I, through the Divine Theater) is placed mid-turn: the turn then ends.
         s.FinishDecision();
@@ -692,11 +827,16 @@ internal sealed class PantheonModule : ExpansionModule
                     if (P(s).DeckCount[m] > 0) buffer[n++] = Move.TheaterDeck((Mythology)m);
                 break;
             case DecisionKind.Theater:
-                foreach (var d in DeckCards(P(s), (Mythology)decision.Wonder)) buffer[n++] = Move.Theater(d);
+                foreach (var d in TheaterChoices(P(s), (Mythology)decision.Wonder)) buffer[n++] = Move.Theater(d);
                 break;
             case DecisionKind.TheaterOrder:
-                foreach (var d in DeckCards(P(s), PantheonData.Divinities[decision.Wonder].Mythology!.Value)) buffer[n++] = Move.TheaterOrder(d);
+            {
+                // The opponent's restack, as a state that does not know both cards sees it: "theater-order ?".
+                var m = PantheonData.Divinities[decision.Wonder].Mythology!.Value;
+                if (DeckCards(P(s), m).Any(d => d < 0)) buffer[n++] = Move.TheaterOrder(PantheonState.Hidden);
+                else foreach (var d in DeckCards(P(s), m)) buffer[n++] = Move.TheaterOrder(d);
                 break;
+            }
             case DecisionKind.Minerva:
                 for (var space = -GameState.CapitalDistance; space <= GameState.CapitalDistance; space++) buffer[n++] = Move.Minerva(space);
                 break;
@@ -776,11 +916,17 @@ internal sealed class PantheonModule : ExpansionModule
                 return move.Card is >= 0 and < Mythologies && P(s).DeckCount[move.Card] > 0 ? null
                     : move.Card is >= 0 and < Mythologies ? $"the {PantheonData.Mythologies[move.Card].Id} deck is empty" : "unknown Mythology";
             case MoveKind.Theater:
-                return DeckCards(P(s), (Mythology)decision.Wonder).Contains(move.Divinity) ? null
+                return IsDivinity(move.Divinity) && TheaterChoices(P(s), (Mythology)decision.Wonder).Contains(move.Divinity) ? null
                     : $"{DivinityId(move.Divinity)} is not in the {PantheonData.Mythologies[decision.Wonder].Id} deck";
             case MoveKind.TheaterOrder:
-                return DeckCards(P(s), PantheonData.Divinities[decision.Wonder].Mythology!.Value).Contains(move.Divinity) ? null
+            {
+                // A redacted restack ("theater-order ?") is always allowed: it is how the opponent's private Move is logged.
+                if (move.Divinity == PantheonState.Hidden) return null;
+                var cards = DeckCards(P(s), PantheonData.Divinities[decision.Wonder].Mythology!.Value).ToArray();
+                return IsDivinity(move.Divinity) && cards.Contains(move.Divinity) ? null
+                    : cards.Any(d => d < 0) ? "this state does not know the unused cards: 'theater-order ?'"
                     : $"{DivinityId(move.Divinity)} is not an unused card of the deck";
+            }
             case MoveKind.Minerva:
                 return Math.Abs(move.MilitarySpace) <= GameState.CapitalDistance ? null
                     : $"the Military track runs from -{GameState.CapitalDistance} to {GameState.CapitalDistance}";
@@ -793,10 +939,28 @@ internal sealed class PantheonModule : ExpansionModule
     static bool IsDivinity(int d) => d >= 0 && d < PantheonData.Divinities.Length;
     static string DivinityId(int d) => IsDivinity(d) ? PantheonData.Divinities[d].Id : "?";
 
-    /// <summary>A deck's cards, top first (all known: the Divine Theater has just revealed it).</summary>
+    /// <summary>
+    /// A deck's cards, top first. All known after the Divine Theater's Reveal, unless this state is the opponent's view
+    /// (an Observation, a redacted log): then a card only the owner knows is <see cref="PantheonState.Unknown"/>.
+    /// </summary>
     static IEnumerable<int> DeckCards(PantheonState p, Mythology m)
     {
         for (var i = 0; i < p.DeckCount[(int)m]; i++) yield return p.DeckCards[(int)m * PantheonData.DeckSize + i];
+    }
+
+    /// <summary>
+    /// What the Divine Theater may activate from a deck: its cards, or, as far as a state that did not see the private
+    /// Reveal can tell, its known cards and every unseen card of the Mythology.
+    /// </summary>
+    static IEnumerable<int> TheaterChoices(PantheonState p, Mythology m)
+    {
+        var hidden = false;
+        foreach (var d in DeckCards(p, m))
+            if (d >= 0) yield return d;
+            else hidden = true;
+        if (hidden)
+            foreach (var d in new Bits(UnseenIn(p, m)))
+                yield return d;
     }
 
     /// <summary>Applies a Divinity's decision; the turn then ends unless something more was queued (a token pick, a Wonder's power).</summary>
@@ -865,7 +1029,16 @@ internal sealed class PantheonModule : ExpansionModule
                 // Public: the opponent learns this Divinity, nothing else (R3). With 2 unused cards, their order is a
                 // private choice made before the effect.
                 var m = (Mythology)decision.Wonder;
-                RemoveFromDeck(p, m, move.Divinity);
+                var deck = (int)m * PantheonData.DeckSize;
+                var at = Array.IndexOf(p.DeckCards, (sbyte)move.Divinity, deck, p.DeckCount[(int)m]) - deck;
+                if (at < 0)
+                {
+                    // The opponent's Theater in a state that did not see the deck: the card was one of its unknown cards
+                    // (each known to the owner alone, so which one does not matter). It is named now.
+                    at = Array.IndexOf(p.DeckCards, (sbyte)PantheonState.Unknown, deck, p.DeckCount[(int)m]) - deck;
+                    p.DivinitiesSeen |= (ushort)(1 << move.Divinity);
+                }
+                RemoveFromDeck(p, m, at);
                 if (p.DeckCount[(int)m] == 2)
                 {
                     s.PushDecision(new PendingDecision(DecisionKind.TheaterOrder, player, move.Divinity));
@@ -879,7 +1052,16 @@ internal sealed class PantheonModule : ExpansionModule
                 // The chosen card goes on top; the order is known to the Theater's owner alone.
                 var m = PantheonData.Divinities[decision.Wonder].Mythology!.Value;
                 var at = (int)m * PantheonData.DeckSize;
-                if (p.DeckCards[at] != move.Divinity) (p.DeckCards[at], p.DeckCards[at + 1]) = (p.DeckCards[at + 1], p.DeckCards[at]);
+                if (move.Divinity == PantheonState.Hidden)
+                {
+                    // Redacted: this state no longer knows which card is where (even one it knew).
+                    for (var i = at; i < at + 2; i++)
+                    {
+                        Unsee(p, p.DeckCards[i]);
+                        p.DeckCards[i] = PantheonState.Unknown;
+                    }
+                }
+                else if (p.DeckCards[at] != move.Divinity) (p.DeckCards[at], p.DeckCards[at + 1]) = (p.DeckCards[at + 1], p.DeckCards[at]);
                 p.DeckAudience[at] = p.DeckAudience[at + 1] = (byte)(1 << player);
                 ApplyEffect(s, player, decision.Wonder);
                 break;
@@ -904,12 +1086,11 @@ internal sealed class PantheonModule : ExpansionModule
         s.FinishDecision();
     }
 
-    /// <summary>Takes a known card out of a deck, wherever it is (the Divine Theater's choice).</summary>
-    static void RemoveFromDeck(PantheonState p, Mythology m, int divinity)
+    /// <summary>Takes the card at a deck position (0 = top) out of the deck (the Divine Theater's choice).</summary>
+    static void RemoveFromDeck(PantheonState p, Mythology m, int position)
     {
         var deck = (int)m * PantheonData.DeckSize;
-        var i = Array.IndexOf(p.DeckCards, (sbyte)divinity, deck, p.DeckCount[(int)m]) - deck;
-        for (; i < PantheonData.DeckSize - 1; i++)
+        for (var i = position; i < PantheonData.DeckSize - 1; i++)
         {
             p.DeckCards[deck + i] = p.DeckCards[deck + i + 1];
             p.DeckAudience[deck + i] = p.DeckAudience[deck + i + 1];

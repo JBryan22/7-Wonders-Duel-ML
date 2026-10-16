@@ -1205,6 +1205,8 @@ public sealed class GameState
     /// audience excludes that player hidden. In the base game that is only the opponent's pending Great Library draw,
     /// which becomes <see cref="LibraryDrawHidden"/>. Everything else the Game State holds is public, because hidden
     /// identities are never stored (ADR 0002): unknown cards, unused tokens and unseen Wonders appear only as pools.
+    /// An expansion hides its own private information too (Pantheon: the opponent's draws, face-down Divinities and
+    /// the deck cards only they know, spec-pantheon P-A5).
     /// </summary>
     public Observation Observe(int player)
     {
@@ -1215,6 +1217,7 @@ public sealed class GameState
             copy._libraryDraw = 0;
             copy._libraryDrawHidden = true;
         }
+        copy._module?.Hide(copy, player);
         return new Observation(copy, player);
     }
 

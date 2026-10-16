@@ -19,7 +19,8 @@ public sealed record SoakReport(int Games, int Civilian, int Military, int Scien
 /// The random-play invariants (spec A11.3), checked after every log entry of seeded random games: coins never
 /// negative; every game ends; a legal Move exists, and each one is legal, whenever a decision is pending; replaying the
 /// written Move Log gives an identical Game State and the same text; a copied state played to the end never affects the
-/// original; the Observation never holds the opponent's private Reveal (and otherwise equals the state). Plus the
+/// original; the Observation never holds the opponent's private Reveal (and otherwise equals the state; with Pantheon,
+/// worlds sampled from it are legal and look the same, and each player's redacted log gives the same view). Plus the
 /// bookkeeping the rules imply: the pawn stays on the track, looted military tokens never return, Progress tokens are
 /// owned at most once, cached production matches the city, and every card taken is in a city, the discard pile or
 /// under a Wonder. Seeds alternate between the two start-choice rules; the promo Wonders are switched on per run.
@@ -75,6 +76,11 @@ public static class Soak
 
         var game = new Game(rules);
         var s = game.State;
+        // Pantheon (spec-pantheon P-A5, P-A10): each player's own log, with the opponent's private entries redacted as
+        // the Advisor keeps it, and a Determinizer for the worlds sampled from each Observation.
+        var withPantheon = rules.Expansions == Expansions.Pantheon;
+        Game[]? views = withPantheon ? [new Game(rules), new Game(rules)] : null;
+        var determinizer = withPantheon ? new Determinizer(seed) : null;
         Span<Move> moves = stackalloc Move[GameState.MaxMoves];
         Span<Move> observed = stackalloc Move[GameState.MaxMoves];
         var militaryTokens = s.MilitaryTokensLeft;
@@ -97,15 +103,24 @@ public static class Soak
                 for (var p = 0; p < 2; p++)
                 {
                     var o = s.Observe(p);
+                    var pantheonPrivate = s.Pantheon is { } sp && HasPrivatePantheon(s, sp, p);
                     if (s.LibraryDraw != 0 && p != player)
                         Check(o.State.LibraryDraw == 0 && o.State.LibraryDrawHidden, "an Observation holds the opponent's Great Library draw");
-                    else
+                    else if (!pantheonPrivate)
                         Check(o.State.SameAs(s), "an Observation differs from the state with nothing private to hide");
                     if (p == player)
                         Check(o.LegalMoves(observed) == n && observed[..n].SequenceEqual(moves[..n]), "the Observation's legal Moves differ");
+                    if (pantheonPrivate) CheckPantheonObservation(s, o, determinizer!);
                 }
                 game.Apply(agents[player].ChooseMove(s.Observe(player)));
             }
+            if (views is not null)
+                for (var v = 0; v < 2; v++)
+                {
+                    views[v].Apply(MoveLog.AsSeenBy(game.Log[^1], v));
+                    Check(views[v].State.Observe(v).SameAs(s.Observe(v)),
+                        $"P{v + 1}'s redacted log gives a different Observation after '{MoveLog.Format(views[v].Log[^1])}'");
+                }
 
             for (var p = 0; p < 2; p++)
             {
@@ -159,7 +174,7 @@ public static class Soak
     /// Age II, once; the 5 Mythology tokens and 3 Offering tokens are on the structure or held by one player (every
     /// Mythology token held once Age I is over; spent Offering tokens leave the game); face-down cards only until the
     /// Age II `reveal pantheon`; Astarte's coins within 0..7; Enki's tokens owned by nobody; Minerva on the track; the
-    /// Snake on a green card in a city. (The Observation invariant for Pantheon's private knowledge is ticket 07's.)
+    /// Snake on a green card in a city. (The Observation invariant is <see cref="CheckPantheonObservation"/>.)
     /// </summary>
     static void CheckPantheon(GameState s, PantheonState p)
     {
@@ -228,6 +243,77 @@ public static class Soak
         if (p.Snake >= 0)
             Check(GameData.Card(p.Snake).Color == CardColor.Green && (s.City(0) | s.City(1)).Contains(p.Snake),
                 "the Snake is not on a green card in a city");
+    }
+
+    /// <summary>True if the state holds Pantheon knowledge <paramref name="viewer"/> does not have.</summary>
+    static bool HasPrivatePantheon(GameState s, PantheonState p, int viewer)
+    {
+        if (p.HasDraw && s.Pending(0).Player != viewer) return true;
+        for (var i = 0; i < PantheonData.SpaceCount; i++)
+            if (p.IsFaceDown(i) && p.Placer(i) != viewer) return true;
+        foreach (var m in PantheonData.Mythologies)
+            for (var pos = 0; pos < p.DeckSize(m.Mythology); pos++)
+                if (p.DeckCard(m.Mythology, pos) >= 0 && (p.DeckKnownBy(m.Mythology, pos) & 1 << viewer) == 0) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The Pantheon Observation invariant (spec-pantheon P-A10): the Observation never holds the opponent's draw, the
+    /// Divinities they placed face down, or a deck card the viewer is not in the audience of; everything else about the
+    /// Pantheon is as in the state, and the Divinities it names are exactly those it shows. A world sampled from it is a
+    /// legal state (the bookkeeping holds, a decision has legal Moves) that the viewer cannot tell from the truth.
+    /// </summary>
+    static void CheckPantheonObservation(GameState s, Observation o, Determinizer determinizer)
+    {
+        var p = s.Pantheon!;
+        var op = o.State.Pantheon!;
+        var viewer = o.Player;
+        ushort shown = 0;
+        void Show(int d) => shown |= (ushort)(1 << d);
+        for (var i = 0; i < PantheonData.SpaceCount; i++)
+        {
+            Check(op.IsFaceDown(i) == p.IsFaceDown(i) && op.Placer(i) == p.Placer(i), "an Observation moves a Pantheon card");
+            if (p.IsFaceDown(i) && p.Placer(i) != viewer)
+                Check(op.IsHidden(i) && op.SpaceMythology(i) == p.SpaceMythology(i), "an Observation holds the opponent's face-down Divinity");
+            else
+            {
+                Check(op.Space(i) == p.Space(i), "an Observation changes a Pantheon space the viewer sees");
+                if (p.Space(i) >= 0) Show(p.Space(i));
+            }
+        }
+        if (p.HasDraw)
+        {
+            var theirs = s.Pending(0).Player != viewer;
+            for (var i = 0; i < 2; i++)
+            {
+                Check(op.Drawn(i) == (theirs && p.Drawn(i) >= 0 ? PantheonState.Hidden : p.Drawn(i)),
+                    theirs ? "an Observation holds the opponent's draw" : "an Observation changes the viewer's own draw");
+                if (!theirs && p.Drawn(i) >= 0) Show(p.Drawn(i));
+            }
+        }
+        else Check(!op.HasDraw, "an Observation has a draw the state does not");
+        foreach (var m in PantheonData.Mythologies)
+        {
+            Check(op.DeckSize(m.Mythology) == p.DeckSize(m.Mythology), "an Observation changes a deck's size");
+            for (var pos = 0; pos < PantheonData.DeckSize; pos++)
+            {
+                var d = p.DeckCard(m.Mythology, pos);
+                var known = d >= 0 && (p.DeckKnownBy(m.Mythology, pos) & 1 << viewer) != 0;
+                Check(op.DeckKnownBy(m.Mythology, pos) == p.DeckKnownBy(m.Mythology, pos), "an Observation changes who knows a deck card");
+                Check(op.DeckCard(m.Mythology, pos) == (known ? d : PantheonState.Unknown),
+                    known ? "an Observation loses a deck card the viewer knows" : "an Observation holds a deck card only the opponent knows");
+                if (known) Show(d);
+            }
+        }
+        Show(PantheonData.Gate);
+        var activated = p.Activated(0) | p.Activated(1);
+        if (s.Step == StepKind.Decision && s.Pending(0).Kind == DecisionKind.TheaterOrder) activated |= 1 << s.Pending(0).Wonder;
+        Check(op.SeenDivinities == (p.SeenDivinities & (shown | activated)), "an Observation names a Divinity it does not show");
+
+        var world = determinizer.Sample(o);
+        Check(world.Observe(viewer).SameAs(o), "a sampled world looks different to the viewer");
+        Check(world.Step != StepKind.Decision || world.LegalMoves().Count > 0, "a sampled world has no legal Move");
+        CheckPantheon(world, world.Pantheon!);
     }
 
     /// <summary>A copy played to the end with its own Reveals and Moves leaves the original byte-identical.</summary>

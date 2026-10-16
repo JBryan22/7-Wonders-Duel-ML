@@ -9,6 +9,8 @@ namespace SevenWondersDuel.Engine;
 /// reveal myth-tokens 1.0 greek 1.2 roman 3.0 egyptian 3.2 phoenician 3.4 greek   (after "reveal age1 ...")
 /// reveal P1 divinities greek zeus hades     (private to P1: top card first)
 /// P1 divinity zeus 3                        (space 1..6, counted from P1's capital end)
+/// reveal P2 divinities greek ? ?            (redacted: the opponent's draw, in a log kept by P1, e.g. the Advisor's)
+/// P2 divinity ? 4                           (redacted: placed face down, only the space is seen)
 /// reveal pantheon 1 aphrodite 2 baal 3 enki 5 isis 6 mars                        (Age II, after "reveal age2 ...")
 /// reveal offerings 1.0 offering-3 1.2 offering-2 1.4 offering-4
 /// reveal enki law economy                   (only if Enki is in the Pantheon)
@@ -30,6 +32,8 @@ namespace SevenWondersDuel.Engine;
 /// reveal P1 theater greek zeus hades        (private to P1: the whole deck, top first)
 /// P1 theater zeus                           (the card activated; public)
 /// P1 theater-order hades                    (private to P1: the unused card put on top)
+/// reveal P2 theater greek ? ? ?             (redacted: the opponent's Divine Theater, one '?' per card of the deck)
+/// P2 theater-order ?                        (redacted: the opponent's restack)
 /// P1 minerva -3                             (Military track space -9..9, positive toward P2's capital)
 /// P1 neptune-discard P1:5                   (Military tokens by the side they lie on and their coins)
 /// P1 neptune-apply P2:2
@@ -107,22 +111,20 @@ internal static class PantheonLog
             if (t.Length > 2 && t[2] == "theater" && t[1] is "P1" or "P2")
             {
                 if (t.Length < 5) throw new FormatException("Expected 'reveal P<n> theater <mythology> <divinity> ...'");
-                return new TheaterReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]),
-                    t.Skip(4).Select(PantheonData.DivinityIndex).ToArray());
+                return new TheaterReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]), Divinities(t, 4, "Divine Theater Reveal"));
             }
             if (t.Length > 2 && t[2] == "divinities" && t[1] is "P1" or "P2")
             {
                 if (t.Length is not (5 or 6))
                     throw new FormatException("Expected 'reveal P<n> divinities <mythology> <divinity> <divinity>' (one divinity when the deck holds one)");
-                return new DivinityDrawReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]),
-                    t.Skip(4).Select(PantheonData.DivinityIndex).ToArray());
+                return new DivinityDrawReveal(t[1] == "P1" ? 0 : 1, PantheonData.MythologyOf(t[3]), Divinities(t, 4, "Divinity draw"));
             }
             return null;
         }
         if (t.Length > 1 && t[1] == "divinity" && t[0] is "P1" or "P2")
         {
             if (t.Length != 4) throw new FormatException("Expected 'P<n> divinity <divinity> <space>'");
-            return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.PlaceDivinity(PantheonData.DivinityIndex(t[2]), Space(t[3])));
+            return new MoveEntry(t[0] == "P1" ? 0 : 1, Move.PlaceDivinity(DivinityOrHidden(t[2]), Space(t[3])));
         }
         if (t.Length > 1 && t[1] == "activate" && t[0] is "P1" or "P2")
         {
@@ -143,7 +145,7 @@ internal static class PantheonLog
                 "gate" => Move.Gate(PantheonData.DivinityIndex(t[2])),
                 "theater-deck" => Move.TheaterDeck(PantheonData.MythologyOf(t[2])),
                 "theater" => Move.Theater(PantheonData.DivinityIndex(t[2])),
-                "theater-order" => Move.TheaterOrder(PantheonData.DivinityIndex(t[2])),
+                "theater-order" => Move.TheaterOrder(DivinityOrHidden(t[2])),
                 "minerva" => Move.Minerva(int.TryParse(t[2], out var space) && Math.Abs(space) <= GameState.CapitalDistance ? space
                     : throw new FormatException($"'{t[2]}' is not a Military track space (-{GameState.CapitalDistance} to {GameState.CapitalDistance})")),
                 "neptune-discard" => Move.NeptuneDiscard(ParseMilitaryToken(t[2])),
@@ -172,6 +174,33 @@ internal static class PantheonLog
         }
         return null;
     }
+
+    /// <summary>The Divinities of a private Reveal from <paramref name="from"/> on: all named, or all '?' (redacted).</summary>
+    static int[] Divinities(string[] t, int from, string what)
+    {
+        var named = t.Skip(from).ToArray();
+        if (named.Contains("?") && !named.All(x => x == "?"))
+            throw new FormatException($"A redacted {what} hides every card: one '?' per card");
+        return named.Select(DivinityOrHidden).ToArray();
+    }
+
+    /// <summary>A Divinity slug, or '?' for one the log's keeper did not see (<see cref="PantheonState.Hidden"/>).</summary>
+    static int DivinityOrHidden(string text) => text == "?" ? PantheonState.Hidden : PantheonData.DivinityIndex(text);
+
+    /// <summary>
+    /// <paramref name="entry"/> as a log kept by <paramref name="viewer"/> records it (spec-pantheon P-A5): the
+    /// opponent's draw, Divine Theater Reveal, face-down placement and restack redacted; anything else unchanged.
+    /// </summary>
+    public static LogEntry AsSeenBy(LogEntry entry, int viewer) => entry switch
+    {
+        DivinityDrawReveal { Redacted: false } r when r.Player != viewer => DivinityDrawReveal.Hidden(r.Player, r.Mythology, r.Divinities.Length),
+        TheaterReveal { Redacted: false } r when r.Player != viewer => TheaterReveal.Hidden(r.Player, r.Mythology, r.Divinities.Length),
+        MoveEntry { Move.Kind: MoveKind.Divinity } m when m.Player != viewer =>
+            new MoveEntry(m.Player, Move.PlaceDivinity(PantheonState.Hidden, m.Move.Space)),
+        MoveEntry { Move.Kind: MoveKind.TheaterOrder } m when m.Player != viewer =>
+            new MoveEntry(m.Player, Move.TheaterOrder(PantheonState.Hidden)),
+        _ => entry,
+    };
 
     /// <summary>A Military token as "P1:5": the player on whose side it lies (who would lose the coins), then its coins.</summary>
     static string MilitaryTokenSlug(int token) => token is >= 0 and < GameState.MilitaryTokenCount
@@ -225,7 +254,8 @@ internal static class PantheonLog
 
     static string SlotName(int age, int slot) => slot is >= 0 and < GameState.SlotCount ? GameData.Layout(age).SlotName(slot) : $"#{slot}";
     static string MythologySlug(Mythology m) => (int)m is >= 0 and < 5 ? PantheonData.MythologyDef(m).Id : $"#{(int)m}";
-    static string DivinitySlug(int d) => d >= 0 && d < PantheonData.Divinities.Length ? PantheonData.Divinities[d].Id : $"#{d}";
+    static string DivinitySlug(int d) => d >= 0 && d < PantheonData.Divinities.Length ? PantheonData.Divinities[d].Id
+        : d == PantheonState.Hidden ? "?" : $"#{d}";
     static string OfferingSlug(int o) => o >= 0 && o < PantheonData.Offerings.Length ? PantheonData.Offerings[o].Id : $"#{o}";
     static string TokenSlug(int t) => GameData.IsToken(t) ? GameData.Token(t).Id : $"#{t}";
     static string CardSlug(int c) => GameData.IsCard(c) ? GameData.Card(c).Id : $"#{c}";

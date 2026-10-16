@@ -8,7 +8,8 @@ namespace SevenWondersDuel.Engine;
 /// The Game State never stores hidden identities (ADR 0002): face-down cards, the cards removed at setup, the tokens
 /// left in the box and the Wonders not yet offered exist only as pools of unseen things. So a sampled world is the
 /// Observation's state with the one private thing it can hold filled in, an opponent's
-/// <see cref="GameState.LibraryDrawHidden"/> draw (3 tokens of <see cref="GameState.TokensSetAside"/>), plus this
+/// <see cref="GameState.LibraryDrawHidden"/> draw (3 tokens of <see cref="GameState.TokensSetAside"/>), and an
+/// expansion's (Pantheon: each hidden Divinity and deck card a uniform unseen card of its Mythology), plus this
 /// object as the world's Chance Source: each later Reveal (a flipped card, an Age III slot behind a Guild back, a draft
 /// offer, the Statue of Liberty's returned cards, a Great Library draw) is drawn uniformly from the matching unseen pool
 /// at the moment it happens. Because unseen cards are exchangeable, that is the same distribution as dealing every
@@ -53,7 +54,13 @@ public sealed class Determinizer : IChanceSource
 
     void Fill(GameState world)
     {
-        if (!world.LibraryDrawHidden) return;
+        if (world.LibraryDrawHidden) FillLibraryDraw(world);
+        // An expansion's private information (Pantheon: hidden Divinities and deck cards). None in a base game.
+        world.Module?.Determinize(world, _rng);
+    }
+
+    void FillLibraryDraw(GameState world)
+    {
         // The opponent's private Great Library draw: 3 of the tokens left in the box, uniformly.
         Span<int> box = stackalloc int[ProgressTokens.Count];
         var n = 0;
