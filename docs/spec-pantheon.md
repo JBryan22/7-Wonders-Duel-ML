@@ -23,7 +23,7 @@ Where sources disagreed ([expansions.md §12](research/expansions.md)), the Engi
 |---|---|---|---|
 | R1 | Token slots | Mythology tokens on **Age I slots 2, 4, 9, 11, 13** (row 1 both ends; row 3 first, middle, last). Offering tokens on **Age II slots 6, 8, 10** (row 1 first, middle, last). | Rulebook diagrams pp. 6–7 (read 2026-10-15); matches BGA |
 | R2 | Zeus on a card holding a token | The player who used Zeus **takes** the token. | Revised rulebook; BGA code |
-| R3 | Gate and Divine Theater | The revealed cards are **seen by both players** (Gate deck tops; the Theater's whole deck). **Only the Theater's activator knows the order** they stack the unused cards back in: `theater-order` is a **private Move**. | Owner ruling 2026-10-15 (rulebook says "Reveal") |
+| R3 | Gate and Divine Theater | **Gate:** the deck tops are revealed to **both players**. **Divine Theater:** the deck is revealed to **the activator only** (`reveal P1 theater …` is a private Reveal). The opponent learns only the Divinity that gets activated, which is public as soon as it is activated. The unused cards and the order they are stacked back in stay known to the activator alone, so `theater-order` is a **private Move**. With the Theater, Enki's 2 Progress tokens are drawn only if Enki is the one activated. | Owner rulings 2026-10-15 (rulebook says "Reveal") |
 | R4 | Offering tokens | **Public**, on the board and when held. | Rulebook "then reveal the tokens" |
 | R5 | Divine Theater cost | **PP G WW** (2 papyrus, 1 glass, 2 wood). | Owner, from the card, 2026-10-15; matches BGA |
 | R6 | Grand Temple back | Grand Temples have **their own card back**, distinct from Guilds and Age III cards. | Rulebook p. 7 illustration |
@@ -83,7 +83,7 @@ Where sources disagreed ([expansions.md §12](research/expansions.md)), the Engi
 Pantheon's private information (expansions.md §4.2, with R3–R4):
 - **The opponent's placed Divinity** during Age I: its Mythology and space are public; which of that Mythology's cards it is, is not.
 - **The card a player returned to the top of a deck:** known to that player until it leaves the deck (drawn by a later token, revealed by the Gate or Theater, or never).
-- **The Divine Theater's restacking order** (R3): both players saw the unused cards, but only the activator knows which is on top. `theater-order` is the one **private Move**: it has an audience like a Reveal, the opponent's Observation knows only the set of cards on that deck, and in Advisor mode the opponent's choice is logged redacted (`P2 theater-order ?`).
+- **What the Divine Theater showed** (R3): the whole deck is revealed to the activator only. The opponent sees the activated Divinity and nothing else: not the unused cards, not their order. Example: in Age I, with one card of that Mythology already placed face down in the Pantheon, only the activator learns the other remaining card. `theater-order` is the one **private Move**: it has an audience like a Reveal. In Advisor mode the opponent's Theater is logged redacted (`reveal P2 theater ? ?`, `P2 theater-order ?`), and the owner enters only what they saw on their own Theater.
 
 `Observe` already hides by Reveal audience (spec A4); it now also covers deck-top knowledge. The **Determinizer** fills these unknowns uniformly from what the observing player hasn't seen, consistent with the public Mythology of each face-down Pantheon card. The **no-peeking test** (two states with the same Observation but different hidden Divinities give the same search result) extends to Pantheon.
 
