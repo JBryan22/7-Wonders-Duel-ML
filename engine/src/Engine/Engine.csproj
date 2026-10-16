@@ -3,6 +3,8 @@
   <ItemGroup>
     <!-- Card data is embedded so the Engine needs no path lookup on either OS (spec A3). -->
     <EmbeddedResource Include="..\..\..\data\base\*.json" LogicalName="data.base.%(Filename)%(Extension)" />
+    <!-- Pantheon data: loaded only by PantheonData, so base games never touch it (spec-pantheon P-A3). -->
+    <EmbeddedResource Include="..\..\..\data\pantheon\*.json" LogicalName="data.pantheon.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,16 @@
+{
+  "about": "7 Wonders Duel Pantheon: the 5 Grand Temples, Age III cards with their own card back (docs/spec-pantheon.md R6). 3 of them replace the Guilds each game. Free while holding a Mythology token of the Temple's Mythology (R9); 5 / 12 / 21 VP for 1 / 2 / 3 built. Costs from docs/research/expansions.md Part A, section 3. Card game facts (c) Repos Production.",
+  "format": {
+    "cost": "same letters as data/base/cards.json",
+    "mythology": "the Mythology whose token makes the Temple free",
+    "points": "end-of-game VP for 1, 2 and 3 Grand Temples built"
+  },
+  "points": [5, 12, 21],
+  "temples": [
+    { "id": "greek-grand-temple",        "name": "Greek Grand Temple",        "mythology": "greek",        "cost": "S S S G P" },
+    { "id": "phoenician-grand-temple",   "name": "Phoenician Grand Temple",   "mythology": "phoenician",   "cost": "W S G P P" },
+    { "id": "mesopotamian-grand-temple", "name": "Mesopotamian Grand Temple", "mythology": "mesopotamian", "cost": "W W W G P" },
+    { "id": "egyptian-grand-temple",     "name": "Egyptian Grand Temple",     "mythology": "egyptian",     "cost": "C C C G P" },
+    { "id": "roman-grand-temple",        "name": "Roman Grand Temple",        "mythology": "roman",        "cost": "C S G G P" }
+  ]
+}

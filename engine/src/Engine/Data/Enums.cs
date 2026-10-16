@@ -14,7 +14,10 @@ public enum GuildKind : byte { None, Merchants, Shipowners, Builders, Magistrate
 public enum CoinsPerKind : byte { None, Brown, Grey, Red, Yellow, Wonder }
 
 /// <summary>A Wonder power that asks its owner for a choice.</summary>
-public enum WonderEffect : byte { None, DestroyBrown, DestroyGrey, Library, Mausoleum, Messe, Liberty }
+public enum WonderEffect : byte { None, DestroyBrown, DestroyGrey, Library, Mausoleum, Messe, Liberty, Theater }
+
+/// <summary>The 5 Pantheon Mythologies (spec-pantheon P-A3), in data order: each has a deck of 3 Divinities, 2 tokens and a Grand Temple.</summary>
+public enum Mythology : byte { Greek, Phoenician, Mesopotamian, Egyptian, Roman }
 
 public static class Resources
 {

@@ -4,12 +4,24 @@
 
 **Blocked by:** —
 
-**Status:** open
+**Status:** done
 
 Spec: `docs/spec-pantheon.md` (P-A2, P-A3, P-A4 "Engine structure"), on top of `docs/spec-v1.md`.
 
-- [ ] Data tests: counts, every Divinity in exactly one Mythology, Temple costs and Mythologies, board costs 3–8 summing to 11 per space, token slots are face-down slots
-- [ ] `rules base expansion=pantheon` parses and creates a game; `expansion=agora` is still refused
-- [ ] Base unchanged: determinism hashes, `FrozenGames/`, base 100k soak numbers, Encoding v1 and its manifest test (spec-pantheon P-A1)
+- [x] Data tests: counts, every Divinity in exactly one Mythology, Temple costs and Mythologies, board costs 3–8 summing to 11 per space, token slots are face-down slots
+- [x] `rules base expansion=pantheon` parses and creates a game; `expansion=agora` is still refused
+- [x] Base unchanged: determinism hashes, `FrozenGames/`, base 100k soak numbers, Encoding v1 and its manifest test (spec-pantheon P-A1)
 
 ## Notes
+
+- **Data** (`data/pantheon/`, embedded as `data.pantheon.*`, loaded lazily by `Engine/Data/PantheonData.cs`; base `GameData`/`data/base` untouched apart from `GameData.Load(folder, file)` and `ParseWonder`/`ParseToken` becoming internal for reuse):
+  - `divinities.json`: 5 Mythologies (enum `Mythology` Greek, Phoenician, Mesopotamian, Egyptian, Roman; 2 tokens each) and 16 `DivinityDef`s: indices 0-14 grouped by Mythology (aphrodite hades zeus / astarte baal tanit / enki ishtar nisaba / anubis isis ra / mars minerva neptune), `gate` = 15 (`PantheonData.Gate`, `Mythology` null). Numbers only for the no-decision gods (aphrodite vp 9, tanit coins 12, astarte protectedCoins 7, mars shields 2, ishtar science law); the rest are implemented by id.
+  - `temples.json`: 5 `TempleDef`s (`greek-grand-temple` ... `roman-grand-temple`, Mythology, cost) and points 5/12/21. They are **not** in `GameData.Cards` (indices 0-4 of their own); ticket 02 decides how they join the card index space (73-77 fits `CardSet`, but `CardSets.OfAge[3]`, Encoding v1 and anything sized by `GameData.Cards.Length` must not change in base games). No card colour was assigned.
+  - `wonders.json`: `sanctuary` (P G SS, 0 VP, play again; discount implemented by id) and `divine-theater` (PP G WW per R5, 2 VP, new `WonderEffect.Theater`), as `WonderDef`s with indices 14, 15. `tokens.json`: `mysticism`, `poliorcetics`, `engineering` as `TokenDef`s with indices 10-12. Neither joins `GameData.Wonders`/`Tokens`: `GameState._wonderCard` is sized by `GameData.Wonders.Length` and written to `ToBytes`, so ticket 02 must extend pools/arrays only in Pantheon games.
+  - `board.json`: 6 spaces with `[P1 cost, P2 cost]`, Age I `mythologySlots` [2,4,9,11,13], Age II `offeringSlots` [6,8,10] (R1; both face-down rows), Offering tokens `offering-2/3/4`.
+- **Board orientation:** spaces are numbered 1-6 (`PantheonSpaceDef.Index` 0-5, `Number` 1-6) from **P1's capital end**, which is the Conflict Pawn's negative end (`GameState.ConflictPawn` > 0 points toward P2's capital; the Advisor draws -9 on the left). So P1 pays 3,4,5,6,7,8 and P2 8,7,6,5,4,3 along spaces 1-6. The TTS ticket maps this to the table's colours the same way `ExpectedTable` maps the pawn (P1 may sit Red or White).
+- **Ruleset:** `Ruleset` gained `Expansions` (third record parameter, default None) and `HasExpansion`; `ToString` writes `expansion=pantheon` after `promo=`. Parse accepts `pantheon`, still refuses anything with `agora` (`NotSupportedException`, "not supported").
+- **Module seam** (`Engine/Rules/Expansions/`): `ExpansionModule` (internal, stateless singleton chosen by `ExpansionModule.For(rules)`, which also refuses Agora) with hooks `NewState`, `Setup(s, age)` (age 0 from `GameState.New`, 1-3 from `StartAge` after the base layout), `AwaitingReveal` (in `Step`), `TryApply(Reveal)` (base `Apply(Reveal)` default branch), `LegalMoves` (whole decision, -1 = base), `AddTakeCardMoves` (appended to take-card Moves; `activate` goes here), `TryWhyIllegal`, `TryApply(Move, decision)` (after the decision is popped), `EndOfTurn` (top of `EndTurn`), `Score(s, player, points)` (end of `Scoring.Fill`). `ExpansionState` is the optional block (Clone/CopyFrom/SameAs/Write); `GameState.Expansion` / `GameState.Pantheon` (`PantheonState`, empty so far) are null in base games. All hooks sit behind null checks; `CopyFrom`/`SameAs` carry the block; `ToBytes` appends the expansions byte and the block only when an expansion is on. Later tickets will need some `GameState` helpers (`PushDecision`, `FinishDecision`, `EndTurn`, `AddShields`, ...) made internal for the module to call.
+- **Scoring heads-up:** `ToBytes` writes every `ScoreCategory` of a Result, so new Pantheon categories (Divinities, Temples, Mysticism) would change base bytes; ticket 02/03 should write extra categories only in Pantheon games (or fold them into existing ones).
+- **Base unchanged:** determinism hashes, `FrozenGames/`, Encoding v1 manifest test all pass untouched. Laptop base 100k soak: 96,502 civilian (152 draws), 3,395 military, 103 science, all invariants hold (ticket 10's numbers); messe,liberty 96,140 / 135 / 3,715 / 145 (ticket 13's). Single-thread bench equals HEAD's (13.7k vs 13.8k games/s state-only).
+- **Tests:** 368 Engine (26 new in `PantheonDataTests`: counts, decks, numbers, tokens and slots, board costs, Temples, Wonders/tokens indices, slugs, Ruleset round trip, state block, Agora refusal, base-prefix bytes, 50 random Pantheon games copy/replay; `MoveLogTests` now refuses only Agora), 99 Agents, 83 Advisor; Python 73 passed, 3 skipped.

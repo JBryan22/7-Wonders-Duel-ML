@@ -89,10 +89,14 @@ public sealed class GameState
     CardSet _libertyOffer;
     sbyte _libertyKept;
     sbyte _libertyGiven;
+    /// <summary>The expansion switched on by <see cref="Rules"/> and its state block; both null in a base game (spec A10).</summary>
+    ExpansionModule? _module;
+    ExpansionState? _expansion;
 
     GameState(Ruleset rules)
     {
         Rules = rules;
+        _module = ExpansionModule.For(rules);
         _libertyKept = _libertyGiven = -1;
     }
 
@@ -104,10 +108,20 @@ public sealed class GameState
         s._militaryTokens = (1 << MilitaryTokenCount) - 1;
         Array.Fill(s._slots, Empty);
         Array.Fill(s._wonderCard, (sbyte)-1);
+        if (s._module is not null)
+        {
+            s._expansion = s._module.NewState();
+            s._module.Setup(s, 0);
+        }
         return s;
     }
 
     public Ruleset Rules { get; private set; }
+    /// <summary>The expansion's state block (spec A10), or null in a base game.</summary>
+    public ExpansionState? Expansion => _expansion;
+    /// <summary>Pantheon's state block, or null unless <c>expansion=pantheon</c>.</summary>
+    public PantheonState? Pantheon => _expansion as PantheonState;
+    internal ExpansionModule? Module => _module;
     /// <summary>The player who plays first, or -1 until revealed.</summary>
     public int FirstPlayer { get; private set; }
     /// <summary>The current Age, or 0 before Age I starts.</summary>
@@ -351,7 +365,7 @@ public sealed class GameState
     /// <summary>What the game needs next: a Reveal from the Chance Source, a Move, or nothing.</summary>
     public StepKind Step => IsOver ? StepKind.GameOver
         : FirstPlayer < 0 || AwaitingTokens || AwaitingDraftOffer || _awaitingGuildPattern || SlotsToReveal != 0
-            || AwaitingLibraryDraw || AwaitingReturnedCards ? StepKind.Reveal
+            || AwaitingLibraryDraw || AwaitingReturnedCards || (_module is not null && _module.AwaitingReveal(this)) ? StepKind.Reveal
         : StepKind.Decision;
 
     public int PendingCount => _queueCount;
@@ -365,6 +379,7 @@ public sealed class GameState
     public int LegalMoves(Span<Move> buffer)
     {
         if (Step != StepKind.Decision) return 0;
+        if (_module is not null && _module.LegalMoves(this, buffer) is var own and >= 0) return own;
         var n = 0;
         var player = _queue[0].Player;
         switch (_queue[0].Kind)
@@ -412,6 +427,7 @@ public sealed class GameState
                     buffer[n++] = Move.Discard(card);
                     for (var i = 0; i < wonderCount; i++) buffer[n++] = Move.BuildWonder(card, wonders[i]);
                 }
+                if (_module is not null) n = _module.AddTakeCardMoves(this, player, buffer, n);
                 break;
         }
         return n;
@@ -429,6 +445,7 @@ public sealed class GameState
     public string? WhyIllegal(Move move)
     {
         if (Step != StepKind.Decision) return $"the game is waiting for {(IsOver ? "nothing (it is over)" : "a Reveal")}";
+        if (_module is not null && _module.TryWhyIllegal(this, move, out var why)) return why;
         var decision = _queue[0];
         if (decision.Kind == DecisionKind.ChooseStarter)
             return move.Kind is MoveKind.StartMe or MoveKind.StartOpponent ? null : "the decision is who starts the Age";
@@ -532,9 +549,11 @@ public sealed class GameState
     public void Apply(Move move)
     {
         if (WhyIllegal(move) is { } why) throw new InvalidOperationException($"Illegal move '{move}': {why}");
-        var player = _queue[0].Player;
-        var wonder = _queue[0].Wonder;
+        var decision = _queue[0];
+        var player = decision.Player;
+        var wonder = decision.Wonder;
         PopDecision();
+        if (_module is not null && _module.TryApply(this, move, decision)) return;
 
         switch (move.Kind)
         {
@@ -848,7 +867,9 @@ public sealed class GameState
                 break;
 
             default:
-                throw new InvalidOperationException($"Unsupported Reveal {reveal.GetType().Name}");
+                if (_module is null || !_module.TryApply(this, reveal))
+                    throw new InvalidOperationException($"Unsupported Reveal {reveal.GetType().Name}");
+                break;
         }
     }
 
@@ -1000,6 +1021,7 @@ public sealed class GameState
         Array.Fill(_slots, Hidden);
         _occupied = AllSlots;
         _awaitingGuildPattern = age == AgeCount;
+        _module?.Setup(this, age);
         if (age == 1)
         {
             PushDecision(new PendingDecision(DecisionKind.TakeCard, CurrentPlayer));
@@ -1023,6 +1045,7 @@ public sealed class GameState
     /// </summary>
     void EndTurn()
     {
+        _module?.EndOfTurn(this);
         if (_occupied == 0)
         {
             EndAge();
@@ -1161,6 +1184,10 @@ public sealed class GameState
         _libertyOffer = other._libertyOffer;
         _libertyKept = other._libertyKept;
         _libertyGiven = other._libertyGiven;
+        _module = other._module;
+        if (other._expansion is null) _expansion = null;
+        else if (_expansion is not null && _expansion.GetType() == other._expansion.GetType()) _expansion.CopyFrom(other._expansion);
+        else _expansion = other._expansion.Clone();
     }
 
     /// <summary>True if both states are the same game position in every field.</summary>
@@ -1179,7 +1206,8 @@ public sealed class GameState
         && _queueCount == o._queueCount
         && _slots.AsSpan().SequenceEqual(o._slots) && _coins.AsSpan().SequenceEqual(o._coins)
         && _city.AsSpan().SequenceEqual(o._city) && _production.AsSpan().SequenceEqual(o._production)
-        && _queue.AsSpan(0, _queueCount).SequenceEqual(o._queue.AsSpan(0, o._queueCount));
+        && _queue.AsSpan(0, _queueCount).SequenceEqual(o._queue.AsSpan(0, o._queueCount))
+        && (_expansion is null ? o._expansion is null : o._expansion is not null && _expansion.SameAs(o._expansion));
 
     /// <summary>
     /// Every field <see cref="SameAs"/> compares, as canonical little-endian bytes: equal states give equal bytes on
@@ -1244,6 +1272,12 @@ public sealed class GameState
                 Set(w, _libertyOffer);
                 w.Write(_libertyKept);
                 w.Write(_libertyGiven);
+            }
+            // Only expansion games carry the expansion and its block, so the base game's pinned bytes are unchanged.
+            if (Rules.Expansions != Expansions.None)
+            {
+                w.Write((byte)Rules.Expansions);
+                _expansion?.Write(w);
             }
         }
         return stream.ToArray();

@@ -66,17 +66,17 @@ public class MoveLogTests
     }
 
     [Theory]
-    [InlineData("rules base expansion=pantheon")]
     [InlineData("rules base expansion=agora")]
     [InlineData("rules base start-choice=2015 promo=liberty expansion=pantheon,agora")]
-    public void Expansions_are_rejected_as_not_supported(string line)
+    [InlineData("rules base expansion=agora,pantheon")]
+    public void Agora_is_rejected_as_not_supported(string line)
     {
         var e = Assert.Throws<NotSupportedException>(() => Ruleset.Parse(line));
         Assert.Contains("not supported", e.Message);
     }
 
     [Fact]
-    public void Logs_with_an_expansion_are_rejected_as_not_supported()
+    public void Logs_with_agora_are_rejected_as_not_supported()
     {
         var e = Assert.Throws<NotSupportedException>(() => MoveLog.Parse("7wd-log v1\nrules base expansion=agora\nreveal first P1\n"));
         Assert.Contains("not supported", e.Message);

@@ -1,0 +1,37 @@
+{
+  "about": "7 Wonders Duel Pantheon: the 5 Mythologies, their 15 Divinities and the Gate (docs/research/expansions.md Part A, section 3; docs/spec-pantheon.md). Effects other than the numbers below are implemented in the Engine by id. Card game facts (c) Repos Production.",
+  "format": {
+    "mythologies": "in spec order; tokens = Mythology tokens of that kind in the box (5 of the 10 are used each game)",
+    "mythology": "the Mythology deck the Divinity belongs to; the Gate has none",
+    "vp": "victory points at the end of the game",
+    "coins": "coins taken from the bank on activation",
+    "protectedCoins": "coins put on the card on activation: spendable, safe from coin loss, 1 VP each at the end",
+    "shields": "shields on activation",
+    "science": "the scientific symbol the Divinity counts as"
+  },
+  "mythologies": [
+    { "id": "greek",        "name": "Greek",        "tokens": 2 },
+    { "id": "phoenician",   "name": "Phoenician",   "tokens": 2 },
+    { "id": "mesopotamian", "name": "Mesopotamian", "tokens": 2 },
+    { "id": "egyptian",     "name": "Egyptian",     "tokens": 2 },
+    { "id": "roman",        "name": "Roman",        "tokens": 2 }
+  ],
+  "divinities": [
+    { "id": "aphrodite", "name": "Aphrodite", "mythology": "greek", "vp": 9 },
+    { "id": "hades",     "name": "Hades",     "mythology": "greek" },
+    { "id": "zeus",      "name": "Zeus",      "mythology": "greek" },
+    { "id": "astarte",   "name": "Astarte",   "mythology": "phoenician", "protectedCoins": 7 },
+    { "id": "baal",      "name": "Baal",      "mythology": "phoenician" },
+    { "id": "tanit",     "name": "Tanit",     "mythology": "phoenician", "coins": 12 },
+    { "id": "enki",      "name": "Enki",      "mythology": "mesopotamian" },
+    { "id": "ishtar",    "name": "Ishtar",    "mythology": "mesopotamian", "science": "law" },
+    { "id": "nisaba",    "name": "Nisaba",    "mythology": "mesopotamian" },
+    { "id": "anubis",    "name": "Anubis",    "mythology": "egyptian" },
+    { "id": "isis",      "name": "Isis",      "mythology": "egyptian" },
+    { "id": "ra",        "name": "Ra",        "mythology": "egyptian" },
+    { "id": "mars",      "name": "Mars",      "mythology": "roman", "shields": 2 },
+    { "id": "minerva",   "name": "Minerva",   "mythology": "roman" },
+    { "id": "neptune",   "name": "Neptune",   "mythology": "roman" },
+    { "id": "gate",      "name": "The Gate" }
+  ]
+}

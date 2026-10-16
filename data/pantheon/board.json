@@ -1,0 +1,24 @@
+{
+  "about": "7 Wonders Duel Pantheon: the Pantheon board, the Offering tokens and the structure slots that hold tokens (docs/spec-pantheon.md P-A3, R1). Card game facts (c) Repos Production.",
+  "format": {
+    "spaces": "the 6 Pantheon spaces, numbered 1-6 from the end nearest P1's capital (the Conflict Pawn's negative end) to the end nearest P2's; cost = [P1's activation cost, P2's activation cost]",
+    "mythologySlots": "Age I structure slots (numbered as in data/base/layouts.json) that get a Mythology token at setup",
+    "offeringSlots": "Age II structure slots that get an Offering token at setup",
+    "offerings": "the Offering tokens: a single-use discount of that many coins on an activation"
+  },
+  "spaces": [
+    { "space": 1, "cost": [3, 8] },
+    { "space": 2, "cost": [4, 7] },
+    { "space": 3, "cost": [5, 6] },
+    { "space": 4, "cost": [6, 5] },
+    { "space": 5, "cost": [7, 4] },
+    { "space": 6, "cost": [8, 3] }
+  ],
+  "mythologySlots": [2, 4, 9, 11, 13],
+  "offeringSlots": [6, 8, 10],
+  "offerings": [
+    { "id": "offering-2", "name": "Offering token (2)", "value": 2 },
+    { "id": "offering-3", "name": "Offering token (3)", "value": 3 },
+    { "id": "offering-4", "name": "Offering token (4)", "value": 4 }
+  ]
+}

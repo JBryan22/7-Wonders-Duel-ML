@@ -109,6 +109,7 @@ public static class Scoring
         points[(int)ScoreCategory.Progress] = ProgressPoints(s, player);
         points[(int)ScoreCategory.Coins] = s.Coins(player) / 3;
         points[(int)ScoreCategory.Military] = MilitaryPoints(s.MilitaryLead(player));
+        s.Module?.Score(s, player, points);
     }
 
     /// <summary>

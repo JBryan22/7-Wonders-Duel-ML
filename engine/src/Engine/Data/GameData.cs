@@ -23,12 +23,12 @@ public static class GameData
 
     static GameData()
     {
-        var cards = Load("cards.json")["cards"]!.AsArray();
+        var cards = Load("base", "cards.json")["cards"]!.AsArray();
         var slugs = cards.Select(c => (string)c!["id"]!).ToList();
         Cards = cards.Select((c, i) => ParseCard(c!, i, slugs)).ToArray();
-        Wonders = Load("wonders.json")["wonders"]!.AsArray().Select((w, i) => ParseWonder(w!, i)).ToArray();
-        Tokens = Load("tokens.json")["tokens"]!.AsArray().Select((t, i) => ParseToken(t!, i)).ToArray();
-        Layouts = Load("layouts.json")["ages"]!.AsArray().Select(a => ParseLayout(a!)).ToArray();
+        Wonders = Load("base", "wonders.json")["wonders"]!.AsArray().Select((w, i) => ParseWonder(w!, i)).ToArray();
+        Tokens = Load("base", "tokens.json")["tokens"]!.AsArray().Select((t, i) => ParseToken(t!, i)).ToArray();
+        Layouts = Load("base", "layouts.json")["ages"]!.AsArray().Select(a => ParseLayout(a!)).ToArray();
 
         CardBySlug = Cards.ToDictionary(c => c.Id, c => c.Index);
         WonderBySlug = Wonders.ToDictionary(w => w.Id, w => w.Index);
@@ -63,9 +63,10 @@ public static class GameData
 
     public static AgeLayout Layout(int age) => Layouts[age - 1];
 
-    static JsonNode Load(string file)
+    /// <summary>An embedded data file: <paramref name="folder"/> is "base" or an expansion's folder ("pantheon").</summary>
+    internal static JsonNode Load(string folder, string file)
     {
-        var name = $"data.base.{file}";
+        var name = $"data.{folder}.{file}";
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(name)
             ?? throw new InvalidOperationException($"Embedded data '{name}' is missing");
         return JsonNode.Parse(stream)!;
@@ -99,7 +100,7 @@ public static class GameData
         };
     }
 
-    static WonderDef ParseWonder(JsonNode w, int index) => new()
+    internal static WonderDef ParseWonder(JsonNode w, int index) => new()
     {
         Index = index,
         Id = (string)w["id"]!,
@@ -116,7 +117,7 @@ public static class GameData
         IsPromo = (bool?)w["promo"] ?? false,
     };
 
-    static TokenDef ParseToken(JsonNode t, int index) => new()
+    internal static TokenDef ParseToken(JsonNode t, int index) => new()
     {
         Index = index,
         Id = (string)t["id"]!,
@@ -145,7 +146,7 @@ public static class GameData
         return new AgeLayout { Age = (int)a["age"]!, RowCount = rows.Count, Slots = slots };
     }
 
-    static string[] Strings(JsonNode? n) => n?.AsArray().Select(x => (string)x!).ToArray() ?? [];
+    internal static string[] Strings(JsonNode? n) => n?.AsArray().Select(x => (string)x!).ToArray() ?? [];
 
     static Resource[] Letters(JsonNode? n) => ((string?)n ?? "").Select(Data.Resources.FromLetter).ToArray();
 }

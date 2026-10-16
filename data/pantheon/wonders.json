@@ -1,0 +1,7 @@
+{
+  "about": "7 Wonders Duel Pantheon: the 2 Wonders added to the Wonder pool (docs/research/expansions.md Part A, section 3; Divine Theater cost from docs/spec-pantheon.md R5). Same format as data/base/wonders.json. The Sanctuary's discount is implemented in the Engine by id. Card game facts (c) Repos Production.",
+  "wonders": [
+    { "id": "sanctuary",      "name": "The Sanctuary",      "cost": "P G S S",   "vp": 0, "playAgain": true },
+    { "id": "divine-theater", "name": "The Divine Theater", "cost": "P P G W W", "vp": 2, "effect": "theater" }
+  ]
+}
