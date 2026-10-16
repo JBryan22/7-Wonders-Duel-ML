@@ -17,8 +17,9 @@ public static class ProgressTokens
     /// <summary>Resources Architecture (Wonders) and Masonry (blue cards) take off each cost.</summary>
     public const int Discount = 2;
 
+    /// <summary>The base game's tokens (Pantheon's 3 continue the indices: <see cref="GameState.TokenPool"/>).</summary>
     public static int Count => GameData.Tokens.Length;
-    /// <summary>Every token, one bit per index.</summary>
+    /// <summary>Every base token, one bit per index.</summary>
     public static readonly ushort All = (ushort)((1 << GameData.Tokens.Length) - 1);
 
     public static readonly int Agriculture = GameData.TokenIndex("agriculture");
@@ -35,5 +36,5 @@ public static class ProgressTokens
     /// <summary>The tokens in a bitmask, in index order.</summary>
     public static Bits In(ushort mask) => new(mask);
 
-    public static string Names(ushort mask) => string.Join(' ', In(mask).Select(t => GameData.Tokens[t].Id));
+    public static string Names(ushort mask) => string.Join(' ', In(mask).Select(t => GameData.Token(t).Id));
 }

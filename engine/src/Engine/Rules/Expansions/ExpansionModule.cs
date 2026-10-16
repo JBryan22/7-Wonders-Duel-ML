@@ -21,6 +21,18 @@ internal abstract class ExpansionModule
     /// <summary>A fresh state block for a new game, or null if the expansion keeps no state.</summary>
     public virtual ExpansionState? NewState() => null;
 
+    /// <summary>Wonders this expansion adds to the draft pool, one bit per Wonder index.</summary>
+    public virtual ushort ExtraWonders => 0;
+
+    /// <summary>Progress tokens this expansion adds to the token pool, one bit per token index.</summary>
+    public virtual ushort ExtraTokens => 0;
+
+    /// <summary>Tokens of the box that are not in it any more (taken out by an expansion effect), one bit per token.</summary>
+    public virtual ushort TokensOutOfBox(GameState s) => 0;
+
+    /// <summary>The cards Age III's special backs hide instead of the Guilds, or null for the Guilds.</summary>
+    public virtual CardSet? AgeThreeBacks => null;
+
     /// <summary>
     /// Setup: <paramref name="age"/> 0 when the game is created (before any Reveal), then 1..3 when each Age is laid
     /// out, after the base layout and before its Reveals and first decision.
@@ -32,6 +44,12 @@ internal abstract class ExpansionModule
 
     /// <summary>Applies one of this expansion's Reveals; false if it is not one (the base game then rejects it).</summary>
     public virtual bool TryApply(GameState s, Reveal reveal) => false;
+
+    /// <summary>
+    /// The Reveal a <see cref="RandomChanceSource"/> draws while <see cref="AwaitingReveal"/> (asked once the flips
+    /// are revealed), using its <paramref name="rng"/>.
+    /// </summary>
+    public virtual Reveal NextReveal(GameState s, Rng rng) => throw new InvalidOperationException("The expansion awaits no Reveal");
 
     /// <summary>
     /// The legal Moves of a Pending Decision only this expansion knows, written to <paramref name="buffer"/>; -1 if
@@ -62,6 +80,15 @@ internal abstract class ExpansionModule
 
     /// <summary>End-of-turn checks: called as a turn ends, before the base game checks for the end of the Age.</summary>
     public virtual void EndOfTurn(GameState s) { }
+
+    /// <summary>
+    /// The price of building a card after the base rules (chain, Masonry, trading) have quoted it: an expansion may
+    /// lower it. Never called for a chained card, which is free.
+    /// </summary>
+    public virtual PaymentQuote AdjustQuote(GameState s, int player, int card, PaymentQuote quote) => quote;
+
+    /// <summary>The Conflict Pawn has just moved one space toward <paramref name="player"/>'s opponent's capital (not reaching it).</summary>
+    public virtual void PawnAdvanced(GameState s, int player) { }
 
     /// <summary>Adds this expansion's VP to one player's points per <see cref="ScoreCategory"/>.</summary>
     public virtual void Score(GameState s, int player, Span<int> points) { }

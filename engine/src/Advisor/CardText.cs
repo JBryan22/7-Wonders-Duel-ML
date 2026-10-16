@@ -75,6 +75,7 @@ public static class Icons
         CardColor.Yellow => "🟨",
         CardColor.Blue => "🟦",
         CardColor.Purple => "🟪",
+        CardColor.Temple => "🛕",
         _ => throw new ArgumentOutOfRangeException(nameof(c)),
     };
 
@@ -89,7 +90,7 @@ public static class Icons
         new(Chain, "chain: free if you own the linked card"),
         new("🪨=1🪙", "trading: buy that resource for 1 coin"),
         new("🫙/📜", "produces one of these each turn"),
-        new(string.Concat(Enum.GetValues<CardColor>().Where(c => c != CardColor.Purple).Select(Of)),
+        new(string.Concat(Enum.GetValues<CardColor>().Where(c => c is not (CardColor.Purple or CardColor.Temple)).Select(Of)),
             "per card of that colour (brown, grey, red, green, yellow, blue)"),
         new(Most, "in the city with the most"),
         new(Wonder, "Wonder"),

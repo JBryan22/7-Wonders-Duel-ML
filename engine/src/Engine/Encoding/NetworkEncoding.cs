@@ -30,7 +30,8 @@ public static class NetworkEncoding
     static readonly int CardCount = GameData.Cards.Length;
     static readonly int WonderCount = GameData.Wonders.Length;
     static readonly int TokenCount = GameData.Tokens.Length;
-    static readonly int DecisionKindCount = Enum.GetValues<DecisionKind>().Length;
+    /// <summary>The base game's decision kinds (through LibertyGive): v1 never grows when an expansion appends kinds.</summary>
+    const int DecisionKindCount = (int)DecisionKind.LibertyGive + 1;
 
     // ---------------------------------------------------------------- scaling (recorded in the manifest)
 
@@ -150,7 +151,7 @@ public static class NetworkEncoding
         Block("turn",
             "Pending Decision kind one-hot (front of the queue; all 0 if none), then 0/1: I am the player to decide, it "
             + "is my turn, a play-again is pending, the destroy target colour, the opponent's Great Library draw is hidden",
-            Enum.GetNames<DecisionKind>().Select(k => $"decision.{Kebab(k)}").Concat(TurnFlags));
+            Enum.GetNames<DecisionKind>().Take(DecisionKindCount).Select(k => $"decision.{Kebab(k)}").Concat(TurnFlags));
         Block("derived",
             "DerivedFeatures (me, then opponent, then capital distances) divided by: production 4, choice producers 4, "
             + "trading price 8, science symbols 6, science pairs 6, VP 60, Wonders built 4, open chains 8, capital "

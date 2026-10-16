@@ -3,7 +3,7 @@ using SevenWondersDuel.Engine.Data;
 
 namespace SevenWondersDuel.Engine;
 
-/// <summary>A set of cards as a 128-bit mask over card indices (73 cards fit). A plain value: copying it is free.</summary>
+/// <summary>A set of cards as a 128-bit mask over card indices (73 cards, 78 with the Grand Temples). A plain value: copying it is free.</summary>
 public readonly record struct CardSet(UInt128 Bits)
 {
     public static readonly CardSet Empty = default;
@@ -40,7 +40,7 @@ public readonly record struct CardSet(UInt128 Bits)
     /// <summary>The cards in index order (allocation-free in a <c>foreach</c>).</summary>
     public Bits Cards() => new(Bits);
 
-    public override string ToString() => string.Join(' ', Cards().Select(c => GameData.Cards[c].Id));
+    public override string ToString() => string.Join(' ', Cards().Select(c => GameData.Card(c).Id));
 }
 
 /// <summary>Fixed card sets derived once from the card data.</summary>

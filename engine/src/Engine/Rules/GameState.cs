@@ -75,7 +75,8 @@ public sealed class GameState
     readonly ushort[] _wonders = new ushort[2];
     readonly ushort[] _wondersBuilt = new ushort[2];
     /// <summary>Per Wonder: the Age card tucked under it, or -1 while unbuilt.</summary>
-    readonly sbyte[] _wonderCard = new sbyte[GameData.Wonders.Length];
+    /// <summary>Sized for every Wonder index, Pantheon's included; a base game's bytes hold only the base Wonders'.</summary>
+    readonly sbyte[] _wonderCard = new sbyte[GameData.Wonders.Length + PantheonData.WonderCount];
     /// <summary>The player whose turn it is gets another turn once the current one ends (a Wonder's "play again").</summary>
     bool _playAgain;
     /// <summary>The Great Library's private draw while its pick is pending (one bit per token), and whether this copy only knows that it was drawn.</summary>
@@ -163,7 +164,13 @@ public sealed class GameState
     /// <summary>The 5 tokens set out at setup (0 until revealed).</summary>
     public ushort TokensSetOut => _tokensSetOut;
     /// <summary>The tokens left in the box at setup, never named: what the Great Library draws from (once set out).</summary>
-    public ushort TokensSetAside => (ushort)(ProgressTokens.All & ~_tokensSetOut);
+    public ushort TokensSetAside =>
+        (ushort)(TokenPool & ~_tokensSetOut & ~(_module is null ? 0 : _module.TokensOutOfBox(this)));
+    /// <summary>
+    /// The Progress tokens this game uses, one bit per index: the 10 base tokens, plus an expansion's (Pantheon: 13).
+    /// The setup Reveal sets out 5 of them; the rest stay in the box.
+    /// </summary>
+    public ushort TokenPool => (ushort)(ProgressTokens.All | (_module is null ? 0 : _module.ExtraTokens));
     /// <summary>The Progress tokens a player owns, one bit per token index.</summary>
     public ushort Tokens(int player) => _tokens[player];
     public bool HasToken(int player, int token) => (_tokens[player] & 1 << token) != 0;
@@ -175,7 +182,7 @@ public sealed class GameState
         var n = (_city[player] & CardSets.OfSymbol[(int)symbol]).Count;
         if (_tokens[player] != 0)
             foreach (var t in ProgressTokens.In(_tokens[player]))
-                if (GameData.Tokens[t].Science == symbol) n++;
+                if (GameData.Token(t).Science == symbol) n++;
         return n;
     }
 
@@ -193,7 +200,7 @@ public sealed class GameState
     /// (never twice). Checked when a Wonder is built.
     /// </summary>
     public bool WonderPlaysAgain(int player, int wonder) =>
-        GameData.Wonders[wonder].PlayAgain || HasToken(player, ProgressTokens.Theology);
+        GameData.Wonder(wonder).PlayAgain || HasToken(player, ProgressTokens.Theology);
 
     public AgeLayout Layout => GameData.Layout(Age);
     public int Coins(int player) => _coins[player];
@@ -215,9 +222,10 @@ public sealed class GameState
 
     /// <summary>
     /// The Wonders this game drafts from (spec A4): the 12 base Wonders plus each promo Wonder switched on in
-    /// <see cref="Ruleset.Promos"/>, so 12, 13 or 14. The draft itself is the same for every pool.
+    /// <see cref="Ruleset.Promos"/>, so 12, 13 or 14, plus an expansion's (Pantheon: 2 more, R10). The draft itself is
+    /// the same for every pool.
     /// </summary>
-    public ushort WonderPool => PoolFor(Rules.Promos);
+    public ushort WonderPool => (ushort)(PoolFor(Rules.Promos) | (_module is null ? 0 : _module.ExtraWonders));
 
     /// <summary>The Wonder pool for a set of promo switches.</summary>
     public static ushort PoolFor(Promos promos) => PoolByPromos[(int)promos];
@@ -320,7 +328,7 @@ public sealed class GameState
     public CardColor? DestroyColor =>
         _queueCount > 0 && _queue[0].Kind == DecisionKind.Destroy ? DestroyColorOf(_queue[0].Wonder) : null;
     static CardColor DestroyColorOf(int wonder) =>
-        GameData.Wonders[wonder].Effect == WonderEffect.DestroyBrown ? CardColor.Brown : CardColor.Grey;
+        GameData.Wonder(wonder).Effect == WonderEffect.DestroyBrown ? CardColor.Brown : CardColor.Grey;
 
     /// <summary>
     /// The occupied slots of the current Age's top row: what the Messe may take, covered or not (promo-wonders §2).
@@ -343,8 +351,13 @@ public sealed class GameState
 
     /// <summary>Non-Guild cards of an Age that could still be revealed (never named so far).</summary>
     public CardSet UnseenPool(int age) => CardSets.OfAge[age] & ~_seen;
-    /// <summary>Guilds that could still be revealed.</summary>
-    public CardSet UnseenGuilds => CardSets.Guilds & ~_seen;
+    /// <summary>
+    /// Guilds that could still be revealed: what an Age III special back hides. With Pantheon those backs are Grand
+    /// Temples (<see cref="TempleBacks"/>), so this is the unseen Temples instead.
+    /// </summary>
+    public CardSet UnseenGuilds => (_module?.AgeThreeBacks ?? CardSets.Guilds) & ~_seen;
+    /// <summary>True when Age III's special backs are Grand Temples, not Guilds (Pantheon, R6).</summary>
+    public bool TempleBacks => _module?.AgeThreeBacks is not null;
     /// <summary>The cards a hidden slot could turn out to be: unseen Guilds behind a Guild back, else unseen cards of the Age.</summary>
     public CardSet UnseenPoolFor(int slot) => _slots[slot] == HiddenGuild ? UnseenGuilds : UnseenPool(Age);
 
@@ -451,40 +464,40 @@ public sealed class GameState
             return move.Kind is MoveKind.StartMe or MoveKind.StartOpponent ? null : "the decision is who starts the Age";
         if (decision.Kind == DecisionKind.ChooseToken)
             return move.Kind != MoveKind.Token ? "the decision is which Progress token to take (it cannot be declined)"
-                : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
-                : !TokenOnBoard(move.Token) ? $"{GameData.Tokens[move.Token].Id} is not on the board"
+                : !GameData.IsToken(move.Token) ? "unknown Progress token"
+                : !TokenOnBoard(move.Token) ? $"{GameData.Token(move.Token).Id} is not on the board"
                 : null;
         if (decision.Kind == DecisionKind.DraftWonder)
             return move.Kind != MoveKind.Draft ? "the decision is which Wonder to draft"
-                : move.Wonder < 0 || move.Wonder >= GameData.Wonders.Length ? "unknown Wonder"
-                : (_draftOffer & 1 << move.Wonder) == 0 ? $"{GameData.Wonders[move.Wonder].Id} is not in the draft offer"
+                : !GameData.IsWonder(move.Wonder) ? "unknown Wonder"
+                : (_draftOffer & 1 << move.Wonder) == 0 ? $"{GameData.Wonder(move.Wonder).Id} is not in the draft offer"
                 : null;
         if (decision.Kind == DecisionKind.Destroy)
         {
             var color = DestroyColorOf(decision.Wonder);
             return move.Kind != MoveKind.Destroy ? $"the decision is which {color.ToString().ToLowerInvariant()} card to destroy"
-                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
+                : !GameData.IsCard(move.Card) ? "unknown card"
                 : !DestroyTargets(decision.Player, decision.Wonder).Contains(move.Card)
-                    ? $"{GameData.Cards[move.Card].Id} is not a {color.ToString().ToLowerInvariant()} card in P{2 - decision.Player}'s city"
+                    ? $"{GameData.Card(move.Card).Id} is not a {color.ToString().ToLowerInvariant()} card in P{2 - decision.Player}'s city"
                 : null;
         }
         if (decision.Kind == DecisionKind.Mausoleum)
             return move.Kind != MoveKind.Mausoleum ? "the decision is which discarded card the Mausoleum builds"
-                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
-                : !_discard.Contains(move.Card) ? $"{GameData.Cards[move.Card].Id} is not in the discard pile"
+                : !GameData.IsCard(move.Card) ? "unknown card"
+                : !_discard.Contains(move.Card) ? $"{GameData.Card(move.Card).Id} is not in the discard pile"
                 : null;
         if (decision.Kind == DecisionKind.Library)
             return move.Kind != MoveKind.Library ? "the decision is which Great Library token to keep"
-                : move.Token < 0 || move.Token >= ProgressTokens.Count ? "unknown Progress token"
-                : (LibraryOptions & 1 << move.Token) == 0 ? $"{GameData.Tokens[move.Token].Id} is not in the Great Library draw"
+                : !GameData.IsToken(move.Token) ? "unknown Progress token"
+                : (LibraryOptions & 1 << move.Token) == 0 ? $"{GameData.Token(move.Token).Id} is not in the Great Library draw"
                 : null;
         if (decision.Kind == DecisionKind.Messe)
         {
             if (move.Kind != MoveKind.Messe) return "the decision is which top-row card the Messe builds";
-            if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
+            if (!GameData.IsCard(move.Card)) return "unknown card";
             var top = SlotOf(move.Card);
             return top >= 0 && (TopRowSlots & 1u << top) != 0 ? null
-                : $"{GameData.Cards[move.Card].Id} is not in the top row of the Age {Age} structure";
+                : $"{GameData.Card(move.Card).Id} is not in the top row of the Age {Age} structure";
         }
         if (decision.Kind is DecisionKind.LibertyKeep or DecisionKind.LibertyGive)
         {
@@ -492,29 +505,29 @@ public sealed class GameState
             return move.Kind != (keep ? MoveKind.LibertyKeep : MoveKind.LibertyGive)
                     ? keep ? "the decision is which returned card the Statue of Liberty's owner builds"
                         : "the decision is which returned card the opponent builds (the other is discarded)"
-                : move.Card < 0 || move.Card >= GameData.Cards.Length ? "unknown card"
-                : !_libertyOffer.Contains(move.Card) ? $"{GameData.Cards[move.Card].Id} is not among the Statue of Liberty's cards on offer"
+                : !GameData.IsCard(move.Card) ? "unknown card"
+                : !_libertyOffer.Contains(move.Card) ? $"{GameData.Card(move.Card).Id} is not among the Statue of Liberty's cards on offer"
                 : null;
         }
         if (!move.TakesCard) return "the decision is which card to take";
 
-        if (move.Card < 0 || move.Card >= GameData.Cards.Length) return "unknown card";
+        if (!GameData.IsCard(move.Card)) return "unknown card";
         var slot = SlotOf(move.Card);
-        if (slot < 0) return $"{GameData.Cards[move.Card].Id} is not in the layout";
-        if (!IsAccessible(slot)) return $"{GameData.Cards[move.Card].Id} is covered";
+        if (slot < 0) return $"{GameData.Card(move.Card).Id} is not in the layout";
+        if (!IsAccessible(slot)) return $"{GameData.Card(move.Card).Id} is covered";
         return move.Kind switch
         {
             MoveKind.Discard => null,
             MoveKind.Wonder => WhyWonderIllegal(decision.Player, move.Wonder),
             _ => CanAffordBuild(decision.Player, move.Card) ? null
-                : $"{GameData.Cards[move.Card].Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {_coins[decision.Player]}",
+                : $"{GameData.Card(move.Card).Id} costs {Payment.Quote(this, decision.Player, move.Card).Total} coins, player has {_coins[decision.Player]}",
         };
     }
 
     string? WhyWonderIllegal(int player, int wonder)
     {
-        if (wonder < 0 || wonder >= GameData.Wonders.Length) return "unknown Wonder";
-        var id = GameData.Wonders[wonder].Id;
+        if (!GameData.IsWonder(wonder)) return "unknown Wonder";
+        var id = GameData.Wonder(wonder).Id;
         return IsWonderRemoved(wonder) ? $"{id} left the game: 7 Wonders are built"
             : !OwnsWonder(player, wonder) ? $"P{player + 1} does not own {id}"
             : IsWonderBuilt(wonder) ? $"{id} is already built"
@@ -670,7 +683,7 @@ public sealed class GameState
     /// </summary>
     void Build(int player, int card, bool free = false)
     {
-        var def = GameData.Cards[card];
+        var def = GameData.Card(card);
         var opponent = 1 - player;
         if (!free)
         {
@@ -710,7 +723,7 @@ public sealed class GameState
     /// </summary>
     void BuildWonder(int player, int card, int wonder)
     {
-        var def = GameData.Wonders[wonder];
+        var def = GameData.Wonder(wonder);
         var opponent = 1 - player;
         var quote = Payment.QuoteWonder(this, player, wonder);
         _coins[player] -= quote.Total;
@@ -795,7 +808,7 @@ public sealed class GameState
     /// </summary>
     internal void TakeToken(int player, int token)
     {
-        var def = GameData.Tokens[token];
+        var def = GameData.Token(token);
         _boardTokens &= (ushort)~(1 << token);
         _tokens[player] |= (ushort)(1 << token);
         _coins[player] += def.Coins;
@@ -822,6 +835,7 @@ public sealed class GameState
                 Result = Scoring.Supremacy(this, player, VictoryType.Military);
                 return;
             }
+            _module?.PawnAdvanced(this, player);
             for (var t = MilitaryToken(opponent, false); t <= MilitaryToken(opponent, true); t++)
             {
                 if (lead != MilitaryTokenZone(t) || !MilitaryTokenLeft(t)) continue;
@@ -894,9 +908,9 @@ public sealed class GameState
         ushort mask = 0;
         foreach (var token in l.Tokens)
         {
-            if (token < 0 || token >= ProgressTokens.Count) throw new InvalidOperationException($"Unknown Progress token {token}");
+            if (!GameData.IsToken(token)) throw new InvalidOperationException($"Unknown Progress token {token}");
             if ((TokensSetAside & 1 << token) == 0)
-                throw new InvalidOperationException($"{GameData.Tokens[token].Id} was set out on the board, not left in the box");
+                throw new InvalidOperationException($"{GameData.Token(token).Id} was set out on the board, not left in the box");
             mask |= (ushort)(1 << token);
         }
         _libraryDraw = mask;
@@ -916,9 +930,9 @@ public sealed class GameState
         var offer = CardSet.Empty;
         foreach (var card in r.Cards)
         {
-            if (card < 0 || card >= GameData.Cards.Length) throw new InvalidOperationException($"Unknown card {card}");
+            if (!GameData.IsCard(card)) throw new InvalidOperationException($"Unknown card {card}");
             if (!UnseenPool(Age).Contains(card))
-                throw new InvalidOperationException($"{GameData.Cards[card].Id} cannot be a returned card: not an unseen Age {Age} card");
+                throw new InvalidOperationException($"{GameData.Card(card).Id} cannot be a returned card: not an unseen Age {Age} card");
             offer = offer.With(card);
         }
         _libertyOffer = offer;
@@ -937,11 +951,11 @@ public sealed class GameState
         ushort mask = 0;
         foreach (var w in d.Wonders)
         {
-            if (w < 0 || w >= GameData.Wonders.Length) throw new InvalidOperationException($"Unknown Wonder {w}");
+            if (!GameData.IsWonder(w)) throw new InvalidOperationException($"Unknown Wonder {w}");
             if ((UnseenWonders & 1 << w) == 0)
                 throw new InvalidOperationException((WonderPool & 1 << w) == 0
-                    ? $"{GameData.Wonders[w].Id} is not in this game's Wonder pool"
-                    : $"{GameData.Wonders[w].Id} was already offered");
+                    ? $"{GameData.Wonder(w).Id} is not in this game's Wonder pool"
+                    : $"{GameData.Wonder(w).Id} was already offered");
             mask |= (ushort)(1 << w);
         }
         _draftOffer = mask;
@@ -961,7 +975,9 @@ public sealed class GameState
         ushort mask = 0;
         foreach (var token in t.Tokens)
         {
-            if (token < 0 || token >= ProgressTokens.Count) throw new InvalidOperationException($"Unknown Progress token {token}");
+            if (!GameData.IsToken(token)) throw new InvalidOperationException($"Unknown Progress token {token}");
+            if ((TokenPool & 1 << token) == 0)
+                throw new InvalidOperationException($"{GameData.Token(token).Id} is not in this game's Progress token pool");
             mask |= (ushort)(1 << token);
         }
         _tokensSetOut = _boardTokens = mask;
@@ -970,6 +986,9 @@ public sealed class GameState
     void ApplyGuildPattern(GuildPatternReveal g)
     {
         if (!_awaitingGuildPattern) throw new InvalidOperationException("The game is not waiting for the Guild back pattern");
+        if (g.Temples != TempleBacks)
+            throw new InvalidOperationException(TempleBacks ? "With Pantheon, Age III shows Grand Temple backs ('reveal temples')"
+                : "Grand Temple backs exist only with Pantheon ('reveal guilds')");
         if (g.Slots.Length != GuildsPerGame || g.Slots.Distinct().Count() != GuildsPerGame)
             throw new InvalidOperationException($"The Guild back pattern names {GuildsPerGame} different slots");
         foreach (var slot in g.Slots)
@@ -995,9 +1014,9 @@ public sealed class GameState
             if (slot < 0 || slot >= SlotCount || (needed & 1u << slot) == 0)
                 throw new InvalidOperationException($"Slot {SlotName(slot)} is not waiting for a Reveal");
             var guildBack = _slots[slot] == HiddenGuild;
-            if (card < 0 || card >= GameData.Cards.Length || !(UnseenPoolFor(slot) & ~named).Contains(card))
+            if (!GameData.IsCard(card) || !(UnseenPoolFor(slot) & ~named).Contains(card))
                 throw new InvalidOperationException(
-                    $"{(card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : "?")} cannot be revealed in {SlotName(slot)}: "
+                    $"{(GameData.IsCard(card) ? GameData.Card(card).Id : "?")} cannot be revealed in {SlotName(slot)}: "
                     + (guildBack ? "not an unseen Guild" : $"not an unseen Age {Age} card"));
             needed &= ~(1u << slot);
             named = named.With(card);
@@ -1064,7 +1083,7 @@ public sealed class GameState
         else StartAge(Age + 1);
     }
 
-    void PushDecision(PendingDecision d)
+    internal void PushDecision(PendingDecision d)
     {
         if (_queueCount == QueueCapacity) throw new InvalidOperationException("Pending Decision queue overflow");
         _queue[_queueCount++] = d;
@@ -1080,7 +1099,7 @@ public sealed class GameState
     internal void AddToCity(int player, int card)
     {
         _city[player] = _city[player].With(card);
-        var produce = GameData.Cards[card].Produce;
+        var produce = GameData.Card(card).Produce;
         for (var r = 0; r < Resources.Count; r++) _production[player * Resources.Count + r] += produce[r];
     }
 
@@ -1088,11 +1107,14 @@ public sealed class GameState
     void RemoveFromCity(int player, int card)
     {
         _city[player] = _city[player].Without(card);
-        var produce = GameData.Cards[card].Produce;
+        var produce = GameData.Card(card).Produce;
         for (var r = 0; r < Resources.Count; r++) _production[player * Resources.Count + r] -= produce[r];
     }
 
     internal void SetCoins(int player, int coins) => _coins[player] = coins;
+
+    /// <summary>A coin loss to the bank (all the player has, if fewer).</summary>
+    internal void LoseCoins(int player, int coins) => _coins[player] = Math.Max(0, _coins[player] - coins);
 
     /// <summary>Test setup: puts a card in the discard pile.</summary>
     internal void AddToDiscard(int card) => _discard = _discard.With(card);
@@ -1235,7 +1257,7 @@ public sealed class GameState
                 w.Write(r.Winner);
                 w.Write((byte)r.Victory);
                 foreach (var sheet in new[] { r.P1, r.P2 })
-                    for (var c = 0; c < ScoreSheet.CategoryCount; c++) w.Write(sheet[(ScoreCategory)c]);
+                    for (var c = 0; c < ScoreSheet.BaseCategoryCount; c++) w.Write(sheet[(ScoreCategory)c]);
             }
             foreach (var slot in _slots) w.Write(slot);
             foreach (var coins in _coins) w.Write(coins);
@@ -1262,7 +1284,7 @@ public sealed class GameState
             w.Write(_draftPicks);
             foreach (var m in _wonders) w.Write(m);
             foreach (var m in _wondersBuilt) w.Write(m);
-            foreach (var c in _wonderCard) w.Write(c);
+            for (var i = 0; i < GameData.Wonders.Length; i++) w.Write(_wonderCard[i]);
             w.Write(_playAgain);
             w.Write(_libraryDraw);
             w.Write(_libraryDrawHidden);
@@ -1274,9 +1296,14 @@ public sealed class GameState
                 w.Write(_libertyGiven);
             }
             // Only expansion games carry the expansion and its block, so the base game's pinned bytes are unchanged.
+            // Expansion identities (Wonders 14-15, score categories after Military) are written here for the same reason.
             if (Rules.Expansions != Expansions.None)
             {
                 w.Write((byte)Rules.Expansions);
+                for (var i = GameData.Wonders.Length; i < _wonderCard.Length; i++) w.Write(_wonderCard[i]);
+                if (Result is { } end)
+                    foreach (var sheet in new[] { end.P1, end.P2 })
+                        for (var c = ScoreSheet.BaseCategoryCount; c < ScoreSheet.CategoryCount; c++) w.Write(sheet[(ScoreCategory)c]);
                 _expansion?.Write(w);
             }
         }

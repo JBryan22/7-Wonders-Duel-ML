@@ -1,6 +1,7 @@
 namespace SevenWondersDuel.Engine;
 
-public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive }
+/// <summary>The kinds of Move. Expansion kinds come after the base ones (Pantheon: <see cref="Divinity"/>).</summary>
+public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Draft, Wonder, Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive, Divinity }
 
 /// <summary>
 /// One decision that resolves the front Pending Decision. Payment is never part of a Move:
@@ -9,6 +10,8 @@ public enum MoveKind : byte { Build, Discard, StartMe, StartOpponent, Token, Dra
 /// instead (see <see cref="Token"/>).
 /// <see cref="Wonder"/> is the Wonder a <see cref="MoveKind.Draft"/> Move drafts or a <see cref="MoveKind.Wonder"/>
 /// Move builds (the tucked Age card is then in <see cref="Card"/>); -1 for every other Move.
+/// A Pantheon <see cref="MoveKind.Divinity"/> Move holds the Divinity in <see cref="Card"/> and the Pantheon space
+/// (0..5) in <see cref="Wonder"/> (see <see cref="Divinity"/> and <see cref="Space"/>).
 /// </summary>
 public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
 {
@@ -36,6 +39,17 @@ public readonly record struct Move(MoveKind Kind, int Card, int Wonder = -1)
     public static Move LibertyGive(int card) => new(MoveKind.LibertyGive, card);
     /// <summary>"library law": keep one of the 3 Progress tokens the Great Library drew.</summary>
     public static Move Library(int token) => new(MoveKind.Library, token);
+
+    /// <summary>
+    /// "divinity zeus 3" (Pantheon): place one of the 2 Divinities just drawn face down on an empty Pantheon space
+    /// (<paramref name="space"/> 0..5 is space 1..6); the other goes back on top of its deck.
+    /// </summary>
+    public static Move PlaceDivinity(int divinity, int space) => new(MoveKind.Divinity, divinity, space);
+
+    /// <summary>The Divinity a <see cref="MoveKind.Divinity"/> Move places, or -1.</summary>
+    public int Divinity => Kind == MoveKind.Divinity ? Card : -1;
+    /// <summary>The Pantheon space (0..5) a <see cref="MoveKind.Divinity"/> Move places on, or -1.</summary>
+    public int Space => Kind == MoveKind.Divinity ? Wonder : -1;
 
     /// <summary>The Progress token a <see cref="MoveKind.Token"/> or <see cref="MoveKind.Library"/> Move takes, or -1.</summary>
     public int Token => Kind is MoveKind.Token or MoveKind.Library ? Card : -1;
@@ -80,11 +94,17 @@ public enum DecisionKind : byte
     /// goes to the discard pile). The owner decides; then the owner's card resolves fully, then the opponent's.
     /// </summary>
     LibertyGive,
+    /// <summary>
+    /// Pantheon: place one of the 2 Divinities drawn for a Mythology token on an empty Pantheon space. Comes after
+    /// the draw's private Reveal; <see cref="PendingDecision.Wonder"/> holds the <see cref="Data.Mythology"/>.
+    /// </summary>
+    PlaceDivinity,
 }
 
 /// <summary>
 /// A choice the Game State is waiting on, owned by the player who must make it. <see cref="Wonder"/> is the Wonder
-/// whose power asked for it (Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive), or -1.
+/// whose power asked for it (Destroy, Mausoleum, Library, Messe, LibertyKeep, LibertyGive), the Mythology of a
+/// Pantheon <see cref="DecisionKind.PlaceDivinity"/>, or -1.
 /// </summary>
 public readonly record struct PendingDecision(DecisionKind Kind, int Player, int Wonder = -1);
 
@@ -136,8 +156,9 @@ public sealed record DraftReveal(int[] Wonders) : Reveal
 /// <summary>
 /// Which Age III slots hold a Guild ("reveal guilds 0.1 3.0 5.2"). Guild backs are purple, so both players
 /// see where the 3 Guilds lie before any card is named; the opening Reveal then names the face-up cards.
+/// With Pantheon the 3 special backs are Grand Temples instead (<see cref="Temples"/>, "reveal temples 0.1 3.0 5.2", R6).
 /// </summary>
-public sealed record GuildPatternReveal(int[] Slots) : Reveal
+public sealed record GuildPatternReveal(int[] Slots, bool Temples = false) : Reveal
 {
     public override string ToString() => MoveLog.Format(this);
 }

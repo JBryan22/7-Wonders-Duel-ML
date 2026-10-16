@@ -16,14 +16,20 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
     {
         if (state.Step != StepKind.Reveal) throw new InvalidOperationException("The game is not waiting for a Reveal");
         if (state.FirstPlayer < 0) return new FirstPlayerReveal(_rng.Next(2));
-        if (state.AwaitingTokens) return new TokenReveal(Pick(ProgressTokens.Count, ProgressTokens.OnBoard));
+        if (state.AwaitingTokens)
+        {
+            // 5 of the game's token pool (10 base tokens, 13 with Pantheon), uniformly.
+            var pool = ProgressTokens.In(state.TokenPool).ToArray();
+            return new TokenReveal(Pick(pool.Length, ProgressTokens.OnBoard).Select(i => pool[i]).ToArray());
+        }
         if (state.AwaitingDraftOffer)
         {
             // 4 of the Wonders nobody has seen, uniformly (the shuffled Wonder pile).
             var unseen = GameState.WondersIn(state.UnseenWonders).ToArray();
             return new DraftReveal(Pick(unseen.Length, GameState.DraftOfferSize).Select(i => unseen[i]).ToArray());
         }
-        if (state.AwaitingGuildPattern) return new GuildPatternReveal(Pick(GameState.SlotCount, GameState.GuildsPerGame));
+        if (state.AwaitingGuildPattern)
+            return new GuildPatternReveal(Pick(GameState.SlotCount, GameState.GuildsPerGame), state.TempleBacks);
         if (state.SlotsToReveal == 0 && state.AwaitingLibraryDraw)
         {
             // 3 of the tokens left in the box, uniformly; the flips of uncovered cards came first.
@@ -38,6 +44,9 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
             return new ReturnedReveal(state.Age,
                 Pick(pool.Count, GameState.ReturnedCardCount).Select(pool.ElementAt).ToArray());
         }
+        // An expansion's Reveals (Pantheon's setup and draws) come once the flips are revealed.
+        if (state.SlotsToReveal == 0 && state.Module is { } module && module.AwaitingReveal(state))
+            return module.NextReveal(state, _rng);
 
         var slots = state.SlotsToReveal;
         var named = CardSet.Empty;
@@ -58,14 +67,17 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
     /// set out, or the Guild back pattern (the 20 shuffled Age III cards are 17 Age cards and 3 Guilds, so every
     /// set of 3 slots is equally likely to hold the Guilds).
     /// </summary>
-    int[] Pick(int n, int count)
+    int[] Pick(int n, int count) => Pick(_rng, n, count);
+
+    /// <summary><see cref="Pick(int, int)"/> with any <see cref="Rng"/> (expansion Reveals draw the same way).</summary>
+    internal static int[] Pick(Rng rng, int n, int count)
     {
         Span<int> values = stackalloc int[n];
         for (var i = 0; i < values.Length; i++) values[i] = i;
         var picked = new int[count];
         for (var i = 0; i < picked.Length; i++)
         {
-            var j = i + _rng.Next(values.Length - i);
+            var j = i + rng.Next(values.Length - i);
             (values[i], values[j]) = (values[j], values[i]);
             picked[i] = values[i];
         }

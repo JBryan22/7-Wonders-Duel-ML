@@ -3,7 +3,8 @@ namespace SevenWondersDuel.Engine.Data;
 /// <summary>The five resources, in the order used by every per-resource array.</summary>
 public enum Resource : byte { Wood, Clay, Stone, Glass, Papyrus }
 
-public enum CardColor : byte { Brown, Grey, Red, Green, Yellow, Blue, Purple }
+/// <summary>Card colours. <see cref="Temple"/> is Pantheon's Grand Temples, which have no base colour (R6: their own back).</summary>
+public enum CardColor : byte { Brown, Grey, Red, Green, Yellow, Blue, Purple, Temple }
 
 /// <summary>Scientific symbols. Law exists only on the Law Progress token.</summary>
 public enum ScienceSymbol : byte { Globe, Law, Sundial, Mortar, Compass, Quill, Wheel }

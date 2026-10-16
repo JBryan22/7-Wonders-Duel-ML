@@ -5,13 +5,18 @@ namespace SevenWondersDuel.Engine;
 /// <summary>How a game was won. Growable (spec A4: victory types come from data later).</summary>
 public enum VictoryType : byte { Civilian, Military, Science }
 
-/// <summary>The civilian score categories (rules-reference §10), in display order. Growable.</summary>
-public enum ScoreCategory : byte { Blue, Green, Yellow, Guilds, Wonders, Progress, Coins, Military }
+/// <summary>
+/// The civilian score categories (rules-reference §10), in display order. Growable: expansion categories come after
+/// the base ones (<see cref="ScoreSheet.BaseCategoryCount"/>) and are always 0 in a base game.
+/// </summary>
+public enum ScoreCategory : byte { Blue, Green, Yellow, Guilds, Wonders, Progress, Coins, Military, Temples }
 
 /// <summary>One player's victory points by category.</summary>
 public sealed class ScoreSheet : IEquatable<ScoreSheet>
 {
     public static readonly int CategoryCount = Enum.GetValues<ScoreCategory>().Length;
+    /// <summary>The base game's categories (Blue..Military); the canonical bytes of a base game hold only these.</summary>
+    public const int BaseCategoryCount = (int)ScoreCategory.Military + 1;
 
     readonly int[] _points;
 
@@ -95,7 +100,7 @@ public static class Scoring
         points.Clear();
         foreach (var card in s.City(player).Cards())
         {
-            var def = GameData.Cards[card];
+            var def = GameData.Card(card);
             switch (def.Color)
             {
                 case CardColor.Blue: points[(int)ScoreCategory.Blue] += def.VictoryPoints; break;
@@ -105,7 +110,7 @@ public static class Scoring
             }
         }
         foreach (var w in GameState.WondersIn(s.BuiltWonders(player)))
-            points[(int)ScoreCategory.Wonders] += GameData.Wonders[w].VictoryPoints;
+            points[(int)ScoreCategory.Wonders] += GameData.Wonder(w).VictoryPoints;
         points[(int)ScoreCategory.Progress] = ProgressPoints(s, player);
         points[(int)ScoreCategory.Coins] = s.Coins(player) / 3;
         points[(int)ScoreCategory.Military] = MilitaryPoints(s.MilitaryLead(player));
@@ -119,7 +124,7 @@ public static class Scoring
     public static int ProgressPoints(GameState s, int player)
     {
         var points = 0;
-        foreach (var t in ProgressTokens.In(s.Tokens(player))) points += GameData.Tokens[t].VictoryPoints;
+        foreach (var t in ProgressTokens.In(s.Tokens(player))) points += GameData.Token(t).VictoryPoints;
         if (s.HasToken(player, ProgressTokens.Mathematics))
             points += ProgressTokens.MathematicsPointsPerToken * s.TokenCount(player);
         return points;

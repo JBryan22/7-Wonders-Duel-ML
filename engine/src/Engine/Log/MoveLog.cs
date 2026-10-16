@@ -43,8 +43,8 @@ namespace SevenWondersDuel.Engine;
 /// "P2 wonder 3.1 sphinx", "P1 messe 0.1"; resolved to the face-up card in that slot, and logged by card name from then on), and a
 /// <b>redacted private Reveal</b>, "reveal P2 library ? ? ?", for a Great Library draw the log's keeper did not see.
 /// </para>
-/// The rules header follows <see cref="Ruleset"/>; a log with an expansion is rejected with a
-/// <see cref="NotSupportedException"/>.
+/// The rules header follows <see cref="Ruleset"/>; a log with Agora is rejected with a
+/// <see cref="NotSupportedException"/>. Pantheon's lines are listed in <see cref="PantheonLog"/>.
 /// </summary>
 public static class MoveLog
 {
@@ -66,11 +66,11 @@ public static class MoveLog
         TokenReveal t => "reveal tokens " + string.Join(' ', t.Tokens.Select(TokenSlug)),
         DraftReveal d => "reveal draft " + string.Join(' ', d.Wonders.Select(WonderSlug)),
         SlotReveal r => FormatSlotReveal(r),
-        GuildPatternReveal g => "reveal guilds " + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
+        GuildPatternReveal g => (g.Temples ? "reveal temples " : "reveal guilds ") + string.Join(' ', g.Slots.Select(s => GameData.Layout(GameState.AgeCount).SlotName(s))),
         LibraryReveal { Redacted: true } l => $"reveal {PlayerName(l.Player)} library ? ? ?",
         LibraryReveal l => $"reveal {PlayerName(l.Player)} library " + string.Join(' ', l.Tokens.Select(TokenSlug)),
         ReturnedReveal r => $"reveal returned age{r.Age} " + string.Join(' ', r.Cards.Select(CardSlug)),
-        _ => throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
+        _ => PantheonLog.Format(entry) ?? throw new ArgumentException($"Unknown log entry {entry.GetType().Name}", nameof(entry)),
     };
 
     public static string FormatMove(Move move) => move.Kind switch
@@ -88,7 +88,7 @@ public static class MoveLog
         MoveKind.Messe => $"messe {CardSlug(move.Card)}",
         MoveKind.LibertyKeep => $"liberty-keep {CardSlug(move.Card)}",
         MoveKind.LibertyGive => $"liberty-give {CardSlug(move.Card)}",
-        _ => throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
+        _ => PantheonLog.FormatMove(move) ?? throw new ArgumentException($"Unknown move kind {move.Kind}", nameof(move)),
     };
 
     static string FormatSlotReveal(SlotReveal r)
@@ -101,9 +101,9 @@ public static class MoveLog
     }
 
     static string PlayerName(int player) => $"P{player + 1}";
-    static string CardSlug(int card) => card >= 0 && card < GameData.Cards.Length ? GameData.Cards[card].Id : $"#{card}";
-    static string TokenSlug(int token) => token >= 0 && token < GameData.Tokens.Length ? GameData.Tokens[token].Id : $"#{token}";
-    static string WonderSlug(int wonder) => wonder >= 0 && wonder < GameData.Wonders.Length ? GameData.Wonders[wonder].Id : $"#{wonder}";
+    static string CardSlug(int card) => GameData.IsCard(card) ? GameData.Card(card).Id : $"#{card}";
+    static string TokenSlug(int token) => GameData.IsToken(token) ? GameData.Token(token).Id : $"#{token}";
+    static string WonderSlug(int wonder) => GameData.IsWonder(wonder) ? GameData.Wonder(wonder).Id : $"#{wonder}";
 
     /// <summary>Parses a Move Log and replays it, checking every entry. Errors name the offending line.</summary>
     public static Game Parse(string text)
@@ -141,30 +141,31 @@ public static class MoveLog
     public static LogEntry ParseEntry(string line, GameState state)
     {
         var t = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (PantheonLog.TryParse(t) is { } pantheon) return pantheon;
         if (t[0] == "reveal")
         {
             if (t.Length == 3 && t[1] == "first") return new FirstPlayerReveal(ParsePlayer(t[2]));
-            if (t.Length > 1 && t[1] == "tokens") return new TokenReveal(t.Skip(2).Select(GameData.TokenIndex).ToArray());
-            if (t.Length > 1 && t[1] == "draft") return new DraftReveal(t.Skip(2).Select(GameData.WonderIndex).ToArray());
+            if (t.Length > 1 && t[1] == "tokens") return new TokenReveal(t.Skip(2).Select(GameData.AnyTokenIndex).ToArray());
+            if (t.Length > 1 && t[1] == "draft") return new DraftReveal(t.Skip(2).Select(GameData.AnyWonderIndex).ToArray());
             // "reveal 1.0 library" names the green card Library in a slot; the Great Library's draw names a player.
             if (t.Length > 2 && t[1] is "P1" or "P2" && t[2] == "library")
             {
                 var drawn = t.Skip(3).ToArray();
                 if (drawn.Length == GameState.LibraryDrawSize && drawn.All(x => x == "?")) return LibraryReveal.Hidden(ParsePlayer(t[1]));
                 if (drawn.Contains("?")) throw new FormatException("A redacted Great Library draw hides all 3 tokens: '? ? ?'");
-                return new LibraryReveal(ParsePlayer(t[1]), drawn.Select(GameData.TokenIndex).ToArray());
+                return new LibraryReveal(ParsePlayer(t[1]), drawn.Select(GameData.AnyTokenIndex).ToArray());
             }
             if (t.Length > 1 && t[1] == "returned")
             {
                 if (t.Length != 3 + GameState.ReturnedCardCount || !t[2].StartsWith("age", StringComparison.Ordinal)
                     || !int.TryParse(t[2].AsSpan(3), out var returnedAge))
                     throw new FormatException("Expected 'reveal returned age<N> <card> <card> <card>'");
-                return new ReturnedReveal(returnedAge, t.Skip(3).Select(GameData.CardIndex).ToArray());
+                return new ReturnedReveal(returnedAge, t.Skip(3).Select(GameData.AnyCardIndex).ToArray());
             }
-            if (t.Length > 1 && t[1] == "guilds")
+            if (t.Length > 1 && t[1] is "guilds" or "temples")
             {
                 var guildLayout = GameData.Layout(GameState.AgeCount);
-                return new GuildPatternReveal(t.Skip(2).Select(x => ParseSlot(guildLayout, x)).ToArray());
+                return new GuildPatternReveal(t.Skip(2).Select(x => ParseSlot(guildLayout, x)).ToArray(), t[1] == "temples");
             }
 
             var i = 1;
@@ -182,20 +183,20 @@ public static class MoveLog
             var layout = GameData.Layout(age);
             var cards = new (int, int)[(t.Length - i) / 2];
             for (var k = 0; k < cards.Length; k++)
-                cards[k] = (ParseSlot(layout, t[i + 2 * k]), GameData.CardIndex(t[i + 2 * k + 1]));
+                cards[k] = (ParseSlot(layout, t[i + 2 * k]), GameData.AnyCardIndex(t[i + 2 * k + 1]));
             return new SlotReveal(age, opening, cards);
         }
 
         if (t.Length >= 2 && t[1] == "wonder")
         {
             if (t.Length != 4) throw new FormatException("Expected 'P<n> wonder <card> <wonder>'");
-            return new MoveEntry(ParsePlayer(t[0]), Move.BuildWonder(ParseTakenCard(t[2], state),GameData.WonderIndex(t[3])));
+            return new MoveEntry(ParsePlayer(t[0]), Move.BuildWonder(ParseTakenCard(t[2], state),GameData.AnyWonderIndex(t[3])));
         }
         if (t.Length != 3) throw new FormatException("Expected 'P<n> <move> <argument>'");
         var player = ParsePlayer(t[0]);
         var move = t[1] switch
         {
-            "draft" => Move.Draft(GameData.WonderIndex(t[2])),
+            "draft" => Move.Draft(GameData.AnyWonderIndex(t[2])),
             "build" => Move.Build(ParseTakenCard(t[2], state)),
             "discard" => Move.Discard(ParseTakenCard(t[2], state)),
             "start" => t[2] switch
@@ -204,14 +205,14 @@ public static class MoveLog
                 "opponent" => Move.StartOpponent,
                 _ => throw new FormatException($"Expected 'start me' or 'start opponent', got 'start {t[2]}'"),
             },
-            "token" => Move.PickToken(GameData.TokenIndex(t[2])),
-            "destroy" => Move.Destroy(GameData.CardIndex(t[2])),
-            "mausoleum" => Move.Mausoleum(GameData.CardIndex(t[2])),
-            "library" => Move.Library(GameData.TokenIndex(t[2])),
+            "token" => Move.PickToken(GameData.AnyTokenIndex(t[2])),
+            "destroy" => Move.Destroy(GameData.AnyCardIndex(t[2])),
+            "mausoleum" => Move.Mausoleum(GameData.AnyCardIndex(t[2])),
+            "library" => Move.Library(GameData.AnyTokenIndex(t[2])),
             // A top-row card is always face up, so the Messe may name its slot too ("P1 messe 0.1").
             "messe" => Move.Messe(ParseTakenCard(t[2], state)),
-            "liberty-keep" => Move.LibertyKeep(GameData.CardIndex(t[2])),
-            "liberty-give" => Move.LibertyGive(GameData.CardIndex(t[2])),
+            "liberty-keep" => Move.LibertyKeep(GameData.AnyCardIndex(t[2])),
+            "liberty-give" => Move.LibertyGive(GameData.AnyCardIndex(t[2])),
             _ => throw new FormatException($"Unknown move '{t[1]}'"),
         };
         return new MoveEntry(player, move);
@@ -223,7 +224,7 @@ public static class MoveLog
     /// </summary>
     static int ParseTakenCard(string text, GameState state)
     {
-        if (text.Length == 0 || !char.IsAsciiDigit(text[0])) return GameData.CardIndex(text);
+        if (text.Length == 0 || !char.IsAsciiDigit(text[0])) return GameData.AnyCardIndex(text);
         if (state.Age < 1) throw new FormatException($"Slot '{text}' named before any Age has started");
         var slot = ParseSlot(state.Layout, text);
         return state.SlotCard(slot) switch

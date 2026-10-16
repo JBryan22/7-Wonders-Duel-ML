@@ -74,7 +74,7 @@ public class EncodingTests
             positions++;
         });
         Assert.True(positions > 10_000);
-        Assert.Equal(Enum.GetValues<MoveKind>().Length, kinds.Count); // every Move kind occurred, promos included
+        Assert.Equal((int)MoveKind.LibertyGive + 1, kinds.Count); // every base Move kind occurred, promos included
     }
 
     // ---------------------------------------------------------------- input

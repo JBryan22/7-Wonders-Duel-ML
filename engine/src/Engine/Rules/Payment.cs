@@ -36,24 +36,26 @@ public static class Payment
 
     public static PaymentQuote Quote(GameState s, int player, int card)
     {
-        var def = GameData.Cards[card];
+        var def = GameData.Card(card);
         // A chain makes the card free, printed coins included.
         if (IsChained(s, player, card)) return default;
         var discount = def.Color == CardColor.Blue && s.HasToken(player, ProgressTokens.Masonry) ? ProgressTokens.Discount : 0;
-        return QuoteCost(s, player, def.Cost, discount);
+        var quote = QuoteCost(s, player, def.Cost, discount);
+        // An expansion may make it cheaper still (Pantheon: a Grand Temple with its token, Engineering).
+        return s.Module is { } module ? module.AdjustQuote(s, player, card, quote) : quote;
     }
 
     /// <summary>What building a Wonder costs, with the Architecture discount.</summary>
     public static PaymentQuote QuoteWonder(GameState s, int player, int wonder)
     {
         var discount = s.HasToken(player, ProgressTokens.Architecture) ? ProgressTokens.Discount : 0;
-        return QuoteCost(s, player, GameData.Wonders[wonder].Cost, discount);
+        return QuoteCost(s, player, GameData.Wonder(wonder).Cost, discount);
     }
 
     /// <summary>True if <paramref name="player"/> owns the card that chains into <paramref name="card"/> (it is built free).</summary>
     public static bool IsChained(GameState s, int player, int card)
     {
-        var freeIf = GameData.Cards[card].FreeIf;
+        var freeIf = GameData.Card(card).FreeIf;
         return freeIf >= 0 && s.City(player).Contains(freeIf);
     }
 

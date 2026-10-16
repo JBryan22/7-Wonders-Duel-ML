@@ -63,6 +63,39 @@ public static class GameData
 
     public static AgeLayout Layout(int age) => Layouts[age - 1];
 
+    // ---------------------------------------------------------------- every index, base and expansion
+
+    /// <summary>
+    /// A card by index, the Pantheon Grand Temples included (<see cref="PantheonData.TempleCards"/>, indices 73..77
+    /// after the base cards). Base indices read <see cref="Cards"/> directly, so a base game never loads Pantheon data.
+    /// </summary>
+    public static CardDef Card(int index) => index < Cards.Length ? Cards[index] : PantheonData.TempleCards[index - Cards.Length];
+    /// <summary>A Wonder by index, Pantheon's 2 included (14, 15).</summary>
+    public static WonderDef Wonder(int index) => index < Wonders.Length ? Wonders[index] : PantheonData.Wonders[index - Wonders.Length];
+    /// <summary>A Progress token by index, Pantheon's 3 included (10..12).</summary>
+    public static TokenDef Token(int index) => index < Tokens.Length ? Tokens[index] : PantheonData.Tokens[index - Tokens.Length];
+
+    /// <summary>True for any card index, base or expansion (it may still be absent from the game being played).</summary>
+    public static bool IsCard(int index) => index >= 0 && index < Cards.Length + PantheonData.TempleCount;
+    public static bool IsWonder(int index) => index >= 0 && index < Wonders.Length + PantheonData.WonderCount;
+    public static bool IsToken(int index) => index >= 0 && index < Tokens.Length + PantheonData.TokenCount;
+
+    /// <summary>A card's index from its slug, the Grand Temples included.</summary>
+    public static int AnyCardIndex(string slug) =>
+        CardBySlug.TryGetValue(slug, out var i) ? i
+        : PantheonData.TryTempleIndex(slug, out var t) ? PantheonData.Temples[t].Card
+        : throw new KeyNotFoundException($"Unknown card '{slug}'");
+    /// <summary>A Wonder's index from its slug, Pantheon's included.</summary>
+    public static int AnyWonderIndex(string slug) =>
+        WonderBySlug.TryGetValue(slug, out var i) ? i
+        : PantheonData.TryWonderIndex(slug, out var w) ? w
+        : throw new KeyNotFoundException($"Unknown Wonder '{slug}'");
+    /// <summary>A Progress token's index from its slug, Pantheon's included.</summary>
+    public static int AnyTokenIndex(string slug) =>
+        TokenBySlug.TryGetValue(slug, out var i) ? i
+        : PantheonData.TryTokenIndex(slug, out var t) ? t
+        : throw new KeyNotFoundException($"Unknown Progress token '{slug}'");
+
     /// <summary>An embedded data file: <paramref name="folder"/> is "base" or an expansion's folder ("pantheon").</summary>
     internal static JsonNode Load(string folder, string file)
     {

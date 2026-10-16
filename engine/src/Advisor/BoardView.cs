@@ -345,7 +345,9 @@ public static class BoardView
 
     static ResultView ResultOf(Result r)
     {
+        // Expansion categories (Grand Temples) show only when someone scored them, so a base game's table is unchanged.
         var rows = Enum.GetValues<ScoreCategory>()
+            .Where(c => (int)c < ScoreSheet.BaseCategoryCount || r.P1[c] != 0 || r.P2[c] != 0)
             .Select(c => new ScoreRowView(c.ToString(), r.P1[c], r.P2[c])).ToArray();
         var summary = r.IsDraw ? "Draw" : $"P{r.Winner + 1} wins by {r.Victory.ToString().ToLowerInvariant()}";
         return new ResultView(r.Winner, r.Victory.ToString().ToLowerInvariant(), summary, rows, r.P1.Total, r.P2.Total);

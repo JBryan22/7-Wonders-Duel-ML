@@ -32,8 +32,8 @@ public static class StatePrinter
                     {
                         GameState.Empty => "--",
                         GameState.Hidden => "?",
-                        GameState.HiddenGuild => "?guild",
-                        _ => GameData.Cards[card].Id,
+                        GameState.HiddenGuild => s.TempleBacks ? "?temple" : "?guild",
+                        _ => GameData.Card(card).Id,
                     };
                     sb.Append($"{layout.SlotName(slot.Index)} {text}{(s.IsAccessible(slot.Index) ? "*" : "")}  ");
                 }
@@ -53,7 +53,7 @@ public static class StatePrinter
             if (s.DistinctSymbols(p) > 0) sb.Append($" | science symbols: {s.DistinctSymbols(p)}");
             if (s.Wonders(p) != 0)
                 sb.Append(" | wonders: ").Append(string.Join(", ", GameState.WondersIn(s.Wonders(p)).Select(w =>
-                    GameData.Wonders[w].Id + (s.IsWonderBuilt(w) ? $" (built with {GameData.Cards[s.WonderCard(w)].Id})"
+                    GameData.Wonder(w).Id + (s.IsWonderBuilt(w) ? $" (built with {GameData.Card(s.WonderCard(w)).Id})"
                         : s.IsWonderRemoved(w) ? " (removed)" : ""))));
             sb.Append('\n');
         }
@@ -66,9 +66,9 @@ public static class StatePrinter
         if (!s.LibertyOffer.IsEmpty)
             sb.Append(s.LibertyKept < 0
                 ? $"Statue of Liberty: P{s.PlayerToDecide + 1} keeps one of {s.LibertyOffer}\n"
-                : $"Statue of Liberty: P{s.PlayerToDecide + 1} keeps {GameData.Cards[s.LibertyKept].Id}, gives P{2 - s.PlayerToDecide} one of {s.LibertyOffer} (the other is discarded)\n");
+                : $"Statue of Liberty: P{s.PlayerToDecide + 1} keeps {GameData.Card(s.LibertyKept).Id}, gives P{2 - s.PlayerToDecide} one of {s.LibertyOffer} (the other is discarded)\n");
         if (s.DraftOffer != 0)
-            sb.Append($"Draft offer: {string.Join(' ', GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonders[w].Id))}\n");
+            sb.Append($"Draft offer: {string.Join(' ', GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonder(w).Id))}\n");
         if (s.PlayAgain) sb.Append($"P{s.CurrentPlayer + 1} plays again after this turn\n");
         if (s.TokensSetOut != 0)
             sb.Append($"Progress tokens on the board: {(s.BoardTokens != 0 ? ProgressTokens.Names(s.BoardTokens) : "none")}\n");
@@ -79,6 +79,7 @@ public static class StatePrinter
             var pawn = s.ConflictPawn == 0 ? "centre" : $"{Math.Abs(s.ConflictPawn)} toward P{(s.ConflictPawn > 0 ? 2 : 1)}";
             sb.Append($"Conflict Pawn: {pawn} | military tokens left: {(tokens.Length > 0 ? tokens : "none")}\n");
         }
+        if (s.Pantheon is { } pantheon) sb.Append(pantheon.Describe(s.Age));
         sb.Append($"Discard pile: {(s.DiscardPile.IsEmpty ? "empty" : s.DiscardPile.ToString())}\n");
         if (s.Result is { } result) sb.Append("Result: ").Append(result).Append('\n');
         return sb.ToString();

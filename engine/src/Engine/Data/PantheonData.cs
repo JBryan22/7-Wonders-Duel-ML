@@ -38,8 +38,10 @@ public sealed class DivinityDef
 /// <summary>A Grand Temple: an Age III card with its own back (R6), free while holding its Mythology's token (R9).</summary>
 public sealed class TempleDef
 {
-    /// <summary>0..4 in data order. Not a <see cref="GameData.Cards"/> index.</summary>
+    /// <summary>0..4 in data order. Not a card index: see <see cref="Card"/>.</summary>
     public required int Index { get; init; }
+    /// <summary>Its card index, continuing the base cards (73..77): read with <see cref="GameData.Card"/>.</summary>
+    public required int Card { get; init; }
     public required string Id { get; init; }
     public required string Name { get; init; }
     public required Mythology Mythology { get; init; }
@@ -85,12 +87,18 @@ public static class PantheonData
 {
     public const int SpaceCount = 6;
     public const int DeckSize = 3;
+    /// <summary>Counts of the identities that continue the base indices (checked against the data at load).</summary>
+    public const int TempleCount = 5, WonderCount = 2, TokenCount = 3;
 
     public static readonly MythologyDef[] Mythologies;
     /// <summary>The 15 Divinities grouped by Mythology, then the Gate (<see cref="Gate"/>).</summary>
     public static readonly DivinityDef[] Divinities;
     public static readonly int Gate;
     public static readonly TempleDef[] Temples;
+    /// <summary>The Grand Temples as cards (indices 73..77): Age III, colour <see cref="CardColor.Temple"/>, no chain.</summary>
+    public static readonly CardDef[] TempleCards;
+    /// <summary>The 5 Grand Temple cards: what a <c>temple</c> back can hide.</summary>
+    public static readonly CardSet TempleSet;
     /// <summary>End-of-game VP for 1, 2 and 3 Grand Temples built (index = count - 1).</summary>
     public static readonly int[] TemplePoints;
     public static readonly WonderDef[] Wonders;
@@ -133,11 +141,34 @@ public static class PantheonData
         Temples = temples["temples"]!.AsArray().Select((t, i) => new TempleDef
         {
             Index = i,
+            Card = GameData.Cards.Length + i,
             Id = (string)t!["id"]!,
             Name = (string)t["name"]!,
             Mythology = MythologyOf((string)t["mythology"]!),
             Cost = Cost.Parse((string?)t["cost"]),
         }).ToArray();
+        TempleCards = Temples.Select(t => new CardDef
+        {
+            Index = t.Card,
+            Id = t.Id,
+            Name = t.Name,
+            Aliases = [],
+            Age = 3,
+            Color = CardColor.Temple,
+            Cost = t.Cost,
+            Produce = new int[Resources.Count],
+            ProduceChoice = [],
+            FixedPrice = [],
+            Shields = 0,
+            Science = null,
+            VictoryPoints = 0,
+            Coins = 0,
+            CoinsPer = CoinsPerKind.None,
+            CoinsPerAmount = 0,
+            FreeIf = -1,
+            Guild = GuildKind.None,
+        }).ToArray();
+        TempleSet = CardSet.Of(TempleCards.Select(c => c.Index));
 
         Wonders = GameData.Load("pantheon", "wonders.json")["wonders"]!.AsArray()
             .Select((w, i) => GameData.ParseWonder(w!, GameData.Wonders.Length + i)).ToArray();
@@ -159,6 +190,9 @@ public static class PantheonData
             Name = (string)o["name"]!,
             Value = (int)o["value"]!,
         }).ToArray();
+
+        if (Temples.Length != TempleCount || Wonders.Length != WonderCount || Tokens.Length != TokenCount)
+            throw new InvalidOperationException("data/pantheon/ must hold 5 Grand Temples, 2 Wonders and 3 Progress tokens");
 
         DivinityBySlug = Divinities.ToDictionary(d => d.Id, d => d.Index);
         TempleBySlug = Temples.ToDictionary(t => t.Id, t => t.Index);
@@ -187,6 +221,9 @@ public static class PantheonData
 
     public static bool TryDivinityIndex(string slug, out int index) => DivinityBySlug.TryGetValue(slug, out index);
     public static bool TryTempleIndex(string slug, out int index) => TempleBySlug.TryGetValue(slug, out index);
+    public static bool TryWonderIndex(string slug, out int index) => WonderBySlug.TryGetValue(slug, out index);
+    public static bool TryTokenIndex(string slug, out int index) => TokenBySlug.TryGetValue(slug, out index);
+    public static bool TryOfferingIndex(string slug, out int index) => OfferingBySlug.TryGetValue(slug, out index);
     public static bool TryMythology(string slug, out Mythology mythology) => MythologyBySlug.TryGetValue(slug, out mythology);
 
     static DivinityDef ParseDivinity(JsonNode d, int index) => new()

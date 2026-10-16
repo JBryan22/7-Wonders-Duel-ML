@@ -1,39 +1,387 @@
+using SevenWondersDuel.Engine.Data;
+
 namespace SevenWondersDuel.Engine;
 
 /// <summary>
-/// The Pantheon expansion (spec-pantheon P-A3, P-A4), switched on by <c>expansion=pantheon</c>. So far only the seam:
-/// its hooks do nothing yet, so a Pantheon game plays like the base game. The rules arrive with the later Pantheon
-/// tickets (setup and tokens, activation, the Divinities). Its data is <see cref="Data.PantheonData"/>.
+/// The Pantheon expansion (spec-pantheon P-A3, P-A4), switched on by <c>expansion=pantheon</c>. Its data is
+/// <see cref="PantheonData"/>, its state <see cref="PantheonState"/>.
+/// <para>
+/// So far (ticket 02): the bigger pools (16 Wonders with both promos, 13 Progress tokens), the Age I Mythology tokens
+/// and the Divinity draws they cause, the Age II setup (the Gate, the Pantheon and Enki Reveals, the Offering tokens),
+/// Age III's Grand Temples in place of the Guilds, and the 3 new Progress tokens. Activating the Pantheon comes next.
+/// </para>
 /// </summary>
 internal sealed class PantheonModule : ExpansionModule
 {
     public static readonly PantheonModule Instance = new();
 
+    const int Mythologies = 5;
+    /// <summary>VP per Mythology or Offering token still held, with Mysticism.</summary>
+    public const int MysticismPointsPerToken = 2;
+    /// <summary>What Engineering makes a card with a chain symbol cost.</summary>
+    public const int EngineeringCost = 1;
+
+    static readonly int Mysticism = PantheonData.TokenIndex("mysticism");
+    static readonly int Poliorcetics = PantheonData.TokenIndex("poliorcetics");
+    static readonly int Engineering = PantheonData.TokenIndex("engineering");
+    static readonly int Enki = PantheonData.DivinityIndex("enki");
+    static readonly ushort Wonders = (ushort)PantheonData.Wonders.Aggregate(0, (m, w) => m | 1 << w.Index);
+    static readonly ushort Tokens = (ushort)PantheonData.Tokens.Aggregate(0, (m, t) => m | 1 << t.Index);
+    /// <summary>Per Mythology: its 3 Divinities, one bit per Divinity index.</summary>
+    static readonly ushort[] DeckOf = PantheonData.Mythologies
+        .Select(m => (ushort)m.Divinities.Aggregate(0, (mask, d) => mask | 1 << d)).ToArray();
+
     PantheonModule() { }
 
+    static PantheonState P(GameState s) => s.Pantheon!;
+
     public override ExpansionState NewState() => new PantheonState();
-}
+    public override ushort ExtraWonders => Wonders;
+    public override ushort ExtraTokens => Tokens;
+    public override CardSet? AgeThreeBacks => PantheonData.TempleSet;
 
-/// <summary>
-/// Pantheon's block of Game State (spec-pantheon P-A3): the Pantheon spaces, Mythology decks, tokens on structure
-/// slots and held, Astarte's coins, the Snake, Minerva and Enki's tokens. Empty for now: the fields arrive with the
-/// rules that use them.
-/// </summary>
-public sealed class PantheonState : ExpansionState
-{
-    public override ExpansionState Clone()
+    /// <summary>Enki's 2 tokens, and box tokens a player took (the Great Library's pick), are out of the box.</summary>
+    public override ushort TokensOutOfBox(GameState s) =>
+        (ushort)(P(s).EnkiTokens | ((s.Tokens(0) | s.Tokens(1)) & ~s.TokensSetOut));
+
+    // ---------------------------------------------------------------- setup
+
+    public override void Setup(GameState s, int age)
     {
-        var copy = new PantheonState();
-        copy.CopyFrom(this);
-        return copy;
+        var p = P(s);
+        Array.Fill(p.SlotTokens, (sbyte)PantheonState.NoToken);
+        switch (age)
+        {
+            case 1:
+                p.Awaiting |= PantheonState.SetupStep.MythologyTokens;
+                break;
+            case 2:
+                // The Gate goes face up in the empty space (all 5 Mythology tokens are taken in Age I, so there is one).
+                var empty = Array.IndexOf(p.Spaces, (sbyte)PantheonState.EmptySpace);
+                if (empty >= 0) p.Spaces[empty] = (sbyte)PantheonData.Gate;
+                if (p.FaceDown != 0) p.Awaiting |= PantheonState.SetupStep.Pantheon;
+                p.Awaiting |= PantheonState.SetupStep.Offerings;
+                break;
+        }
     }
 
-    public override void CopyFrom(ExpansionState other)
+    // ---------------------------------------------------------------- Reveals
+
+    static bool AwaitingDraw(GameState s) =>
+        s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity && !P(s).HasDraw;
+
+    public override bool AwaitingReveal(GameState s) => P(s).Awaiting != 0 || AwaitingDraw(s);
+
+    public override bool TryApply(GameState s, Reveal reveal)
     {
-        if (other is not PantheonState) throw new ArgumentException("Not a Pantheon state", nameof(other));
+        if (reveal is not (MythologyTokensReveal or DivinityDrawReveal or PantheonReveal or OfferingsReveal or EnkiReveal))
+            return false;
+        if (s.SlotsToReveal != 0) throw new InvalidOperationException("The structure's cards are revealed first");
+        switch (reveal)
+        {
+            case MythologyTokensReveal r: ApplyMythologyTokens(s, r); break;
+            case DivinityDrawReveal r: ApplyDraw(s, r); break;
+            case PantheonReveal r: ApplyPantheon(s, r); break;
+            case OfferingsReveal r: ApplyOfferings(s, r); break;
+            case EnkiReveal r: ApplyEnki(s, r); break;
+        }
+        return true;
     }
 
-    public override bool SameAs(ExpansionState other) => other is PantheonState;
+    static void ApplyMythologyTokens(GameState s, MythologyTokensReveal r)
+    {
+        var p = P(s);
+        if (!p.AwaitingMythologyTokens) throw new InvalidOperationException("The Mythology tokens are placed once, at Age I setup");
+        if (r.Tokens.Length != PantheonData.MythologySlots.Length
+            || !r.Tokens.Select(t => t.Slot).Order().SequenceEqual(PantheonData.MythologySlots.Order()))
+            throw new InvalidOperationException($"The Mythology tokens lie on Age I slots {SlotNames(1, PantheonData.MythologySlots)}");
+        foreach (var group in r.Tokens.GroupBy(t => t.Mythology))
+        {
+            if ((int)group.Key is < 0 or >= Mythologies) throw new InvalidOperationException($"Unknown Mythology {(int)group.Key}");
+            if (group.Count() > PantheonData.MythologyDef(group.Key).Tokens)
+                throw new InvalidOperationException($"There are only {PantheonData.MythologyDef(group.Key).Tokens} {PantheonData.MythologyDef(group.Key).Id} tokens");
+        }
+        foreach (var (slot, m) in r.Tokens) p.SlotTokens[slot] = (sbyte)m;
+        p.Awaiting &= ~PantheonState.SetupStep.MythologyTokens;
+    }
 
-    public override void Write(BinaryWriter w) { }
+    static void ApplyDraw(GameState s, DivinityDrawReveal r)
+    {
+        var p = P(s);
+        if (!AwaitingDraw(s)) throw new InvalidOperationException("No Mythology token is waiting for its Divinities");
+        var decision = s.Pending(0);
+        var m = (Mythology)decision.Wonder;
+        if (r.Player != decision.Player)
+            throw new InvalidOperationException($"The draw is P{decision.Player + 1}'s, not P{r.Player + 1}'s");
+        if (r.Mythology != m)
+            throw new InvalidOperationException($"P{decision.Player + 1} draws from the {PantheonData.MythologyDef(m).Id} deck");
+        if (r.Divinities.Length != 2 || r.Divinities[0] == r.Divinities[1])
+            throw new InvalidOperationException("A Mythology token draws 2 different Divinities");
+        var deck = (int)m * PantheonData.DeckSize;
+        if (p.DeckCount[(int)m] < 2) throw new InvalidOperationException($"The {PantheonData.MythologyDef(m).Id} deck holds fewer than 2 cards");
+        for (var i = 0; i < 2; i++)
+        {
+            var d = r.Divinities[i];
+            var known = p.DeckCards[deck + i];
+            if (known >= 0 && d != known)
+                throw new InvalidOperationException($"Card {i + 1} of the {PantheonData.MythologyDef(m).Id} deck is {PantheonData.Divinities[known].Id}");
+            if (known < 0 && (d < 0 || d >= PantheonData.Divinities.Length || (UnseenIn(p, m) & 1 << d) == 0))
+                throw new InvalidOperationException(
+                    $"{(d >= 0 && d < PantheonData.Divinities.Length ? PantheonData.Divinities[d].Id : "?")} is not an unseen card of the {PantheonData.MythologyDef(m).Id} deck");
+        }
+        for (var i = 0; i < 2; i++)
+        {
+            p.Draw[i] = (sbyte)r.Divinities[i];
+            p.DivinitiesSeen |= (ushort)(1 << r.Divinities[i]);
+        }
+        RemoveTop(p, m, 2);
+    }
+
+    static void ApplyPantheon(GameState s, PantheonReveal r)
+    {
+        var p = P(s);
+        if (!p.AwaitingPantheon) throw new InvalidOperationException("The Pantheon is revealed once, at Age II setup");
+        var named = 0;
+        foreach (var (space, d) in r.Divinities)
+        {
+            if (space is < 0 or >= PantheonData.SpaceCount || !p.IsFaceDown(space) || (named & 1 << space) != 0)
+                throw new InvalidOperationException($"Pantheon space {space + 1} holds no face-down card to reveal");
+            if (d != p.Spaces[space])
+                throw new InvalidOperationException($"Pantheon space {space + 1} holds {PantheonData.Divinities[p.Spaces[space]].Id}");
+            named |= 1 << space;
+        }
+        if (named != p.FaceDown) throw new InvalidOperationException("The Pantheon Reveal names every face-down card");
+        p.FaceDown = 0;
+        p.Awaiting &= ~PantheonState.SetupStep.Pantheon;
+        if (Array.IndexOf(p.Spaces, (sbyte)Enki) >= 0) p.Awaiting |= PantheonState.SetupStep.Enki;
+    }
+
+    static void ApplyOfferings(GameState s, OfferingsReveal r)
+    {
+        var p = P(s);
+        if (!p.AwaitingOfferings) throw new InvalidOperationException("The Offering tokens are placed once, at Age II setup");
+        if (p.AwaitingPantheon) throw new InvalidOperationException("The Pantheon is revealed before the Offering tokens");
+        if (r.Tokens.Length != PantheonData.OfferingSlots.Length
+            || !r.Tokens.Select(t => t.Slot).Order().SequenceEqual(PantheonData.OfferingSlots.Order()))
+            throw new InvalidOperationException($"The Offering tokens lie on Age II slots {SlotNames(2, PantheonData.OfferingSlots)}");
+        if (!r.Tokens.Select(t => t.Offering).Order().SequenceEqual(Enumerable.Range(0, PantheonData.Offerings.Length)))
+            throw new InvalidOperationException("The Offering Reveal places each of the 3 Offering tokens once");
+        foreach (var (slot, o) in r.Tokens) p.SlotTokens[slot] = (sbyte)(PantheonState.OfferingToken + o);
+        p.Awaiting &= ~PantheonState.SetupStep.Offerings;
+    }
+
+    static void ApplyEnki(GameState s, EnkiReveal r)
+    {
+        var p = P(s);
+        if (!p.AwaitingEnki) throw new InvalidOperationException("Enki has not just become face up");
+        if (p.AwaitingOfferings) throw new InvalidOperationException("The Offering tokens are revealed before Enki's tokens");
+        if (r.Tokens.Length != 2 || r.Tokens[0] == r.Tokens[1])
+            throw new InvalidOperationException("Enki draws 2 different Progress tokens");
+        ushort mask = 0;
+        foreach (var t in r.Tokens)
+        {
+            if (!GameData.IsToken(t) || (s.TokensSetAside & 1 << t) == 0)
+                throw new InvalidOperationException($"{(GameData.IsToken(t) ? GameData.Token(t).Id : "?")} is not in the box");
+            mask |= (ushort)(1 << t);
+        }
+        p.EnkiTokens = mask;
+        p.Awaiting &= ~PantheonState.SetupStep.Enki;
+    }
+
+    public override Reveal NextReveal(GameState s, Rng rng)
+    {
+        var p = P(s);
+        if (p.AwaitingMythologyTokens)
+        {
+            // 5 of the 10 tokens (2 per Mythology), uniformly, on the R1 slots in order.
+            var box = Enumerable.Range(0, Mythologies * 2).Select(i => (Mythology)(i / 2)).ToArray();
+            var slots = PantheonData.MythologySlots;
+            var picked = Shuffled(rng, box.Length, slots.Length);
+            return new MythologyTokensReveal(slots.Select((slot, i) => (slot, box[picked[i]])).ToArray());
+        }
+        if (p.AwaitingPantheon)
+            return new PantheonReveal(Enumerable.Range(0, PantheonData.SpaceCount).Where(p.IsFaceDown)
+                .Select(space => (space, (int)p.Spaces[space])).ToArray());
+        if (p.AwaitingOfferings)
+        {
+            var order = Shuffled(rng, PantheonData.Offerings.Length, PantheonData.Offerings.Length);
+            return new OfferingsReveal(PantheonData.OfferingSlots.Select((slot, i) => (slot, order[i])).ToArray());
+        }
+        if (p.AwaitingEnki)
+        {
+            var box = ProgressTokens.In(s.TokensSetAside).ToArray();
+            return new EnkiReveal(RandomChanceSource.Pick(rng, box.Length, 2).Select(i => box[i]).ToArray());
+        }
+        if (AwaitingDraw(s))
+        {
+            // Known cards on top are drawn first; each unknown position is a uniform unseen card of the deck.
+            var decision = s.Pending(0);
+            var m = (Mythology)decision.Wonder;
+            var unseen = UnseenIn(p, m);
+            var drawn = new int[2];
+            for (var i = 0; i < 2; i++)
+            {
+                var known = p.DeckCards[(int)m * PantheonData.DeckSize + i];
+                if (known >= 0) drawn[i] = known;
+                else
+                {
+                    var pool = new Bits(unseen).ToArray();
+                    drawn[i] = pool[rng.Next(pool.Length)];
+                    unseen &= (ushort)~(1 << drawn[i]);
+                }
+            }
+            return new DivinityDrawReveal(decision.Player, m, drawn);
+        }
+        throw new InvalidOperationException("Pantheon awaits no Reveal");
+    }
+
+    /// <summary><paramref name="count"/> distinct values below <paramref name="n"/>, uniformly, in draw order (not sorted).</summary>
+    static int[] Shuffled(Rng rng, int n, int count)
+    {
+        var values = Enumerable.Range(0, n).ToArray();
+        for (var i = 0; i < count; i++)
+        {
+            var j = i + rng.Next(n - i);
+            (values[i], values[j]) = (values[j], values[i]);
+        }
+        return values[..count];
+    }
+
+    /// <summary>A deck's cards nobody has named yet: what its unknown positions hold.</summary>
+    static ushort UnseenIn(PantheonState p, Mythology m) => (ushort)(DeckOf[(int)m] & ~p.DivinitiesSeen);
+
+    static void RemoveTop(PantheonState p, Mythology m, int count)
+    {
+        var deck = (int)m * PantheonData.DeckSize;
+        for (var i = 0; i < PantheonData.DeckSize; i++)
+        {
+            var from = i + count;
+            p.DeckCards[deck + i] = from < PantheonData.DeckSize ? p.DeckCards[deck + from] : (sbyte)PantheonState.Unknown;
+            p.DeckAudience[deck + i] = from < PantheonData.DeckSize ? p.DeckAudience[deck + from] : (byte)0;
+        }
+        p.DeckCount[(int)m] -= (byte)count;
+    }
+
+    static void PutOnTop(PantheonState p, Mythology m, int divinity, byte knownBy)
+    {
+        var deck = (int)m * PantheonData.DeckSize;
+        for (var i = PantheonData.DeckSize - 1; i > 0; i--)
+        {
+            p.DeckCards[deck + i] = p.DeckCards[deck + i - 1];
+            p.DeckAudience[deck + i] = p.DeckAudience[deck + i - 1];
+        }
+        p.DeckCards[deck] = (sbyte)divinity;
+        p.DeckAudience[deck] = knownBy;
+        p.DeckCount[(int)m]++;
+    }
+
+    static string SlotNames(int age, int[] slots) => string.Join(' ', slots.Select(GameData.Layout(age).SlotName));
+
+    // ---------------------------------------------------------------- decisions
+
+    public override int LegalMoves(GameState s, Span<Move> buffer)
+    {
+        if (s.Pending(0).Kind != DecisionKind.PlaceDivinity) return -1;
+        var p = P(s);
+        var n = 0;
+        for (var i = 0; i < 2; i++)
+            for (var space = 0; space < PantheonData.SpaceCount; space++)
+                if (p.Spaces[space] == PantheonState.EmptySpace) buffer[n++] = Move.PlaceDivinity(p.Draw[i], space);
+        return n;
+    }
+
+    public override bool TryWhyIllegal(GameState s, Move move, out string? why)
+    {
+        if (s.Pending(0).Kind != DecisionKind.PlaceDivinity)
+        {
+            why = move.Kind == MoveKind.Divinity ? "no drawn Divinity is waiting to be placed" : null;
+            return why is not null;
+        }
+        var p = P(s);
+        why = move.Kind != MoveKind.Divinity ? "the decision is which drawn Divinity to place, and on which empty Pantheon space"
+            : move.Divinity != p.Draw[0] && move.Divinity != p.Draw[1]
+                ? $"{(move.Divinity >= 0 && move.Divinity < PantheonData.Divinities.Length ? PantheonData.Divinities[move.Divinity].Id : "?")} was not drawn"
+            : move.Space is < 0 or >= PantheonData.SpaceCount ? $"there is no Pantheon space {move.Space + 1}"
+            : p.Spaces[move.Space] != PantheonState.EmptySpace ? $"Pantheon space {move.Space + 1} is taken"
+            : null;
+        return true;
+    }
+
+    public override bool TryApply(GameState s, Move move, PendingDecision decision)
+    {
+        if (decision.Kind != DecisionKind.PlaceDivinity) return false;
+        // Placed face down; the other card goes back on top of its deck, known only to this player. The take-card
+        // decision of the next turn is already queued behind (the token was taken as the turn ended).
+        var p = P(s);
+        var other = p.Draw[0] == move.Divinity ? p.Draw[1] : p.Draw[0];
+        p.Spaces[move.Space] = (sbyte)move.Divinity;
+        p.FaceDown |= (byte)(1 << move.Space);
+        if (decision.Player == 1) p.PlacedByP2 |= (byte)(1 << move.Space);
+        PutOnTop(p, (Mythology)decision.Wonder, other, (byte)(1 << decision.Player));
+        p.Draw[0] = p.Draw[1] = -1;
+        return true;
+    }
+
+    // ---------------------------------------------------------------- turns
+
+    /// <summary>
+    /// Taking tokens (spec-pantheon P-A3): a card holding a token that the turn has made accessible gives the token to
+    /// the player whose turn it is, before anything else (including play again). A Mythology token queues a
+    /// <c>divinity</c> decision (after its private draw); two tokens queue two, in slot order.
+    /// </summary>
+    public override void EndOfTurn(GameState s)
+    {
+        var p = P(s);
+        var player = s.CurrentPlayer;
+        for (var slot = 0; slot < GameState.SlotCount; slot++)
+        {
+            var token = p.SlotTokens[slot];
+            if (token == PantheonState.NoToken || !s.IsAccessible(slot)) continue;
+            p.SlotTokens[slot] = (sbyte)PantheonState.NoToken;
+            if (token >= PantheonState.OfferingToken)
+            {
+                p.HeldOfferings[player] |= (byte)(1 << (token - PantheonState.OfferingToken));
+                continue;
+            }
+            p.HeldMythology[player * Mythologies + token]++;
+            if (Array.IndexOf(p.Spaces, (sbyte)PantheonState.EmptySpace) >= 0)
+                s.PushDecision(new PendingDecision(DecisionKind.PlaceDivinity, player, token));
+        }
+    }
+
+    // ---------------------------------------------------------------- payment, military, scoring
+
+    /// <summary>
+    /// A Grand Temple is free while holding a token of its Mythology (R9: not a chain, so no Urbanism; the token is
+    /// kept). Engineering: a card showing a chain symbol under its cost costs 1 coin (not a chain build either).
+    /// </summary>
+    public override PaymentQuote AdjustQuote(GameState s, int player, int card, PaymentQuote quote)
+    {
+        if (quote.Total == 0) return quote;
+        if (PantheonData.TempleSet.Contains(card)
+            && P(s).MythologyTokens(player, PantheonData.Temples[card - GameData.Cards.Length].Mythology) > 0)
+            return default;
+        if (quote.Total > EngineeringCost && GameData.Card(card).FreeIf >= 0 && s.HasToken(player, Engineering))
+            return new PaymentQuote(EngineeringCost, 0);
+        return quote;
+    }
+
+    /// <summary>Poliorcetics: each space the owner moves the Conflict Pawn forward costs the opponent 1 coin.</summary>
+    public override void PawnAdvanced(GameState s, int player)
+    {
+        if (s.HasToken(player, Poliorcetics)) s.LoseCoins(1 - player, 1);
+    }
+
+    /// <summary>Grand Temples: 5 / 12 / 21 VP for 1 / 2 / 3. Mysticism: 2 VP per Mythology and Offering token held (Progress).</summary>
+    public override void Score(GameState s, int player, Span<int> points)
+    {
+        var temples = (s.City(player) & PantheonData.TempleSet).Count;
+        if (temples > 0) points[(int)ScoreCategory.Temples] += PantheonData.TemplePoints[temples - 1];
+        if (s.HasToken(player, Mysticism))
+        {
+            var p = P(s);
+            var held = p.MythologyTokenCount(player) + System.Numerics.BitOperations.PopCount((uint)p.HeldOfferings[player]);
+            points[(int)ScoreCategory.Progress] += MysticismPointsPerToken * held;
+        }
+    }
 }

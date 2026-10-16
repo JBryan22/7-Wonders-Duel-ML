@@ -210,14 +210,14 @@ public class PantheonDataTests
         var base_ = GameState.New(Ruleset.Default).ToBytes();
         var pantheon = GameState.New(new Ruleset(Expansions: Expansions.Pantheon)).ToBytes();
         Assert.Equal(base_, pantheon[..base_.Length]);
-        Assert.Equal([(byte)Expansions.Pantheon], pantheon[base_.Length..]);
+        // Then the expansion byte, Pantheon's 2 Wonders (unbuilt) and the Pantheon block.
+        Assert.Equal([(byte)Expansions.Pantheon, 0xFF, 0xFF], pantheon[base_.Length..(base_.Length + 3)]);
         Assert.False(GameState.New(Ruleset.Default).SameAs(GameState.New(new Ruleset(Expansions: Expansions.Pantheon))));
     }
 
     [Fact]
     public void Pantheon_games_play_to_the_end_copy_and_replay_from_their_log()
     {
-        // The module's hooks do nothing yet, so a Pantheon game is still a base game under another header.
         for (ulong seed = 0; seed < 50; seed++)
         {
             var game = new Game(Ruleset.Parse(seed % 2 == 0 ? "rules base expansion=pantheon" : "rules base promo=messe expansion=pantheon"));
