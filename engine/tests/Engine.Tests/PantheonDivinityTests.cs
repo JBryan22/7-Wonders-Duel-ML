@@ -292,6 +292,66 @@ public class PantheonDivinityTests
         Assert.Equal(tuck, s.WonderCard(wonder));
     }
 
+    [Fact]
+    public void A_statue_of_liberty_rebuilt_after_anubis_in_the_same_age_has_no_cards_left_to_return()
+    {
+        // Ticket 06's soak: only 3 cards are removed from each Age's deck, and the Statue's first build returned them.
+        var liberty = GameData.WonderIndex("statue-of-liberty");
+        Game? found = null;
+        for (ulong seed = 0; seed < 200 && found is null; seed++)
+        {
+            var game = new Game(Ruleset.Parse("rules base promo=liberty expansion=pantheon"));
+            var (chance, rng, s) = (new RandomChanceSource(seed), new Rng(seed + 1000), game.State);
+            while (!s.IsOver)
+            {
+                if (s.Step == StepKind.Reveal) game.Apply(chance.Next(s));
+                else if (s.Age == 2 && s.PendingCount == 1 && s.Pending(0).Kind == DecisionKind.TakeCard && s.PlayerToDecide == 0
+                    && ((s.Wonders(0) | s.Wonders(1)) & 1 << liberty) == 0 && s.TotalWondersBuilt < 6 && s.CardsLeftInAge >= 6)
+                {
+                    found = game;
+                    break;
+                }
+                else
+                {
+                    var moves = s.LegalMoves();
+                    game.Apply(moves[rng.Next(moves.Count)]);
+                }
+            }
+        }
+        Assert.NotNull(found);
+        var st = found.State;
+        var p = st.Pantheon!;
+        st.GiveWonder(0, liberty);
+        st.SetCoins(0, 99);
+        found.Apply(Move.BuildWonder(st.SlotCard(Accessible(st)[0]), liberty));
+        Reveals(found);
+        Assert.IsType<ReturnedReveal>(found.Log.Last(e => e is Reveal and not SlotReveal));
+        while (st.PlayerToDecide == 0 && st.Pending(0).Kind is DecisionKind.LibertyKeep or DecisionKind.LibertyGive or DecisionKind.ChooseToken)
+        {
+            found.Apply(st.LegalMoves()[0]);
+            Reveals(found);
+        }
+        // P2 activates Anubis and unbuilds the Statue; P1 builds it again in the same Age: nothing is returned.
+        Assert.Equal((1, DecisionKind.TakeCard), (st.PlayerToDecide, st.Pending(0).Kind));
+        Array.Fill(p.Spaces, (sbyte)PantheonState.EmptySpace);
+        p.Spaces[0] = (sbyte)D("anubis");
+        p.FaceDown = 0;
+        Activate(found, "anubis");
+        found.Apply(Move.Anubis(liberty));
+        Reveals(found);
+        Assert.Equal((0, DecisionKind.TakeCard), (st.PlayerToDecide, st.Pending(0).Kind));
+        st.SetCoins(0, 99);
+        var unseen = st.UnseenPool(2);
+        found.Apply(Move.BuildWonder(st.SlotCard(Accessible(st)[0]), liberty));
+        Reveals(found);
+        Assert.True(st.IsWonderBuilt(liberty));
+        Assert.DoesNotContain(found.Log.SkipWhile(e => e is not MoveEntry { Move.Kind: MoveKind.Anubis }), e => e is ReturnedReveal);
+        Assert.True(st.LibertyOffer.IsEmpty);
+        Assert.NotEqual(DecisionKind.LibertyKeep, st.Pending(0).Kind);
+        Assert.Equal(1, st.PlayerToDecide);
+        Assert.True((unseen & ~st.UnseenPool(2)).Count <= 2, "only the flips the build caused were revealed");
+    }
+
     /// <summary>
     /// Plays a Pantheon game: random Moves in Age I (no Wonders), then from Age II <paramref name="take"/> answers each
     /// take-card decision (random answers to other decisions), until <paramref name="stop"/> holds at a lone take-card decision.

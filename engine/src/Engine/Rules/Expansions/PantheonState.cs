@@ -60,6 +60,11 @@ public sealed class PantheonState : ExpansionState
     internal sbyte TheaterPending = -1;
     /// <summary>The Military track space (-9..9, like the Conflict Pawn) holding the Minerva pawn, or <see cref="NoMinerva"/>.</summary>
     internal sbyte MinervaSpace = NoMinerva;
+    /// <summary>
+    /// The Age whose 3 removed cards the Statue of Liberty has returned, or 0: after Anubis, a Statue rebuilt in the
+    /// same Age finds none left (ticket 06).
+    /// </summary>
+    internal byte ReturnedCardsAge;
     internal SetupStep Awaiting;
 
     [Flags]
@@ -169,6 +174,7 @@ public sealed class PantheonState : ExpansionState
         GatePending = o.GatePending;
         TheaterPending = o.TheaterPending;
         MinervaSpace = o.MinervaSpace;
+        ReturnedCardsAge = o.ReturnedCardsAge;
         Awaiting = o.Awaiting;
     }
 
@@ -187,7 +193,8 @@ public sealed class PantheonState : ExpansionState
         && EnkiTokens == o.EnkiTokens && Awaiting == o.Awaiting
         && ActivatedBy.AsSpan().SequenceEqual(o.ActivatedBy) && Astarte.AsSpan().SequenceEqual(o.Astarte)
         && SnakeCard == o.SnakeCard && ZeusSlot == o.ZeusSlot
-        && GatePending == o.GatePending && TheaterPending == o.TheaterPending && MinervaSpace == o.MinervaSpace;
+        && GatePending == o.GatePending && TheaterPending == o.TheaterPending && MinervaSpace == o.MinervaSpace
+        && ReturnedCardsAge == o.ReturnedCardsAge;
 
     public override void Write(BinaryWriter w)
     {
@@ -211,6 +218,7 @@ public sealed class PantheonState : ExpansionState
         w.Write(GatePending);
         w.Write(TheaterPending);
         w.Write(MinervaSpace);
+        w.Write(ReturnedCardsAge);
     }
 
     /// <summary>A few lines for <see cref="StatePrinter"/>.</summary>
@@ -241,10 +249,13 @@ public sealed class PantheonState : ExpansionState
         var onSlots = Enumerable.Range(0, GameState.SlotCount).Where(i => SlotTokens[i] != NoToken && age > 0)
             .Select(i => $"{GameData.Layout(age).SlotName(i)} {TokenSlug(SlotTokens[i])}").ToList();
         if (onSlots.Count > 0) lines.Add("Tokens on the structure: " + string.Join(' ', onSlots));
-        if (HasDraw) lines.Add($"Drawn: {Slug(Draw[0])} {Slug(Draw[1])}");
+        if (HasDraw) lines.Add($"Drawn: {string.Join(' ', Draw.Where(d => d >= 0).Select(d => Slug(d)))}");
         if (EnkiTokens != 0) lines.Add($"Enki's tokens: {ProgressTokens.Names(EnkiTokens)}");
         if (SnakeCard >= 0) lines.Add($"Nisaba's Snake: {GameData.Card(SnakeCard).Id}");
         if (MinervaSpace != NoMinerva) lines.Add($"Minerva: Military track space {MinervaSpace}");
+        if (GatePending) lines.Add("The Gate: waiting for the deck tops' Reveal");
+        if (TheaterPending >= 0) lines.Add($"The Divine Theater: looking through the {PantheonData.Mythologies[TheaterPending].Id} deck");
+        if (ZeusSlot >= 0 && age > 0) lines.Add($"Zeus: discarding the face-down card on {GameData.Layout(age).SlotName(ZeusSlot)}");
         return string.Join('\n', lines) + '\n';
     }
 }

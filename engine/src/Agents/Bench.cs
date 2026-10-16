@@ -19,7 +19,8 @@ public sealed record BenchResult(string Name, int Games, long Decisions, double 
 /// Random-play speed on the calling thread (spec A11, speed: the target is 10k random games/s on one core). Three
 /// variants separate the costs: the full <see cref="GameRunner"/> (Move Log and an Observation per decision), the
 /// bare Game State with an Observation per decision (what an Agent sees), and the bare Game State choosing from its own
-/// legal Moves (the rules alone). Each runs seeded games back to back for about <c>duration</c>, after a short warm-up.
+/// legal Moves (the rules alone). A fourth line plays Pantheon games the bare way (spec-pantheon P-A10), so a Pantheon
+/// slowdown shows apart from the base numbers. Each runs seeded games back to back for about <c>duration</c>, after a short warm-up.
 /// </summary>
 public static class Bench
 {
@@ -30,6 +31,7 @@ public static class Bench
             ("GameRunner (log + Observe)", PlayLogged),
             ("Game State + Observe", s => PlayBare(s, observe: true)),
             ("Game State only", s => PlayBare(s, observe: false)),
+            ("Game State only (Pantheon)", s => PlayBare(s, observe: false, Pantheon)),
         };
         var results = new List<BenchResult>();
         foreach (var (name, play) in variants)
@@ -59,13 +61,15 @@ public static class Bench
         return game.Log.Count(e => e is MoveEntry);
     }
 
-    static long PlayBare(ulong seed, bool observe)
+    static readonly Ruleset Pantheon = new(Expansions: Expansions.Pantheon);
+
+    static long PlayBare(ulong seed, bool observe, Ruleset? rules = null)
     {
         var seeds = new Rng(seed);
         var chance = new RandomChanceSource(seeds.NextUInt64());
         var rng = new[] { new Rng(seeds.NextUInt64()), new Rng(seeds.NextUInt64()) };
         Span<Move> moves = stackalloc Move[GameState.MaxMoves];
-        var s = GameState.New(Ruleset.Default);
+        var s = GameState.New(rules ?? Ruleset.Default);
         var decisions = 0L;
         while (true)
         {

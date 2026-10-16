@@ -777,9 +777,11 @@ public sealed class GameState
                 if (TopRowSlots != 0) PushDecision(new PendingDecision(DecisionKind.Messe, player, wonder));
                 break;
             case WonderEffect.Liberty:
-                // Never skipped: an Age card was just taken, so this Age's 3 removed cards exist (promo-wonders
-                // §3.1.10). Their Reveal (AwaitingReturnedCards) comes after the flips, then liberty-keep and -give.
-                PushDecision(new PendingDecision(DecisionKind.LibertyKeep, player, wonder));
+                // An Age card was just taken, so this Age's 3 removed cards exist (promo-wonders §3.1.10), unless an
+                // expansion let the Statue be built twice in one Age (Pantheon's Anubis): then they are gone. Their
+                // Reveal (AwaitingReturnedCards) comes after the flips, then liberty-keep and -give.
+                if (_module is null || _module.TakeReturnedCards(this))
+                    PushDecision(new PendingDecision(DecisionKind.LibertyKeep, player, wonder));
                 break;
             default:
                 // An expansion Wonder's power (Pantheon's Divine Theater).

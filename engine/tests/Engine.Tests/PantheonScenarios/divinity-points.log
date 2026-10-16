@@ -1,0 +1,135 @@
+7wd-log v1
+rules base start-choice=new expansion=pantheon
+# Hand-traced Pantheon scenario (ticket 06): Aphrodite, Astarte and Tanit, and free Grand Temples.
+# Script: P1 activates Aphrodite or Astarte, P2 Tanit, whenever they can; a player holding a Mythology token builds its
+# Grand Temple (free, R9). Every other take-card turn discards the first accessible card (2 coins: nobody builds a yellow card). Reveals come from RandomChanceSource(19); other decisions take the first legal Move.
+# The working is in PantheonScenarioTests.Divinity_points.
+reveal first P2
+reveal tokens economy mathematics philosophy urbanism mysticism
+reveal draft appian-way hanging-gardens mausoleum temple-of-artemis
+P2 draft appian-way
+P1 draft hanging-gardens
+P1 draft mausoleum
+P2 draft temple-of-artemis
+reveal draft colossus great-lighthouse pyramids sphinx
+P1 draft colossus
+P2 draft great-lighthouse
+P2 draft pyramids
+P1 draft sphinx
+reveal age1 0.0 stable 0.1 press 2.0 clay-pool 2.1 logging-camp 2.2 garrison 2.3 baths 4.0 guard-tower 4.1 pharmacist 4.2 workshop 4.3 clay-pit 4.4 palisade 4.5 stone-pit
+reveal myth-tokens 1.0 egyptian 1.2 greek 3.0 phoenician 3.2 phoenician 3.4 greek
+# Age I tokens: 1.0 egyptian, 1.2 greek, 3.0 phoenician, 3.2 phoenician, 3.4 greek: each goes to the player whose turn flips its card.
+P2 discard guard-tower
+P1 discard pharmacist
+reveal 3.0 altar
+reveal P1 divinities phoenician tanit astarte
+P1 divinity tanit 1
+# P1 took the phoenician token (3.0, flipped by P1's discard).
+P2 discard altar
+P1 discard workshop
+reveal 3.1 clay-reserve
+P2 discard clay-reserve
+P1 discard clay-pool
+P2 discard clay-pit
+reveal 3.2 theater
+reveal P2 divinities phoenician astarte baal
+P2 divinity astarte 2
+# P2 took the phoenician token (3.2).
+P1 discard theater
+P2 discard logging-camp
+reveal 1.0 lumber-yard
+reveal P2 divinities egyptian ra anubis
+P2 divinity ra 3
+# P2 took the egyptian token (1.0).
+P1 discard lumber-yard
+P2 discard palisade
+reveal 3.3 glassworks
+P1 discard glassworks
+P2 discard garrison
+reveal 1.1 scriptorium
+P1 discard scriptorium
+P2 discard stable
+P1 discard stone-pit
+reveal 3.4 stone-reserve
+reveal P1 divinities greek hades aphrodite
+P1 divinity hades 4
+# P1 took the greek token (3.4).
+P2 discard stone-reserve
+P1 discard baths
+reveal 1.2 tavern
+reveal P1 divinities greek aphrodite zeus
+P1 divinity aphrodite 5
+# P1 took the greek token (1.2). End of Age I: 10 discards each, 7 + 20 = 27 coins each.
+P2 discard tavern
+P1 discard press
+reveal age2 0.0 parade-ground 0.1 laboratory 0.2 brickyard 0.3 library 0.4 forum 0.5 archery-range 2.0 customs-house 2.1 school 2.2 sawmill 2.3 aqueduct 4.0 dispensary 4.1 temple
+reveal pantheon 1 tanit 2 astarte 3 ra 4 hades 5 aphrodite
+# The Gate goes on the empty space 6.
+reveal offerings 1.0 offering-4 1.2 offering-3 1.4 offering-2
+P1 start me
+P1 activate aphrodite
+# Space 5 costs P1 7: P1 27 - 7 = 20 coins; Aphrodite 9 VP.
+P2 activate tanit
+# Space 1 costs P2 8: P2 27 - 8 + 12 = 31 coins.
+P1 activate astarte
+# Space 2 costs P1 4: P1 20 - 4 = 16 coins, plus Astarte's 7 (never spent).
+P2 discard dispensary
+reveal 3.0 brewery
+P1 discard brewery
+P2 discard customs-house
+reveal 1.0 rostrum
+P1 discard rostrum
+P2 discard parade-ground
+P1 discard temple
+reveal 3.1 courthouse 3.2 horse-breeders
+P2 discard courthouse
+P1 discard school
+reveal 1.1 walls
+P2 discard walls
+P1 discard laboratory
+P2 discard horse-breeders
+P1 discard sawmill
+reveal 1.2 barracks
+P2 discard barracks
+P1 discard brickyard
+P2 discard aqueduct
+reveal 1.3 statue 1.4 caravansery
+P1 discard statue
+P2 discard library
+P1 discard caravansery
+P2 discard forum
+P1 discard archery-range
+# End of Age II: 10 discards each. P1 16 + 20 = 36, P2 31 + 20 = 51 (the Offering tokens P1 and P2 took are never used).
+reveal temples 0.1 2.1 2.3
+reveal age3 0.0 academy 0.1 phoenician-grand-temple 2.0 chamber-of-commerce 2.1 greek-grand-temple 2.2 port 2.3 egyptian-grand-temple 4.0 pretorium 4.1 lighthouse 4.2 town-hall 4.3 armory 6.0 arsenal 6.1 study
+P1 start me
+P1 discard arsenal
+reveal 5.0 senate
+P2 discard senate
+P1 discard pretorium
+P2 discard study
+reveal 5.1 circus 5.2 pantheon
+P1 discard circus
+P2 discard lighthouse
+reveal 3.0 gardens
+P1 discard gardens
+P2 discard chamber-of-commerce
+P1 build greek-grand-temple
+# Free: P1 holds a greek token.
+reveal 1.0 fortifications
+P2 discard fortifications
+P1 discard pantheon
+P2 discard town-hall
+P1 discard armory
+reveal 3.1 arena
+P2 discard arena
+P1 discard port
+reveal 1.1 obelisk
+P2 build egyptian-grand-temple
+# Free: P2 holds an egyptian token.
+reveal 1.2 siege-workshop
+P1 discard obelisk
+P2 discard academy
+P1 discard siege-workshop
+P2 build phoenician-grand-temple
+# Free: P2 holds a phoenician token. Age III: P1 9 discards (54 coins), P2 8 discards (67 coins).

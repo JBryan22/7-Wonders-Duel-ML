@@ -1,0 +1,122 @@
+7wd-log v1
+rules base start-choice=new expansion=pantheon
+# Hand-traced Pantheon scenario (ticket 06): Minerva stopping Mars, military looting, chains, a military victory.
+# Script: P1 builds every red card it can afford and activates Mars; P2 activates Minerva and puts her one space
+# ahead of the Conflict Pawn (toward P2). Every other take-card turn discards the first accessible card (2 coins: nobody builds a yellow card). Reveals come from RandomChanceSource(35); other decisions take the first legal Move.
+# Nobody produces anything, so every missing resource costs 2 coins. The working is in PantheonScenarioTests.War.
+reveal first P1
+reveal tokens law masonry strategy theology urbanism
+reveal draft colossus great-library hanging-gardens pyramids
+P1 draft colossus
+P2 draft great-library
+P2 draft hanging-gardens
+P1 draft pyramids
+reveal draft circus-maximus great-lighthouse piraeus divine-theater
+P2 draft circus-maximus
+P1 draft great-lighthouse
+P1 draft piraeus
+P2 draft divine-theater
+reveal age1 0.0 quarry 0.1 guard-tower 2.0 clay-pool 2.1 lumber-yard 2.2 clay-pit 2.3 stable 4.0 scriptorium 4.1 stone-pit 4.2 palisade 4.3 glassworks 4.4 pharmacist 4.5 baths
+reveal myth-tokens 1.0 mesopotamian 1.2 egyptian 3.0 roman 3.2 roman 3.4 phoenician
+P1 build palisade
+# P1 pays 2: 5 coins. Pawn 1 toward P2.
+P2 discard scriptorium
+P1 discard stone-pit
+reveal 3.0 theater 3.1 workshop
+reveal P1 divinities roman mars minerva
+P1 divinity mars 1
+P2 discard theater
+P1 discard workshop
+P2 discard clay-pool
+P1 discard glassworks
+reveal 3.2 clay-reserve
+reveal P1 divinities roman minerva neptune
+P1 divinity minerva 2
+P2 discard clay-reserve
+P1 discard lumber-yard
+reveal 1.0 stone-reserve
+reveal P1 divinities mesopotamian ishtar enki
+P1 divinity ishtar 3
+P2 discard stone-reserve
+P1 discard pharmacist
+reveal 3.3 altar
+P2 discard altar
+P1 discard clay-pit
+reveal 1.1 press
+P2 discard press
+P1 discard quarry
+P2 discard baths
+reveal 3.4 wood-reserve
+reveal P2 divinities phoenician astarte tanit
+P2 divinity astarte 4
+P1 discard wood-reserve
+P2 discard stable
+reveal 1.2 apothecary
+reveal P2 divinities egyptian ra isis
+P2 divinity ra 5
+P1 discard apothecary
+P2 discard guard-tower
+# End of Age I: P1 1 build + 9 discards = 7 - 2 + 18 = 23; P2 10 discards = 27. Pawn 1 toward P2.
+reveal age2 0.0 brickyard 0.1 archery-range 0.2 parade-ground 0.3 caravansery 0.4 walls 0.5 horse-breeders 2.0 barracks 2.1 courthouse 2.2 library 2.3 rostrum 4.0 temple 4.1 brewery
+reveal pantheon 1 mars 2 minerva 3 ishtar 4 astarte 5 ra
+reveal offerings 1.0 offering-2 1.2 offering-3 1.4 offering-4
+# The Gate goes on the empty space 6.
+P2 start me
+P2 activate minerva
+P2 minerva 2
+# Space 2 costs P2 7: P2 20 coins. Minerva on 2 toward P2.
+P1 activate mars
+# Space 1 costs P1 3: P1 20 coins. Mars's 2 shields: the pawn would enter Minerva's space 2, so it stays on 1 and Minerva leaves.
+P2 discard temple
+reveal 3.0 shelf-quarry
+P1 discard shelf-quarry
+P2 discard barracks
+reveal 1.0 aqueduct
+# P2 took offering-2 (1.0).
+P1 discard aqueduct
+P2 discard brickyard
+P1 discard brewery
+reveal 3.1 glass-blower 3.2 drying-room
+P2 discard glass-blower
+P1 discard courthouse
+reveal 1.1 laboratory
+P2 discard laboratory
+P1 build archery-range
+# S W P = 6 coins: P1 22. Pawn 1 -> 3: P2 loses the 2-coin token (30 - 2 = 28).
+P2 discard drying-room
+P1 discard library
+reveal 1.2 customs-house
+# P1 took offering-3 (1.2).
+P2 discard customs-house
+P1 build parade-ground
+# C C G = 6 coins: P1 18. Pawn 5.
+P2 discard rostrum
+reveal 1.3 statue 1.4 sawmill
+# P2 took offering-4 (1.4).
+P1 discard statue
+P2 discard caravansery
+P1 discard sawmill
+P2 discard walls
+P1 build horse-breeders
+# C W = 4 coins (no Stable): P1 18. Pawn 6: P2 loses the 5-coin token (38 - 5 = 33).
+reveal temples 1.2 2.0 2.3
+reveal age3 0.0 armory 0.1 observatory 2.0 mesopotamian-grand-temple 2.1 university 2.2 port 2.3 egyptian-grand-temple 4.0 arsenal 4.1 gardens 4.2 siege-workshop 4.3 pretorium 6.0 lighthouse 6.1 pantheon
+P2 start me
+P2 discard lighthouse
+reveal 5.0 fortifications
+P1 build fortifications
+# Free: chained from the Palisade. Pawn 8.
+P2 discard arsenal
+P1 discard pantheon
+reveal 5.1 palace 5.2 academy
+P2 discard palace
+P1 discard gardens
+reveal 3.0 town-hall
+P2 discard town-hall
+P1 discard mesopotamian-grand-temple
+P2 discard university
+reveal 1.0 obelisk
+P1 discard obelisk
+P2 discard academy
+P1 build siege-workshop
+# Free: chained from the Archery Range. Pawn 9: P2's capital, P1 wins. P1 18 + 4 discards = 26 coins, P2 33 + 6 discards = 45.

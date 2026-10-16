@@ -98,6 +98,12 @@ internal abstract class ExpansionModule
     /// </summary>
     public virtual bool PawnBlocked(GameState s, int position) => false;
 
+    /// <summary>
+    /// The Statue of Liberty was just built: true if the current Age's 3 removed cards are still there to return. The
+    /// module remembers they are taken, for an expansion that lets the Statue be built again in the same Age.
+    /// </summary>
+    public virtual bool TakeReturnedCards(GameState s) => true;
+
     /// <summary>A Wonder whose power the base game does not know has just been built: queue its decision, if any.</summary>
     public virtual void WonderPower(GameState s, int player, int wonder) { }
 

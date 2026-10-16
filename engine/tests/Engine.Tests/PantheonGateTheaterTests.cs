@@ -249,6 +249,31 @@ public class PantheonGateTheaterTests
         Assert.Equal((reveal.Divinities[1], 2), (p.DeckCard(deck, 0), p.DeckKnownBy(deck, 0)));
     }
 
+    [Theory]
+    [InlineData(Mythology.Greek)]
+    [InlineData(Mythology.Phoenician)]
+    [InlineData(Mythology.Mesopotamian)]
+    [InlineData(Mythology.Egyptian)]
+    [InlineData(Mythology.Roman)]
+    public void The_theater_takes_the_chosen_card_out_of_any_deck(Mythology deck)
+    {
+        // Ticket 06's soak found the chosen card was taken from the wrong place in every deck but the Greek one.
+        var (game, _) = AgeTwoWithFullDeck(0, (s, m) => m == deck);
+        var s = game.State;
+        var p = s.Pantheon!;
+        BuildTheater(game);
+        game.Apply(Move.TheaterDeck(deck));
+        var reveal = Assert.IsType<TheaterReveal>(new RandomChanceSource(4).Next(s));
+        game.Apply(reveal);
+        var (top, middle, bottom) = (reveal.Divinities[0], reveal.Divinities[1], reveal.Divinities[2]);
+        game.Apply(Move.Theater(top));
+        Assert.Equal(2, p.DeckSize(deck));
+        Assert.Equal((middle, bottom), (p.DeckCard(deck, 0), p.DeckCard(deck, 1)));
+        game.Apply(Move.TheaterOrder(bottom));
+        Assert.Equal((bottom, middle), (p.DeckCard(deck, 0), p.DeckCard(deck, 1)));
+        Assert.NotEqual(0, p.Activated(0) & 1 << top);
+    }
+
     [Fact]
     public void A_mythology_token_on_a_deck_of_one_card_draws_it_alone()
     {

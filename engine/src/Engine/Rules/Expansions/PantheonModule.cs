@@ -908,7 +908,7 @@ internal sealed class PantheonModule : ExpansionModule
     static void RemoveFromDeck(PantheonState p, Mythology m, int divinity)
     {
         var deck = (int)m * PantheonData.DeckSize;
-        var i = Array.IndexOf(p.DeckCards, (sbyte)divinity, deck, p.DeckCount[(int)m]);
+        var i = Array.IndexOf(p.DeckCards, (sbyte)divinity, deck, p.DeckCount[(int)m]) - deck;
         for (; i < PantheonData.DeckSize - 1; i++)
         {
             p.DeckCards[deck + i] = p.DeckCards[deck + i + 1];
@@ -935,6 +935,18 @@ internal sealed class PantheonModule : ExpansionModule
     {
         if (wonder == Theater && P(s).DeckCount.Any(c => c > 0))
             s.PushDecision(new PendingDecision(DecisionKind.TheaterDeck, player, wonder));
+    }
+
+    /// <summary>
+    /// The Statue of Liberty (promo) returns the 3 cards removed from the current Age's deck. Anubis can unbuild it and
+    /// it can be built again in the same Age: those cards are gone by then, so it does nothing (ticket 06).
+    /// </summary>
+    public override bool TakeReturnedCards(GameState s)
+    {
+        var p = P(s);
+        if (p.ReturnedCardsAge == s.Age) return false;
+        p.ReturnedCardsAge = (byte)s.Age;
+        return true;
     }
 
     /// <summary>Zeus's card goes to the discard pile and the player who used Zeus takes any token on it (R2).</summary>

@@ -1,0 +1,134 @@
+7wd-log v1
+rules base start-choice=new expansion=pantheon
+# Hand-traced Pantheon scenario (ticket 06): Offering tokens paying for Astarte and Neptune; Neptune against Astarte's coins.
+# Script: once holding an Offering token, P1 activates Astarte (or Aphrodite, Tanit) and P2 Neptune, offering every token
+# held; Neptune applies the costliest token left. Every other take-card turn discards the first accessible card (2 coins: nobody builds a yellow card). Reveals come from RandomChanceSource(41); other decisions take the first legal Move.
+# The working is in PantheonScenarioTests.Offerings_astarte_neptune.
+reveal first P2
+reveal tokens architecture philosophy strategy theology urbanism
+reveal draft appian-way mausoleum statue-of-zeus divine-theater
+P2 draft appian-way
+P1 draft mausoleum
+P1 draft statue-of-zeus
+P2 draft divine-theater
+reveal draft colossus hanging-gardens piraeus temple-of-artemis
+P1 draft colossus
+P2 draft hanging-gardens
+P2 draft piraeus
+P1 draft temple-of-artemis
+reveal age1 0.0 quarry 0.1 logging-camp 2.0 guard-tower 2.1 glassworks 2.2 press 2.3 garrison 4.0 stone-reserve 4.1 altar 4.2 stone-pit 4.3 palisade 4.4 theater 4.5 clay-pool
+reveal myth-tokens 1.0 mesopotamian 1.2 phoenician 3.0 roman 3.2 greek 3.4 egyptian
+P2 discard stone-reserve
+P1 discard altar
+reveal 3.0 pharmacist
+reveal P1 divinities roman neptune minerva
+P1 divinity neptune 1
+P2 discard pharmacist
+P1 discard stone-pit
+reveal 3.1 wood-reserve
+P2 discard wood-reserve
+P1 discard guard-tower
+P2 discard palisade
+reveal 3.2 apothecary
+reveal P2 divinities greek hades aphrodite
+P2 divinity hades 2
+P1 discard apothecary
+P2 discard glassworks
+reveal 1.0 baths
+reveal P2 divinities mesopotamian ishtar nisaba
+P2 divinity ishtar 3
+P1 discard baths
+P2 discard theater
+reveal 3.3 tavern
+P1 discard tavern
+P2 discard press
+reveal 1.1 stable
+P1 discard stable
+P2 discard quarry
+P1 discard clay-pool
+reveal 3.4 clay-reserve
+reveal P1 divinities egyptian anubis ra
+P1 divinity anubis 4
+P2 discard clay-reserve
+P1 discard garrison
+reveal 1.2 workshop
+reveal P1 divinities phoenician astarte tanit
+P1 divinity astarte 5
+P2 discard workshop
+P1 discard logging-camp
+# End of Age I: 10 discards each, 27 coins each.
+reveal age2 0.0 dispensary 0.1 library 0.2 brickyard 0.3 glass-blower 0.4 caravansery 0.5 laboratory 2.0 rostrum 2.1 horse-breeders 2.2 brewery 2.3 sawmill 4.0 parade-ground 4.1 walls
+reveal pantheon 1 neptune 2 hades 3 ishtar 4 anubis 5 astarte
+# The Gate goes on the empty space 6.
+reveal offerings 1.0 offering-4 1.2 offering-3 1.4 offering-2
+P1 start me
+P1 discard parade-ground
+reveal 3.0 drying-room
+P2 discard drying-room
+P1 discard rostrum
+reveal 1.0 temple
+# P1 took offering-4 (1.0): P1 has 31 coins.
+P2 discard temple
+P1 activate astarte
+P1 offer 4
+# Space 5 costs P1 7: the 4 token and 3 coins, 28 left. Astarte: 7 coins kept apart.
+P2 discard dispensary
+P1 discard walls
+reveal 3.1 statue 3.2 aqueduct
+P2 discard statue
+P1 discard horse-breeders
+reveal 1.1 shelf-quarry
+P2 discard shelf-quarry
+P1 discard library
+P2 discard aqueduct
+P1 discard brewery
+reveal 1.2 customs-house
+# P1 took offering-3 (1.2).
+P2 discard customs-house
+P1 discard brickyard
+P2 discard sawmill
+reveal 1.3 school 1.4 archery-range
+# P2 took offering-2 (1.4).
+P1 discard school
+P2 activate neptune
+P2 offer 2
+# Space 1 costs P2 8: the 2 token and 6 coins, 43 - 6 = 37.
+P2 neptune-discard P1:2
+P2 neptune-apply P1:5
+# P1 loses 5 coins from the treasury (40 - 5 = 35); Astarte's 7 are safe (R7).
+P1 discard glass-blower
+P2 discard archery-range
+P1 discard caravansery
+P2 discard laboratory
+# End of Age II: P1 39, P2 41 coins; P1 still holds offering-3 (no VP without Mysticism).
+reveal temples 1.0 1.2 5.2
+reveal age3 0.0 siege-workshop 0.1 obelisk 2.0 port 2.1 town-hall 2.2 academy 2.3 senate 4.0 lighthouse 4.1 fortifications 4.2 arsenal 4.3 arena 6.0 palace 6.1 circus
+P2 start me
+P2 discard palace
+reveal 5.0 pantheon
+P1 discard pantheon
+P2 discard lighthouse
+P1 discard circus
+reveal 5.1 gardens 5.2 greek-grand-temple
+P2 discard gardens
+P1 discard fortifications
+reveal 3.0 pretorium
+P2 discard pretorium
+P1 discard port
+P2 discard town-hall
+reveal 1.0 roman-grand-temple
+P1 discard roman-grand-temple
+P2 discard greek-grand-temple
+P1 discard arsenal
+P2 discard arena
+reveal 3.1 chamber-of-commerce
+P1 discard chamber-of-commerce
+P2 discard academy
+reveal 1.1 armory
+P1 discard armory
+P2 discard siege-workshop
+P1 discard senate
+reveal 1.2 mesopotamian-grand-temple
+P2 discard mesopotamian-grand-temple
+P1 discard obelisk
+# Age III: 10 discards each, P1 59, P2 61 coins.

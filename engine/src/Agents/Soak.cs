@@ -31,16 +31,17 @@ public static class Soak
     public const int MaxLogEntries = 1000;
 
     /// <summary>The rules a soak seed plays: even seeds the newer start-of-Age rule, odd seeds the 2015 one, with the given promos.</summary>
-    public static Ruleset RulesFor(ulong seed, Promos promos = Promos.None) =>
-        new(seed % 2 == 0 ? StartChoice.New : StartChoice.Rule2015, promos);
+    public static Ruleset RulesFor(ulong seed, Promos promos = Promos.None, Expansions expansions = Expansions.None) =>
+        new(seed % 2 == 0 ? StartChoice.New : StartChoice.Rule2015, promos, expansions);
 
     /// <summary>Soaks <paramref name="games"/> games from <paramref name="firstSeed"/> on, using every core.</summary>
-    public static SoakReport Run(int games, ulong firstSeed = 0, int? threads = null, Promos promos = Promos.None)
+    public static SoakReport Run(int games, ulong firstSeed = 0, int? threads = null, Promos promos = Promos.None,
+        Expansions expansions = Expansions.None)
     {
         var clock = Stopwatch.StartNew();
         var outcomes = new (VictoryType? Victory, bool Draw, string? Failure)[games];
         var options = new ParallelOptions { MaxDegreeOfParallelism = threads ?? Environment.ProcessorCount };
-        Parallel.For(0, games, options, i => outcomes[i] = CheckGame(firstSeed + (ulong)i, promos));
+        Parallel.For(0, games, options, i => outcomes[i] = CheckGame(firstSeed + (ulong)i, promos, expansions));
         var failures = outcomes.Where(o => o.Failure is not null).Select(o => o.Failure!).ToList();
         int Count(VictoryType v) => outcomes.Count(o => o.Victory == v);
         return new SoakReport(games, Count(VictoryType.Civilian), Count(VictoryType.Military), Count(VictoryType.Science),
@@ -48,9 +49,10 @@ public static class Soak
     }
 
     /// <summary>Plays one seeded random game, checking every invariant; returns how it ended, or the first failure.</summary>
-    public static (VictoryType? Victory, bool Draw, string? Failure) CheckGame(ulong seed, Promos promos = Promos.None)
+    public static (VictoryType? Victory, bool Draw, string? Failure) CheckGame(ulong seed, Promos promos = Promos.None,
+        Expansions expansions = Expansions.None)
     {
-        var rules = RulesFor(seed, promos);
+        var rules = RulesFor(seed, promos, expansions);
         try
         {
             var result = Play(seed, rules);
@@ -111,7 +113,7 @@ public static class Soak
                 foreach (var r in Enum.GetValues<Resource>())
                 {
                     var produced = 0;
-                    foreach (var c in s.City(p).Cards()) produced += GameData.Cards[c].Produce[(int)r];
+                    foreach (var c in s.City(p).Cards()) produced += GameData.Card(c).Produce[(int)r];
                     Check(s.Production(p, r) == produced, $"P{p + 1}'s cached {r} production is {s.Production(p, r)}, the city makes {produced}");
                 }
             }
@@ -123,16 +125,21 @@ public static class Soak
             Check(s.TotalWondersBuilt <= GameState.MaxWondersBuilt, "more than 7 Wonders built");
             Check((s.LibertyOffer & ~s.Seen).IsEmpty && (s.LibertyOffer & (s.City(0) | s.City(1) | s.DiscardPile)).IsEmpty,
                 "a Statue of Liberty card on offer is unrevealed or already placed");
+            if (s.Pantheon is { } pantheon) CheckPantheon(s, pantheon);
         }
 
         Check(s.Result is not null, "the game is over without a Result");
         // The Messe takes a second card from the structure, without a take-card Move; the Statue of Liberty adds its
         // 3 returned cards (two built, one discarded), less the given card when the owner's kept card won first.
         var taken = game.Log.Count(e => e is MoveEntry { Move.TakesCard: true } or MoveEntry { Move.Kind: MoveKind.Messe })
-            + GameState.ReturnedCardCount * game.Log.Count(e => e is MoveEntry { Move.Kind: MoveKind.LibertyGive });
-        // (A given card once built can only move between the cities and the discard pile: Zeus, Circus Maximus, Mausoleum.)
+            + GameState.ReturnedCardCount * game.Log.Count(e => e is MoveEntry { Move.Kind: MoveKind.LibertyGive })
+            // Pantheon: Zeus sends a structure card to the discard pile without a take-card Move.
+            + game.Log.Count(e => e is MoveEntry { Move.Kind: MoveKind.Zeus });
+        // (A given card once built can only move between the cities and the discard pile: Zeus, Circus Maximus,
+        // Mausoleum; with Pantheon also under a Wonder: Isis.)
+        var tucked = s.CardsUnderWonders(0) | s.CardsUnderWonders(1);
         if (game.Log.LastOrDefault(e => e is MoveEntry { Move.Kind: MoveKind.LibertyGive }) is MoveEntry given
-            && !(s.City(0) | s.City(1) | s.DiscardPile).Contains(given.Move.Card))
+            && !(s.City(0) | s.City(1) | s.DiscardPile | tucked).Contains(given.Move.Card))
             taken--;
         Check(taken == s.City(0).Count + s.City(1).Count + s.DiscardPile.Count + s.TotalWondersBuilt,
             "a taken card is not in a city, the discard pile or under a Wonder");
@@ -144,6 +151,83 @@ public static class Soak
         Check(replayed.State.SameAs(s), "replaying the Move Log gives a different Game State");
         Check(replayed.WriteLog() == text, "the replayed Move Log writes different text");
         return s.Result!;
+    }
+
+    /// <summary>
+    /// Pantheon bookkeeping (spec-pantheon P-A10): each Mythology's 3 Divinities are in its deck, on the Pantheon, in
+    /// the current draw, chosen through the Divine Theater or activated, each in one place; the Gate is in play from
+    /// Age II, once; the 5 Mythology tokens and 3 Offering tokens are on the structure or held by one player (every
+    /// Mythology token held once Age I is over; spent Offering tokens leave the game); face-down cards only until the
+    /// Age II `reveal pantheon`; Astarte's coins within 0..7; Enki's tokens owned by nobody; Minerva on the track; the
+    /// Snake on a green card in a city. (The Observation invariant for Pantheon's private knowledge is ticket 07's.)
+    /// </summary>
+    static void CheckPantheon(GameState s, PantheonState p)
+    {
+        var activated = (ushort)(p.Activated(0) | p.Activated(1));
+        Check((p.Activated(0) & p.Activated(1)) == 0, "both players activated the same Divinity");
+        var seen = 0;
+        void Place(int d, string where)
+        {
+            Check((seen & 1 << d) == 0, $"Divinity {PantheonData.Divinities[d].Id} is in two places (again {where})");
+            seen |= 1 << d;
+        }
+        for (var i = 0; i < PantheonData.SpaceCount; i++)
+        {
+            if (p.Space(i) != PantheonState.EmptySpace) Place(p.Space(i), $"on space {i + 1}");
+            else Check(!p.IsFaceDown(i), $"empty space {i + 1} is face down");
+            Check(!p.IsFaceDown(i) || s.Age <= 1 || p.AwaitingPantheon, $"space {i + 1} is still face down in Age {s.Age}");
+        }
+        for (var i = 0; i < 2 && p.HasDraw; i++)
+            if (p.Drawn(i) >= 0) Place(p.Drawn(i), "in the draw");
+        foreach (var d in new Bits(activated)) Place(d, "activated");
+        // The Divine Theater's choice waits for the restack before its effect (and its activation).
+        if (s.Step == StepKind.Decision && s.Pending(0).Kind == DecisionKind.TheaterOrder)
+            Place(s.Pending(0).Wonder, "being activated");
+        foreach (var m in PantheonData.Mythologies)
+        {
+            Check(p.DeckSize(m.Mythology) <= PantheonData.DeckSize, $"the {m.Id} deck holds {p.DeckSize(m.Mythology)} cards");
+            for (var pos = 0; pos < p.DeckSize(m.Mythology); pos++)
+                if (p.DeckCard(m.Mythology, pos) is var d and >= 0)
+                {
+                    Check(PantheonData.Divinities[d].Mythology == m.Mythology, $"{PantheonData.Divinities[d].Id} is in the {m.Id} deck");
+                    Place(d, $"in the {m.Id} deck");
+                }
+            var inDeck = Enumerable.Range(0, p.DeckSize(m.Mythology)).Select(pos => p.DeckCard(m.Mythology, pos)).ToHashSet();
+            var outside = m.Divinities.Count(d => (seen & 1 << d) != 0 && !inDeck.Contains(d));
+            Check(outside + p.DeckSize(m.Mythology) == PantheonData.DeckSize,
+                $"the {m.Id} Divinities do not add up: {p.DeckSize(m.Mythology)} in the deck, {outside} out of it");
+        }
+        var gate = (seen & 1 << PantheonData.Gate) != 0;
+        Check(gate == s.Age >= 2, $"the Gate is {(gate ? "" : "not ")}in play in Age {s.Age}");
+
+        int mythology = 0, offerings = 0;
+        for (var player = 0; player < 2; player++)
+        {
+            mythology += p.MythologyTokenCount(player);
+            offerings += BitOperations.PopCount((uint)p.OfferingTokens(player));
+            Check(p.AstarteCoins(player) is >= 0 and <= 7, $"P{player + 1} has {p.AstarteCoins(player)} of Astarte's coins");
+        }
+        Check((p.OfferingTokens(0) & p.OfferingTokens(1)) == 0, "both players hold the same Offering token");
+        for (var slot = 0; slot < GameState.SlotCount; slot++)
+            if (p.SlotToken(slot) != PantheonState.NoToken)
+            {
+                Check(s.Age is 1 or 2, $"a token lies on the structure in Age {s.Age}");
+                if (p.SlotToken(slot) >= PantheonState.OfferingToken)
+                {
+                    offerings++;
+                    var bit = 1 << p.SlotToken(slot) - PantheonState.OfferingToken;
+                    Check(((p.OfferingTokens(0) | p.OfferingTokens(1)) & bit) == 0, "an Offering token is both held and on the structure");
+                }
+                else mythology++;
+            }
+        Check(mythology <= 5 && (s.Age < 2 || mythology == 5), $"{mythology} Mythology tokens in Age {s.Age}");
+        Check(offerings <= 3, $"{offerings} Offering tokens");
+
+        Check((p.Enki & (s.Tokens(0) | s.Tokens(1) | s.BoardTokens)) == 0, "one of Enki's tokens is also owned or on the board");
+        Check(p.Minerva == PantheonState.NoMinerva || Math.Abs(p.Minerva) <= GameState.CapitalDistance, $"Minerva is off the track at {p.Minerva}");
+        if (p.Snake >= 0)
+            Check(GameData.Card(p.Snake).Color == CardColor.Green && (s.City(0) | s.City(1)).Contains(p.Snake),
+                "the Snake is not on a green card in a city");
     }
 
     /// <summary>A copy played to the end with its own Reveals and Moves leaves the original byte-identical.</summary>

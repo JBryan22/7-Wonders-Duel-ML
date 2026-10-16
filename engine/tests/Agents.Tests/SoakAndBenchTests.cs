@@ -36,6 +36,20 @@ public class SoakAndBenchTests
         Assert.Equal(rules, Soak.RulesFor(1, promos).ToString());
     }
 
+    [Theory]
+    [InlineData(Engine.Promos.None, "rules base start-choice=2015 expansion=pantheon")]
+    [InlineData(Engine.Promos.Messe, "rules base start-choice=2015 promo=messe expansion=pantheon")]
+    [InlineData(Engine.Promos.Liberty, "rules base start-choice=2015 promo=liberty expansion=pantheon")]
+    [InlineData(Engine.Promos.Messe | Engine.Promos.Liberty, "rules base start-choice=2015 promo=messe,liberty expansion=pantheon")]
+    public void Every_invariant_holds_over_2k_soaked_pantheon_games(Engine.Promos promos, string rules)
+    {
+        var report = Soak.Run(2000, firstSeed: 3_000_000, promos: promos, expansions: Engine.Expansions.Pantheon);
+        Assert.True(report.Passed, string.Join('\n', report.Failures.Take(10)));
+        Assert.Equal(2000, report.Civilian + report.Military + report.Science);
+        Assert.True(report.Military > 0 && report.Science > 0, report.ToString());
+        Assert.Equal(rules, Soak.RulesFor(1, promos, Engine.Expansions.Pantheon).ToString());
+    }
+
     [Fact]
     public void The_statue_of_liberty_is_drafted_built_and_resolved_in_random_promo_games()
     {
@@ -110,7 +124,8 @@ public class SoakAndBenchTests
     public void Bench_measures_every_variant()
     {
         var results = Bench.Run(TimeSpan.FromMilliseconds(100));
-        Assert.Equal(3, results.Count);
+        Assert.Equal(4, results.Count);
+        Assert.Contains("Pantheon", results[3].Name);
         Assert.All(results, r =>
         {
             Assert.True(r.Games > 0 && r.Decisions > r.Games, r.ToString());
