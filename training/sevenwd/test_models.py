@@ -7,6 +7,9 @@
     no-derived.onnx     a seeded random network (8 x 1) that drops the derived-feature inputs (dropped_inputs=derived)
     bad-drop.onnx       like zero.onnx but claiming to drop an input block the Encoding doesn't have: refused
     zero-v2.onnx        like zero.onnx but for Encoding v2 (data/encoding/v2.json: v1 plus the Pantheon blocks)
+    surgery-parent.onnx a seeded v1 network (8 x 1) with every weight perturbed, and surgery-child.onnx, its Encoding v2
+                        copy made by network surgery (surgery.py): C# checks they agree on base-game positions.
+                        surgery-*-no-derived.onnx: the same for a network that drops the derived inputs
 
 Regenerate with `uv run python -m sevenwd.test_models` (from training/) after a change to the network or the export.
 """
@@ -22,6 +25,7 @@ import torch
 from .export import export_onnx
 from .manifest import REPO_ROOT, Manifest, default_manifest_path, load_manifest
 from .network import Network, NetworkConfig
+from .surgery import operate
 
 DEFAULT_DIR = REPO_ROOT / "engine" / "tests" / "Agents.Tests" / "Models"
 WRONG_VERSION = 999
@@ -78,7 +82,25 @@ def write_v2_test_models(out: Path, manifest: Manifest | None = None) -> list[Pa
     with torch.no_grad():
         for p in zero.parameters():
             p.zero_()
-    return [export_onnx(zero, manifest, out / "zero-v2.onnx")]
+    return [export_onnx(zero, manifest, out / "zero-v2.onnx"), *write_surgery_test_models(out, manifest)]
+
+
+def write_surgery_test_models(out: Path, manifest: Manifest | None = None) -> list[Path]:
+    """surgery-parent.onnx / surgery-child.onnx (and the -no-derived pair): a v1 network and its operated v2 copy."""
+    v2 = manifest or load_manifest(default_manifest_path(2))
+    v1 = load_manifest(default_manifest_path(1))
+    out.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for suffix, dropped in (("", ()), ("-no-derived", ("derived",))):
+        torch.manual_seed(10)
+        parent = Network(NetworkConfig.from_manifest(v1, width=8, blocks=1, dropped_inputs=dropped)).eval()
+        with torch.no_grad():
+            for p in parent.parameters():
+                p.add_(torch.randn_like(p) * 0.2)  # LayerNorms and biases too, so a wrong copy shows
+        child = operate(parent, v1, v2)
+        paths += [export_onnx(parent, v1, out / f"surgery-parent{suffix}.onnx"),
+                  export_onnx(child, v2, out / f"surgery-child{suffix}.onnx")]
+    return paths
 
 
 def main(argv: list[str] | None = None) -> int:

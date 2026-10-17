@@ -49,3 +49,20 @@ def test_the_v2_test_model_is_a_uniform_encoding_v2_network(tmp_path):
         policy, value, outcome = session.run(None, {INPUT_NAME: fixed_inputs(v2).numpy()})
         assert policy.shape == (2, v2.policy_size)
         assert not policy.any() and not value.any() and not outcome.any()
+
+
+def test_the_surgery_test_models_agree_on_base_shaped_inputs(manifest):
+    """surgery-parent*.onnx (v1) and surgery-child*.onnx (its operated v2 copy) answer alike when the Pantheon inputs
+    are 0; C#'s SurgeryTests check the same on real base-game positions."""
+    v2 = load_manifest(default_manifest_path(2))
+    x = fixed_inputs(manifest).numpy()
+    wide = np.concatenate([x, np.zeros((len(x), v2.input_size - manifest.input_size), np.float32)], axis=1)
+    for suffix in ("", "-no-derived"):
+        parent = ort.InferenceSession(str(DEFAULT_DIR / f"surgery-parent{suffix}.onnx"), providers=["CPUExecutionProvider"])
+        child = ort.InferenceSession(str(DEFAULT_DIR / f"surgery-child{suffix}.onnx"), providers=["CPUExecutionProvider"])
+        assert read_metadata(DEFAULT_DIR / f"surgery-child{suffix}.onnx")["encoding_version"] == "2"
+        (pp, pv, po), (cp, cv, co) = parent.run(None, {INPUT_NAME: x}), child.run(None, {INPUT_NAME: wide})
+        assert np.abs(pp).max() > 0.1  # a real network, not a zero one
+        np.testing.assert_allclose(cp[:, :manifest.policy_size], pp, rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(cv, pv, rtol=1e-4, atol=1e-5)
+        np.testing.assert_allclose(co, po, rtol=1e-4, atol=1e-5)

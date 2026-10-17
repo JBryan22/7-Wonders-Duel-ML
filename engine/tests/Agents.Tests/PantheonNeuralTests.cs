@@ -16,7 +16,7 @@ public class PantheonNeuralTests
     static readonly Ruleset Pantheon = new(Expansions: Expansions.Pantheon);
 
     /// <summary>Decision points (more than one legal Move) of seeded random games of <paramref name="rules"/>.</summary>
-    static List<Observation> Positions(Ruleset rules, ulong seed, int games, int every)
+    internal static List<Observation> Positions(Ruleset rules, ulong seed, int games, int every)
     {
         var rng = new Rng(seed);
         var positions = new List<Observation>();

@@ -8,6 +8,8 @@
 - --steps 0 with no --data exports the starting network as is: Generation 0's random network.
 - The checkpoint is written at the end and every --checkpoint-minutes, atomically, and also when training is stopped
   early (Ctrl+C, or the loop's pause request through `tick`), so a stop loses no steps.
+- `sevenwd-train surgery PARENT.pt --out CHILD.pt` makes an Encoding v2 (Pantheon) network from a v1 one: see
+  surgery.py. Train it with `--manifest data/encoding/v2.json` on Encoding v2 shards.
 - Batches are drawn uniformly from all positions of the given shards (loop.py chooses the shards: the window).
 """
 from __future__ import annotations
@@ -62,7 +64,8 @@ def pick_device(name: str) -> torch.device:
     return torch.device(name)
 
 
-def save_checkpoint(path: Path, model: Network, optimizer: torch.optim.Optimizer, step: int, manifest: Manifest):
+def save_checkpoint(path: Path, model: Network, optimizer: torch.optim.Optimizer, step: int, manifest: Manifest,
+                    extra: dict | None = None):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     torch.save({
@@ -72,6 +75,7 @@ def save_checkpoint(path: Path, model: Network, optimizer: torch.optim.Optimizer
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
         "step": step,
+        **(extra or {}),
     }, tmp)
     os.replace(tmp, path)
 
@@ -164,6 +168,10 @@ def train(
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["surgery"]:  # `sevenwd-train surgery ...`: make a Pantheon network from a base one (surgery.py)
+        from .surgery import main as surgery_main
+        return surgery_main(argv[1:])
     p = argparse.ArgumentParser(prog="sevenwd-train", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data", nargs="*", default=[], help="shard directories, or folders searched for shards")

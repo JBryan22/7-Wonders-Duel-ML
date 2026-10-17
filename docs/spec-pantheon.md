@@ -122,7 +122,7 @@ So roughly **+600 inputs and +1,900 policy outputs** (exact numbers come from th
 
 - `data/encoding/v2.json` is committed with its own manifest test; `v1.json` and its test stay.
 - C# encodes with whichever version the loaded network declares, and refuses a Pantheon game with a v1 network.
-- **Network surgery** (`sevenwd-train surgery`): a new v2 network is made from a v1 network by copying the trunk and heads, copying the first layer's v1 columns and the policy head's v1 rows, and starting the new columns and rows at zero. **Validation: in a base game, the operated network gives exactly the same outputs as its parent** (a cheap, exact check that the surgery is right).
+- **Network surgery** (`sevenwd-train surgery`): a new v2 network is made from a v1 network by copying the trunk and heads, copying the first layer's v1 columns and the policy head's v1 rows, and starting the new columns and rows at zero. **Validation: in a base game, the operated network gives exactly the same outputs as its parent** (a cheap, exact check that the surgery is right). "Exactly" means to float32 rounding (~1e-6): the wider first layer may add the same numbers in another order, so the outputs are not bit-identical; a wrong copy is off by orders of magnitude more. The surgery is made from a training checkpoint (a Run's `net/latest.pt`), not from an exported ONNX file.
 - **Separate networks:** the Pantheon network plays Pantheon games; base games keep using the base "best" network. The Advisor picks the network by the game's Ruleset.
 
 ## P-A8. Training
