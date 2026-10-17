@@ -64,7 +64,8 @@ public static class DerivedFeatures
     {
         var gone = s.City(0) | s.City(1) | s.DiscardPile | s.CardsUnderWonders(0) | s.CardsUnderWonders(1);
         var targets = CardSet.Empty;
-        foreach (var c in s.City(player).Cards()) targets |= ChainsInto[c];
+        foreach (var c in s.City(player).Cards())
+            if (c < ChainsInto.Length) targets |= ChainsInto[c]; // Pantheon's Grand Temples chain into nothing
         return (targets & ~gone).Count;
     }
 

@@ -16,8 +16,9 @@ const string Usage = """
       crosscheck [--games N] [--seed S] [--driver PATH] [--freeze DIR]
                                        compare N random games (default 10000) with indjev99's C++ engine; the driver
                                        comes from tools/crosscheck/build.sh (Linux). --freeze writes ~10 agreed games
-      match <agent-a> <agent-b> [--pairs N] [--seed S] [--promo P] [--out DIR] [--threads T] [--elo-a X] [--elo-b X]
-            [--stop-file F]            play N seed pairs (default 200 = 400 games) with seats swapped; report the win
+      match <agent-a> <agent-b> [--pairs N] [--seed S] [--promo P] [--expansion E] [--out DIR] [--threads T]
+            [--elo-a X] [--elo-b X] [--stop-file F]
+                                       play N seed pairs (default 200 = 400 games) with seats swapped; report the win
                                        rate with its 95% CI, Elo (Random = 0) and the victory types. With --out, each
                                        finished pair is saved and rerunning the same command resumes. Ctrl+C stops,
                                        and so does the file F appearing (how the training loop pauses it).
@@ -26,7 +27,9 @@ const string Usage = """
                                        (the Anchor), neural:<onnx>[,sims=800,m=16,cvisit=50,cscale=0.1,gumbel=1,device=cpu,threads=4]
                                        (Gumbel search; mode=classic gives PUCT with c=1.25,noise=0,alpha=0.3,temp=0;
                                        neural:uniform and neural:playout are built-in references).
-                                       The Ladder's recorded Elo is used unless --elo-a/--elo-b is given
+                                       The Ladder's recorded Elo is used unless --elo-a/--elo-b is given; with
+                                       --expansion pantheon it is the separate Pantheon scale (Random = 0 there too;
+                                       its rungs: heuristic, pimc:samples=200, mcts = the Pantheon Anchor)
       selfplay <onnx>[,sims=64,...] --games N --out DIR [--seed S] [--promo-rate R] [--parallel P] [--workers W]
             [--stop-file F]
                                        the network plays itself (spec A7): N games from seed S (default 0), each with
@@ -204,6 +207,7 @@ static int RunMatch(string a, string b, string[] options)
             case "--pairs" when int.TryParse(value, out var n) && n > 0: settings = settings with { Pairs = n }; break;
             case "--seed" when ulong.TryParse(value, out var s): settings = settings with { FirstSeed = s }; break;
             case "--promo" when value is not null: settings = settings with { Promos = ParsePromos(value) }; break;
+            case "--expansion" when value is not null: settings = settings with { Expansions = ParseExpansions(value) }; break;
             case "--out" when value is not null: directory = value; break;
             case "--threads" when int.TryParse(value, out var t) && t > 0: threads = t; break;
             case "--elo-a" when double.TryParse(value, CultureInfo.InvariantCulture, out var e): settings = settings with { EloA = e }; break;

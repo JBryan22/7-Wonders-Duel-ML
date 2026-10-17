@@ -92,7 +92,7 @@ Pantheon's private information is short-lived and mostly gone at Age II setup, s
 ## P-A6. Agents
 
 - **Heuristic:** values for Pantheon actions (Divinity effects, activation cost vs benefit, tokens, Grand Temples). The presets keep their skews.
-- **PIMC and chance-node MCTS:** no new search code; they work through the Engine and the Determinizer. A Pantheon chance-node MCTS becomes the **Pantheon Anchor**, the fixed point of a separate **Pantheon Elo scale** (Random = 0 in Pantheon games). Base and Pantheon Elo are never compared.
+- **PIMC and chance-node MCTS:** no new search code; they work through the Engine and the Determinizer. A Pantheon chance-node MCTS becomes the **Pantheon Anchor**, the fixed point of a separate **Pantheon Elo scale** (Random = 0 in Pantheon games). Base and Pantheon Elo are never compared. The Pantheon PIMC rung is `pimc:samples=200` (default PIMC only ties the Heuristic in Pantheon games; ticket 08). Recorded Pantheon ratings: heuristic 1250, pimc:samples=200 1383, Pantheon Anchor (`mcts`) 1491.
 - `7wd match` and `7wd soak` take `--expansion pantheon`.
 
 ## P-A7. Encoding v2 and the Pantheon network

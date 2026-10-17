@@ -12,12 +12,12 @@ namespace SevenWondersDuel.Agents;
 /// rating on the shared scale (Random is always 0); they only affect the report, not the games.
 /// </summary>
 public sealed record MatchSettings(string AgentA, string AgentB, int Pairs = MatchSettings.DefaultPairs, ulong FirstSeed = 0,
-    Promos Promos = Promos.None, double? EloA = null, double? EloB = null)
+    Promos Promos = Promos.None, double? EloA = null, double? EloB = null, Expansions Expansions = Expansions.None)
 {
     /// <summary>A Match is 400 games: 200 seed pairs.</summary>
     public const int DefaultPairs = 200;
 
-    public Ruleset Rules => new(Promos: Promos);
+    public Ruleset Rules => new(Promos: Promos, Expansions: Expansions);
 
     /// <summary>The first line of a Match file: everything that decides the games. Resuming requires the same header.</summary>
     internal MatchHeader Header => new(Match.FormatVersion, AgentA, AgentB, Pairs, FirstSeed, Rules.ToString());

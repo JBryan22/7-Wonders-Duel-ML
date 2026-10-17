@@ -9,10 +9,11 @@ namespace SevenWondersDuel.Agents;
 /// <see cref="Science"/> scientific symbols and the science side of Progress tokens, <see cref="Economy"/> production,
 /// trading prices, coins in hand and chains, <see cref="Denial"/> how much the opponent's best next card counts against
 /// a Move. Terms are scored for both players and subtracted, so a weight also sets how hard the Heuristic defends that
-/// family. <see cref="Adaptive"/> reweights every decision from the board (see <see cref="HeuristicAgent.Adapt"/>).
+/// family. <see cref="Pantheon"/> scales the Pantheon-only terms (Pantheon games only; 0 plays Pantheon blind to them).
+/// <see cref="Adaptive"/> reweights every decision from the board (see <see cref="HeuristicAgent.Adapt"/>).
 /// </summary>
 public sealed record HeuristicWeights(string Name, double Points = 1, double Military = 1, double Science = 1,
-    double Economy = 1, double Coins = 1, double Denial = 0.6, bool Adaptive = false)
+    double Economy = 1, double Coins = 1, double Denial = 0.6, bool Adaptive = false, double Pantheon = 1)
 {
     /// <summary>Chases scientific symbols and pairs.</summary>
     public static readonly HeuristicWeights ScienceStyle = new("science", Points: 0.6, Military: 0.3, Science: 4);
@@ -54,7 +55,8 @@ public sealed record HeuristicWeights(string Name, double Points = 1, double Mil
                 "denial" => w with { Denial = v },
                 "coins" => w with { Coins = v },
                 "adaptive" => w with { Adaptive = v != 0 },
-                _ => throw new FormatException($"Unknown Heuristic weight '{part[..eq]}' (points, military, science, economy, coins, denial, adaptive)"),
+                "pantheon" => w with { Pantheon = v },
+                _ => throw new FormatException($"Unknown Heuristic weight '{part[..eq]}' (points, military, science, economy, coins, denial, adaptive, pantheon)"),
             };
         }
         return w;
@@ -71,7 +73,7 @@ public sealed record HeuristicWeights(string Name, double Points = 1, double Mil
 /// averaged over a few draws from the Agent's own seeded Chance Source, which sees only the Observation. So a promo
 /// Wonder is worth its VP plus its best card grab. The Wonder draft uses a fixed value per Wonder.
 /// </summary>
-public sealed class HeuristicAgent : IAgent
+public sealed partial class HeuristicAgent : IAgent
 {
     /// <summary>The value of winning (and, negated, of losing): larger than any other evaluation.</summary>
     public const double WinValue = 1000;
@@ -164,7 +166,8 @@ public sealed class HeuristicAgent : IAgent
         s.CopyFrom(root);
         s.Apply(move);
         var score = FollowUp(s, 1);
-        if (move.TakesCard && !s.IsOver) score += AfterTake(s, root.Age);
+        // An activation (Pantheon) takes no card but leaves the opponent the same choice of cards as a take does.
+        if ((move.TakesCard || move.Kind == MoveKind.Activate) && !s.IsOver) score += AfterTake(s, root.Age);
         if (move.Kind == MoveKind.Discard) score -= 0.15; // a discard is the last resort among equals
         return score;
     }
@@ -300,7 +303,7 @@ public sealed class HeuristicAgent : IAgent
         economy += 1.1 * DerivedFeatures.ChoiceProducers(s, p);
         economy += 0.7 * DerivedFeatures.OpenChains(s, p);
         value += w.Economy * ProductionScale * age * economy;
-        value += w.Coins * CoinValue(s) * Math.Min(s.Coins(p), 15);
+        value += w.Coins * CoinValue(s) * Math.Min(s.SpendableCoins(p), 15);
 
         // Science: distinct symbols on a convex curve (pairs show up as Progress tokens).
         value += w.Science * ScienceCurve[Math.Min(DerivedFeatures.ScienceSymbols(s, p), ScienceCurve.Length - 1)];
@@ -316,6 +319,7 @@ public sealed class HeuristicAgent : IAgent
             if (s.HasToken(p, ProgressTokens.Strategy)) value += 2.5 * age * w.Military;
             if (s.HasToken(p, ProgressTokens.Law)) value += 0.5 * w.Science;
         }
+        if (s.Pantheon is { } pantheon) value += w.Pantheon * PantheonPlayerValue(s, pantheon, p, w);
         return value;
     }
 
@@ -326,9 +330,9 @@ public sealed class HeuristicAgent : IAgent
     /// </summary>
     public static double CardValue(GameState s, int player, int card, HeuristicWeights w)
     {
-        var def = GameData.Cards[card];
+        var def = GameData.Card(card);
         var price = Payment.Quote(s, player, card).Total;
-        if (price > s.Coins(player)) return 0.4;
+        if (price > s.SpendableCoins(player)) return 0.4;
 
         var value = 0.0;
         if (def.Science is { } symbol)
@@ -349,7 +353,8 @@ public sealed class HeuristicAgent : IAgent
             value += w.Military * (MilitaryPull(lead + shields) - MilitaryPull(lead))
                 + w.Points * (Scoring.MilitaryPoints(lead + shields) - Scoring.MilitaryPoints(lead));
         }
-        value += w.Points * (def.IsGuild ? Scoring.GuildPoints(s, def.Guild) + 1 : def.VictoryPoints);
+        value += w.Points * (def.IsGuild ? Scoring.GuildPoints(s, def.Guild) + 1
+            : def.Color == CardColor.Temple ? TempleGain(s, player) : def.VictoryPoints);
 
         var age = AgeLeft(s);
         for (var r = 0; r < Resources.Count; r++)
@@ -371,7 +376,7 @@ public sealed class HeuristicAgent : IAgent
     /// </summary>
     double WonderValue(int wonder)
     {
-        var w = GameData.Wonders[wonder];
+        var w = GameData.Wonder(wonder);
         var value = _w.Points * w.VictoryPoints + _w.Economy * 0.35 * w.Coins + 0.3 * w.OpponentLoses
             + (_w.Military * 1.6 + 0.5) * w.Shields
             + (w.PlayAgain ? 2.5 : 0)
@@ -386,6 +391,7 @@ public sealed class HeuristicAgent : IAgent
             WonderEffect.Liberty => 3.5,
             _ => 0,
         };
+        if (wonder >= GameData.Wonders.Length) value += PantheonWonderPower(w);
         return value;
     }
 }
