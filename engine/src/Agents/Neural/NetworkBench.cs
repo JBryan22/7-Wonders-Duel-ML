@@ -22,7 +22,8 @@ public static class NetworkBench
     {
         var sizes = batches.ToArray();
         var max = sizes.Max();
-        var input = new float[max * NetworkEncoding.InputSize];
+        var encoding = network.Encoding;
+        var input = new float[max * encoding.InputSize];
         var filled = 0;
         var rng = new Rng(1);
         var chance = new RandomChanceSource(2);
@@ -33,11 +34,11 @@ public static class NetworkBench
             while (!s.IsOver && filled < max)
             {
                 if (s.Step == StepKind.Reveal) { s.Apply(chance.Next(s)); continue; }
-                NetworkEncoding.Encode(s.Observe(s.PlayerToDecide), input.AsSpan(filled++ * NetworkEncoding.InputSize, NetworkEncoding.InputSize));
+                encoding.Encode(s.Observe(s.PlayerToDecide), input.AsSpan(filled++ * encoding.InputSize, encoding.InputSize));
                 s.Apply(moves[rng.Next(s.LegalMoves(moves))]);
             }
         }
-        var policy = new float[max * NetworkEncoding.PolicySize];
+        var policy = new float[max * encoding.PolicySize];
         var value = new float[max];
         var outcome = new float[max * NetworkEncoding.OutcomeClasses.Length];
         foreach (var batch in sizes)

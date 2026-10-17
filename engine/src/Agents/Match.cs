@@ -76,8 +76,10 @@ public static class Match
     {
         if (settings.Pairs <= 0) throw new ArgumentOutOfRangeException(nameof(settings), "A Match needs at least one seed pair");
         createAgent ??= AgentSpecs.Create;
-        createAgent(settings.AgentA, 0);
-        createAgent(settings.AgentB, 0);
+        // Built once up front, so a bad spec, or a network whose Encoding cannot play these rules (a Pantheon game with
+        // an Encoding v1 network), is refused before any game is played.
+        (createAgent(settings.AgentA, 0) as NeuralAgent)?.EncodingFor(settings.Rules);
+        (createAgent(settings.AgentB, 0) as NeuralAgent)?.EncodingFor(settings.Rules);
 
         var clock = Stopwatch.StartNew();
         var done = new Dictionary<int, MatchPair>();

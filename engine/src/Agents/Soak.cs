@@ -20,7 +20,10 @@ public sealed record SoakReport(int Games, int Civilian, int Military, int Scien
 /// negative; every game ends; a legal Move exists, and each one is legal, whenever a decision is pending; replaying the
 /// written Move Log gives an identical Game State and the same text; a copied state played to the end never affects the
 /// original; the Observation never holds the opponent's private Reveal (and otherwise equals the state; with Pantheon,
-/// worlds sampled from it are legal and look the same, and each player's redacted log gives the same view). Plus the
+/// worlds sampled from it are legal and look the same, and each player's redacted log gives the same view). Encoding
+/// v2 (spec-pantheon P-A7) is checked at every decision: its input is finite and roughly 0-1, every legal Move has a
+/// unique policy index that maps back to it, and in a base game its first inputs and its indices are exactly Encoding
+/// v1's while its Pantheon inputs are 0; with Pantheon, a sampled world encodes like the Observation. Plus the
 /// bookkeeping the rules imply: the pawn stays on the track, looted military tokens never return, Progress tokens are
 /// owned at most once, cached production matches the city, and every card taken is in a city, the discard pile or
 /// under a Wonder. Seeds alternate between the two start-choice rules; the promo Wonders are switched on per run.
@@ -83,6 +86,7 @@ public static class Soak
         var determinizer = withPantheon ? new Determinizer(seed) : null;
         Span<Move> moves = stackalloc Move[GameState.MaxMoves];
         Span<Move> observed = stackalloc Move[GameState.MaxMoves];
+        var encoding = new EncodingBuffers();
         var militaryTokens = s.MilitaryTokensLeft;
         while (s.Step != StepKind.GameOver)
         {
@@ -109,8 +113,11 @@ public static class Soak
                     else if (!pantheonPrivate)
                         Check(o.State.SameAs(s), "an Observation differs from the state with nothing private to hide");
                     if (p == player)
+                    {
                         Check(o.LegalMoves(observed) == n && observed[..n].SequenceEqual(moves[..n]), "the Observation's legal Moves differ");
-                    if (pantheonPrivate) CheckPantheonObservation(s, o, determinizer!);
+                        CheckEncoding(o, moves[..n], encoding);
+                    }
+                    if (pantheonPrivate) CheckPantheonObservation(s, o, determinizer!, encoding);
                 }
                 game.Apply(agents[player].ChooseMove(s.Observe(player)));
             }
@@ -263,7 +270,7 @@ public static class Soak
     /// Pantheon is as in the state, and the Divinities it names are exactly those it shows. A world sampled from it is a
     /// legal state (the bookkeeping holds, a decision has legal Moves) that the viewer cannot tell from the truth.
     /// </summary>
-    static void CheckPantheonObservation(GameState s, Observation o, Determinizer determinizer)
+    static void CheckPantheonObservation(GameState s, Observation o, Determinizer determinizer, EncodingBuffers encoding)
     {
         var p = s.Pantheon!;
         var op = o.State.Pantheon!;
@@ -312,8 +319,49 @@ public static class Soak
 
         var world = determinizer.Sample(o);
         Check(world.Observe(viewer).SameAs(o), "a sampled world looks different to the viewer");
+        NetworkEncodingV2.Encode(o, encoding.V2);
+        NetworkEncodingV2.Encode(world.Observe(viewer), encoding.Other);
+        Check(encoding.V2.AsSpan().SequenceEqual(encoding.Other), "a sampled world encodes differently from the Observation");
         Check(world.Step != StepKind.Decision || world.LegalMoves().Count > 0, "a sampled world has no legal Move");
         CheckPantheon(world, world.Pantheon!);
+    }
+
+    /// <summary>Scratch space for the Encoding checks, one per game.</summary>
+    sealed class EncodingBuffers
+    {
+        public readonly float[] V1 = new float[NetworkEncoding.InputSize];
+        public readonly float[] V2 = new float[NetworkEncodingV2.InputSize];
+        public readonly float[] Other = new float[NetworkEncodingV2.InputSize];
+        public readonly bool[] Used = new bool[NetworkEncodingV2.PolicySize];
+    }
+
+    /// <summary>
+    /// Encoding v2 at a decision, from the deciding player's Observation: a sane input, a unique policy index per legal
+    /// Move that maps back to it, and in a base game exactly Encoding v1 followed by zeros, with v1's indices.
+    /// </summary>
+    static void CheckEncoding(Observation o, ReadOnlySpan<Move> moves, EncodingBuffers b)
+    {
+        NetworkEncodingV2.Encode(o, b.V2);
+        for (var i = 0; i < b.V2.Length; i++)
+            if (!(float.IsFinite(b.V2[i]) && b.V2[i] >= -1 && b.V2[i] <= 2.5f))
+                Check(false, $"Encoding v2 input {NetworkEncodingV2.InputNames[i]} = {b.V2[i]}");
+        var baseGame = o.State.Rules.Expansions == Expansions.None;
+        if (baseGame)
+        {
+            NetworkEncoding.Encode(o, b.V1);
+            Check(b.V1.AsSpan().SequenceEqual(b.V2.AsSpan(0, b.V1.Length)), "Encoding v2's first inputs differ from Encoding v1's");
+            Check(b.V2.AsSpan(b.V1.Length).IndexOfAnyExcept(0f) < 0, "an Encoding v2 Pantheon input is not 0 in a base game");
+        }
+        b.Used.AsSpan().Clear();
+        foreach (var m in moves)
+        {
+            var index = NetworkEncodingV2.PolicyIndex(m);
+            if (b.Used[index]) Check(false, $"two legal Moves share Encoding v2 policy index {index} ({m})");
+            b.Used[index] = true;
+            if (NetworkEncodingV2.MoveAt(index) != m)
+                Check(false, $"Encoding v2 policy index {index} maps back to {NetworkEncodingV2.MoveAt(index)}, not {m}");
+            if (baseGame && index != NetworkEncoding.PolicyIndex(m)) Check(false, $"Encoding v2 gives {m} another index than v1");
+        }
     }
 
     /// <summary>A copy played to the end with its own Reveals and Moves leaves the original byte-identical.</summary>

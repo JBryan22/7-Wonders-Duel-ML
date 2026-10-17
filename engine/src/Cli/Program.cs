@@ -47,8 +47,10 @@ const string Usage = """
                                        re-encode Game Records into a shard (e.g. under a new Encoding version)
       netbench <onnx> [--device auto|cpu|cuda] [--threads N] [--seconds S]
                                        network inference speed per batch size (N: CPU threads, default all cores)
-      manifest [--out PATH]            print the Encoding manifest (spec A6), or write it to PATH; the committed copy is
-                                       data/encoding/v1.json (regenerate it with --out after an Encoding change)
+      manifest [--version V] [--out PATH]
+                                       print Encoding v V's manifest (default 1; 2 = v1 plus the Pantheon blocks), or
+                                       write it to PATH; the committed copies are data/encoding/v1.json and v2.json
+                                       (regenerate them with --out after an Encoding change)
     """;
 
 // Full speed even when started windowless in the background (the training loop): Windows would otherwise throttle it.
@@ -64,8 +66,7 @@ try
         ["bench", "--seconds", var secs] when double.TryParse(secs, out var d) && d > 0 => RunBench(d),
         ["soak", .. var options] => RunSoak(options),
         ["crosscheck", .. var options] => RunCrossCheck(options),
-        ["manifest"] => Manifest(null),
-        ["manifest", "--out", var path] => Manifest(path),
+        ["manifest", .. var options] => Manifest(options),
         ["match", var a, var b, .. var options] when !a.StartsWith("--") && !b.StartsWith("--") => RunMatch(a, b, options),
         ["netbench", var model, .. var options] when !model.StartsWith("--") => NetBench(model, options),
         ["selfplay", var model, .. var options] when !model.StartsWith("--") => RunSelfPlay(model, options),
@@ -79,15 +80,27 @@ catch (Exception e) when (e is FormatException or NotSupportedException or IOExc
     return Fail(e.Message);
 }
 
-static int Manifest(string? path)
+static int Manifest(string[] options)
 {
-    var text = EncodingManifest.Generate();
+    string? path = null;
+    var encoding = EncodingVersion.V1;
+    for (var i = 0; i < options.Length; i += 2)
+    {
+        var value = i + 1 < options.Length ? options[i + 1] : null;
+        switch (options[i])
+        {
+            case "--out" when value is not null: path = value; break;
+            case "--version" when int.TryParse(value, out var v) && EncodingVersion.TryOf(v) is { } version: encoding = version; break;
+            default: return Fail(Usage);
+        }
+    }
+    var text = EncodingManifest.Generate(encoding);
     if (path is null) Console.Out.Write(text);
     else
     {
         if (Path.GetDirectoryName(Path.GetFullPath(path)) is { } dir) Directory.CreateDirectory(dir);
         File.WriteAllText(path, text);
-        Console.WriteLine($"wrote Encoding v{NetworkEncoding.Version} manifest to {path}: {NetworkEncoding.InputSize} inputs, {NetworkEncoding.PolicySize} policy logits");
+        Console.WriteLine($"wrote {encoding} manifest to {path}: {encoding.InputSize} inputs, {encoding.PolicySize} policy logits");
     }
     return 0;
 }

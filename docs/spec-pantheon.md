@@ -118,7 +118,7 @@ Pantheon's private information is short-lived and mostly gone at Age II setup, s
 | `build/discard` of the 5 Temples, `wonder` with the 2 new Wonders and Temples | ~250 |
 | `minerva`, `neptune-discard`, `neptune-apply` | ~30 |
 
-So roughly **+600 inputs and +1,900 policy outputs** (exact numbers come from the manifest). The outcome head stays at 7 classes.
+So roughly **+600 inputs and +1,900 policy outputs** (exact numbers come from the manifest: v2 has **3,206 inputs** (+789) and **3,420 policy outputs** (+1,911); ticket 09). The outcome head stays at 7 classes.
 
 - `data/encoding/v2.json` is committed with its own manifest test; `v1.json` and its test stay.
 - C# encodes with whichever version the loaded network declares, and refuses a Pantheon game with a v1 network.

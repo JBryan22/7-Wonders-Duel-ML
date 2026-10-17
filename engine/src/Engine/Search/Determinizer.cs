@@ -49,6 +49,13 @@ public sealed class Determinizer : IChanceSource
         Fill(world);
     }
 
+    /// <summary>
+    /// Fills only an expansion's hidden places (Pantheon: hidden Divinities and deck cards) in a state copied from an
+    /// Observation, so it can be played forward with this Determinizer's Reveals. A base game is left as it is and
+    /// draws nothing.
+    /// </summary>
+    public void FillExpansion(GameState world) => world.Module?.Determinize(world, _rng);
+
     /// <summary>The next Reveal of a sampled world: uniform over what nobody in it has seen.</summary>
     public Reveal Next(GameState state) => _chance.Next(state);
 

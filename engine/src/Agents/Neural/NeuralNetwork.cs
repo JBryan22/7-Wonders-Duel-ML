@@ -8,10 +8,12 @@ namespace SevenWondersDuel.Agents;
 public enum InferenceDevice { Auto, Cpu, Cuda }
 
 /// <summary>
-/// An exported network (spec A6/A7) loaded into ONNX Runtime: one input <c>input</c> [batch, 2,417], outputs
-/// <c>policy</c> [batch, 1,509] raw unmasked logits, <c>value</c> [batch] in −1..1 and <c>outcome</c> [batch, 7] logits
-/// (training/sevenwd/export.py). Loading checks the version handshake: the model's <c>encoding_version</c> must be this
-/// build's <see cref="NetworkEncoding.Version"/> and its sizes must match the Encoding, otherwise it is refused.
+/// An exported network (spec A6/A7) loaded into ONNX Runtime: one input <c>input</c> [batch, input size], outputs
+/// <c>policy</c> [batch, policy size] raw unmasked logits, <c>value</c> [batch] in −1..1 and <c>outcome</c> [batch, 7]
+/// logits (training/sevenwd/export.py; Encoding v1: 2,417 inputs and 1,509 logits). Loading checks the version
+/// handshake: the model's <c>encoding_version</c> must be one this build has (<see cref="EncodingVersion.All"/>: v1, or
+/// v2 for Pantheon, spec-pantheon P-A7) and its sizes must match that Encoding, otherwise it is refused. The network
+/// then encodes with its own version (<see cref="Encoding"/>).
 /// <para>
 /// A network may drop input blocks (metadata <c>dropped_inputs</c>, e.g. <c>derived</c>: a pilot trained without the
 /// derived features). It zeroes them inside the model, so it takes the same Encoding inputs; loading checks that every
@@ -32,13 +34,18 @@ public sealed class NeuralNetwork : IDisposable
     readonly RunOptions _runOptions = new();
     readonly string[] _inputNames = [InputName];
 
-    NeuralNetwork(string path, InferenceSession session, InferenceDevice device, IReadOnlyDictionary<string, string> metadata)
+    NeuralNetwork(string path, InferenceSession session, InferenceDevice device, IReadOnlyDictionary<string, string> metadata,
+        EncodingVersion encoding)
     {
         Path = path;
         _session = session;
         Device = device;
         Metadata = metadata;
+        Encoding = encoding;
     }
+
+    /// <summary>The Encoding version the model declares: what its inputs and policy logits mean.</summary>
+    public EncodingVersion Encoding { get; }
 
     /// <summary>The model file.</summary>
     public string Path { get; }
@@ -89,7 +96,7 @@ public sealed class NeuralNetwork : IDisposable
             }
         }
         var network = Check(path, Open(path, InferenceDevice.Cpu, cpuThreads), InferenceDevice.Cpu);
-        return fallback is null ? network : new NeuralNetwork(network.Path, network._session, network.Device, network.Metadata) { FallbackReason = fallback };
+        return fallback is null ? network : new NeuralNetwork(network.Path, network._session, network.Device, network.Metadata, network.Encoding) { FallbackReason = fallback };
     }
 
     static string FirstLine(string s) => s.Split('\n')[0].Trim();
@@ -128,15 +135,16 @@ public sealed class NeuralNetwork : IDisposable
             if (metadata.GetValueOrDefault("format") != Format)
                 throw new FormatException($"{name} is not a 7wd network (no format={Format} metadata)");
             var version = metadata.GetValueOrDefault("encoding_version");
-            if (version != NetworkEncoding.Version.ToString())
-                throw new FormatException(
-                    $"{name} was exported for Encoding v{version ?? "?"}, but this build uses Encoding v{NetworkEncoding.Version}; " +
-                    "use a network trained on this Encoding, or a build of the matching Encoding version");
+            var encoding = (int.TryParse(version, out var number) && version == number.ToString() ? EncodingVersion.TryOf(number) : null)
+                ?? throw new FormatException(
+                    $"{name} was exported for Encoding v{version ?? "?"}, but this build uses " +
+                    $"Encoding v{string.Join(" or v", EncodingVersion.All.Select(v => v.Number))}; " +
+                    "use a network trained on one of these, or a build of the matching Encoding version");
 
             if (session.InputMetadata.Count != 1 || !session.InputMetadata.TryGetValue(InputName, out var input)
-                || input.Dimensions.Length != 2 || input.Dimensions[1] != NetworkEncoding.InputSize)
-                throw new FormatException($"{name} must take one input '{InputName}' [batch, {NetworkEncoding.InputSize}]");
-            int[] widths = [NetworkEncoding.PolicySize, 0, NetworkEncoding.OutcomeClasses.Length];
+                || input.Dimensions.Length != 2 || input.Dimensions[1] != encoding.InputSize)
+                throw new FormatException($"{name} must take one input '{InputName}' [batch, {encoding.InputSize}] ({encoding})");
+            int[] widths = [encoding.PolicySize, 0, NetworkEncoding.OutcomeClasses.Length];
             for (var i = 0; i < OutputNames.Length; i++)
             {
                 if (!session.OutputMetadata.TryGetValue(OutputNames[i], out var output)
@@ -147,11 +155,11 @@ public sealed class NeuralNetwork : IDisposable
             if (metadata.TryGetValue("outcome_classes", out var classes) && classes != string.Join(',', NetworkEncoding.OutcomeClasses))
                 throw new FormatException($"{name}'s outcome classes ({classes}) differ from the Encoding's");
             foreach (var block in ParseDropped(metadata))
-                if (!NetworkEncoding.InputBlocks.Any(b => b.Name == block))
+                if (!encoding.InputBlocks.Any(b => b.Name == block))
                     throw new FormatException(
-                        $"{name} drops the input block '{block}', which Encoding v{NetworkEncoding.Version} doesn't have " +
-                        $"(blocks: {string.Join(", ", NetworkEncoding.InputBlocks.Select(b => b.Name))})");
-            return new NeuralNetwork(path, session, device, new Dictionary<string, string>(metadata));
+                        $"{name} drops the input block '{block}', which {encoding} doesn't have " +
+                        $"(blocks: {string.Join(", ", encoding.InputBlocks.Select(b => b.Name))})");
+            return new NeuralNetwork(path, session, device, new Dictionary<string, string>(metadata), encoding);
         }
         catch
         {
@@ -161,17 +169,17 @@ public sealed class NeuralNetwork : IDisposable
     }
 
     /// <summary>
-    /// Runs <paramref name="batch"/> positions: <paramref name="input"/> holds batch × InputSize numbers; the outputs
-    /// receive batch × PolicySize logits, batch values and batch × outcome-class logits.
+    /// Runs <paramref name="batch"/> positions: <paramref name="input"/> holds batch × InputSize numbers (of
+    /// <see cref="Encoding"/>); the outputs receive batch × PolicySize logits, batch values and batch × outcome-class logits.
     /// </summary>
     public void Run(float[] input, int batch, Span<float> policy, Span<float> value, Span<float> outcome)
     {
         if (batch <= 0) throw new ArgumentOutOfRangeException(nameof(batch));
-        var inputSize = NetworkEncoding.InputSize;
+        var inputSize = Encoding.InputSize;
         using var tensor = OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance,
             input.AsMemory(0, batch * inputSize), [batch, inputSize]);
         using var outputs = _session.Run(_runOptions, _inputNames, [tensor], OutputNames);
-        outputs[0].GetTensorDataAsSpan<float>()[..(batch * NetworkEncoding.PolicySize)].CopyTo(policy);
+        outputs[0].GetTensorDataAsSpan<float>()[..(batch * Encoding.PolicySize)].CopyTo(policy);
         outputs[1].GetTensorDataAsSpan<float>()[..batch].CopyTo(value);
         outputs[2].GetTensorDataAsSpan<float>()[..(batch * NetworkEncoding.OutcomeClasses.Length)].CopyTo(outcome);
     }

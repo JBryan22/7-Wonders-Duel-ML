@@ -32,6 +32,7 @@ public static class NetworkEncoding
     static readonly int TokenCount = GameData.Tokens.Length;
     /// <summary>The base game's decision kinds (through LibertyGive): v1 never grows when an expansion appends kinds.</summary>
     const int DecisionKindCount = (int)DecisionKind.LibertyGive + 1;
+    static readonly CardSet BaseCards = CardSet.Of(Enumerable.Range(0, CardCount));
 
     // ---------------------------------------------------------------- scaling (recorded in the manifest)
 
@@ -224,11 +225,12 @@ public static class NetworkEncoding
                 else
                 {
                     if (card == GameState.Hidden) input[at + 1] = 1;
-                    else if (card == GameState.HiddenGuild) input[at + 2] = 1;
+                    // A Pantheon game's special backs are Grand Temples, not Guilds: Encoding v2 shows them.
+                    else if (card == GameState.HiddenGuild) { if (!s.TempleBacks) input[at + 2] = 1; }
                     else if (card >= 0)
                     {
                         input[at + 3] = 1;
-                        input[at + SlotFlags.Length + card] = 1;
+                        if (card < CardCount) input[at + SlotFlags.Length + card] = 1;
                     }
                     if (s.IsAccessible(slot)) input[at + 4] = 1;
                 }
@@ -284,7 +286,7 @@ public static class NetworkEncoding
         input[i++] = s.Rules.StartChoice == StartChoice.Rule2015 ? 1 : 0;
 
         // Turn.
-        if (deciding is { } front) input[i + (int)front.Kind] = 1;
+        if (deciding is { } front && (int)front.Kind < DecisionKindCount) input[i + (int)front.Kind] = 1;
         i += DecisionKindCount;
         input[i++] = deciding is { } p && p.Player == me ? 1 : 0;
         input[i++] = s.CurrentPlayer == me ? 1 : 0;
@@ -318,22 +320,31 @@ public static class NetworkEncoding
         return false;
     }
 
+    // The Set helpers skip expansion identities (Grand Temples, Pantheon's Wonders and Progress tokens, whose indices
+    // continue the base ones): Encoding v1 has no index for them, and v2 encodes them in its appended blocks. A base
+    // game never holds one, so this changes nothing there.
+
     static int Set(Span<float> input, int at, CardSet set)
     {
-        foreach (var c in set.Cards()) input[at + c] = 1;
+        foreach (var c in (set & BaseCards).Cards()) input[at + c] = 1;
         return at + CardCount;
     }
 
     static int Set(Span<float> input, int at, ushort mask, int size)
     {
-        foreach (var b in new Bits(mask)) input[at + b] = 1;
+        foreach (var b in new Bits((ushort)(mask & ((1 << size) - 1)))) input[at + b] = 1;
         return at + size;
     }
 
     // ---------------------------------------------------------------- policy
 
-    /// <summary>The policy index of a Move. Every Move the Engine can generate has exactly one.</summary>
-    public static int PolicyIndex(Move m) => m.Kind switch
+    /// <summary>
+    /// The policy index of a Move. Every Move the Engine can generate in a base game has exactly one; an expansion's
+    /// Moves (and base Moves naming a Grand Temple or one of Pantheon's Wonders or tokens) have none in v1.
+    /// </summary>
+    public static int PolicyIndex(Move m) => !HasPolicyIndex(m)
+        ? throw new ArgumentException($"No Encoding v1 policy index for {m}: an expansion's Move (Encoding v2 has one)")
+        : m.Kind switch
     {
         MoveKind.Build => BuildAt + m.Card,
         MoveKind.Discard => DiscardAt + m.Card,
@@ -350,6 +361,18 @@ public static class NetworkEncoding
         MoveKind.StartMe => StartAt,
         MoveKind.StartOpponent => StartAt + 1,
         _ => throw new ArgumentException($"No policy index for {m}"),
+    };
+
+    /// <summary>True for a Move of the base game's kinds that names only base cards, Wonders and Progress tokens.</summary>
+    internal static bool HasPolicyIndex(Move m) => m.Kind switch
+    {
+        MoveKind.Build or MoveKind.Discard or MoveKind.Mausoleum or MoveKind.Messe or MoveKind.LibertyKeep
+            or MoveKind.LibertyGive or MoveKind.Destroy => m.Card < CardCount,
+        MoveKind.Wonder => m.Card < CardCount && m.Wonder < WonderCount,
+        MoveKind.Draft => m.Wonder < WonderCount,
+        MoveKind.Token or MoveKind.Library => m.Card < TokenCount,
+        MoveKind.StartMe or MoveKind.StartOpponent => true,
+        _ => false,
     };
 
     /// <summary>The Move a policy index stands for (the inverse of <see cref="PolicyIndex"/>).</summary>

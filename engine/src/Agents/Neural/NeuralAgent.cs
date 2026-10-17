@@ -168,7 +168,10 @@ public sealed class NeuralAgent : IAgent
         public int RawMover;
     }
 
-    static readonly int PolicySize = NetworkEncoding.PolicySize;
+    // The Encoding the policy logits are indexed by: the network's own version, or for a reference evaluator the
+    // oldest version that can encode the game (spec-pantheon P-A7). Set at the start of each search.
+    EncodingVersion _encoding = EncodingVersion.V1;
+    int PolicySize => _encoding.PolicySize;
 
     readonly Rng _rng;
     readonly ILeafEvaluator _evaluator;
@@ -180,7 +183,7 @@ public sealed class NeuralAgent : IAgent
     readonly int[] _children = new int[GameState.MaxMoves];
     readonly double[] _sigma = new double[GameState.MaxMoves];     // Gumbel: σ(completed Q) per Move
     readonly double[] _logPrior = new double[GameState.MaxMoves];  // Gumbel: normalised logits per Move
-    readonly double[] _rootGumbel = new double[NetworkEncoding.PolicySize];
+    double[] _rootGumbel = new double[NetworkEncoding.PolicySize];
     int[] _halving = [];
     int _simulation;
     readonly float[] _outcome = new float[NetworkEncoding.OutcomeClasses.Length];
@@ -216,8 +219,21 @@ public sealed class NeuralAgent : IAgent
     /// <summary>The last search's result (null before the first search, and after a forced Move).</summary>
     public NeuralResult? LastSearch { get; private set; }
 
+    /// <summary>
+    /// The Encoding this Agent's search uses in a game of these rules: its network's own version, or for a reference
+    /// evaluator the oldest that can encode the game. Throws <see cref="NotSupportedException"/> when the network's
+    /// version cannot encode the game (a Pantheon game with an Encoding v1 network, spec-pantheon P-A7).
+    /// </summary>
+    public EncodingVersion EncodingFor(Ruleset rules)
+    {
+        var encoding = _evaluator.Encoding ?? EncodingVersion.For(rules);
+        encoding.CheckSupports(rules, $"neural:{Settings.Model}");
+        return encoding;
+    }
+
     public Move ChooseMove(Observation observation)
     {
+        EncodingFor(observation.State.Rules);
         var n = observation.LegalMoves(_moves);
         if (n == 0) throw new InvalidOperationException("No legal Move");
         if (n == 1)
@@ -237,6 +253,8 @@ public sealed class NeuralAgent : IAgent
     {
         var root = observation.State;
         var me = observation.Player;
+        _encoding = EncodingFor(root.Rules);
+        if (_rootGumbel.Length < PolicySize) _rootGumbel = new double[PolicySize];
         var rootCount = root.LegalMoves(_rootMoves);
         if (rootCount == 0) throw new InvalidOperationException("No legal Move");
         _nodeCount = 0;
@@ -256,7 +274,7 @@ public sealed class NeuralAgent : IAgent
         {
             // One Gumbel(0, 1) sample per root Move, drawn in legal-Move order from the Agent's own stream.
             for (var m = 0; m < rootCount; m++)
-                _rootGumbel[NetworkEncoding.PolicyIndex(_rootMoves[m])] =
+                _rootGumbel[_encoding.PolicyIndex(_rootMoves[m])] =
                     Settings.GumbelScale * -Math.Log(-Math.Log(Math.Max(NextDouble(), 1e-300)));
             _halving = SequentialHalving(Math.Min(Settings.Considered, rootCount), Settings.Simulations);
         }
@@ -268,7 +286,7 @@ public sealed class NeuralAgent : IAgent
             for (var m = 0; m < rootCount; m++)
             {
                 var p = (1 - Settings.Noise) * prior[m] + Settings.Noise * noise[m];
-                rootLogits[NetworkEncoding.PolicyIndex(_rootMoves[m])] = (float)Math.Log(Math.Max(p, 1e-30));
+                rootLogits[_encoding.PolicyIndex(_rootMoves[m])] = (float)Math.Log(Math.Max(p, 1e-30));
             }
         }
 
@@ -314,7 +332,7 @@ public sealed class NeuralAgent : IAgent
             for (var m = 0; m < rootCount; m++)
             {
                 if (stats[m].Visits != maxVisits) continue;
-                var score = _rootGumbel[NetworkEncoding.PolicyIndex(_rootMoves[m])] + _logPrior[m] + _sigma[m];
+                var score = _rootGumbel[_encoding.PolicyIndex(_rootMoves[m])] + _logPrior[m] + _sigma[m];
                 if (best < 0 || score > bestScore) (best, bestScore) = (m, score);
             }
             var improved = new double[rootCount];
@@ -538,7 +556,7 @@ public sealed class NeuralAgent : IAgent
         for (var i = 0; i < n; i++)
         {
             var visits = _children[i] < 0 ? 0 : _nodes[_children[i]].Visits;
-            var score = _rootGumbel[NetworkEncoding.PolicyIndex(_moves[i])] + _logPrior[i] + _sigma[i];
+            var score = _rootGumbel[_encoding.PolicyIndex(_moves[i])] + _logPrior[i] + _sigma[i];
             if (visits == considered && (pick < 0 || score > bestScore)) (pick, bestScore) = (i, score);
             if (score > fallbackScore) (fallback, fallbackScore) = (i, score);
         }
@@ -643,7 +661,7 @@ public sealed class NeuralAgent : IAgent
     /// <summary>Evaluates <paramref name="s"/> for <paramref name="mover"/> into <paramref name="node"/>'s logits; returns the value.</summary>
     float Evaluate(int node, GameState s, int mover)
     {
-        if (_logitCount + PolicySize > _logits.Length) Array.Resize(ref _logits, _logits.Length * 2);
+        while (_logitCount + PolicySize > _logits.Length) Array.Resize(ref _logits, _logits.Length * 2);
         var offset = _logitCount;
         _logitCount += PolicySize;
         var value = _evaluator.Evaluate(s, mover, _logits.AsSpan(offset, PolicySize), _outcome);
@@ -661,11 +679,11 @@ public sealed class NeuralAgent : IAgent
     }
 
     /// <summary>The softmax of the logits over the given Moves (the masked policy).</summary>
-    static void PriorsOver(ReadOnlySpan<float> logits, ReadOnlySpan<Move> moves, Span<double> priors)
+    void PriorsOver(ReadOnlySpan<float> logits, ReadOnlySpan<Move> moves, Span<double> priors)
     {
         var max = double.NegativeInfinity;
         for (var i = 0; i < moves.Length; i++)
-            max = Math.Max(max, priors[i] = logits[NetworkEncoding.PolicyIndex(moves[i])]);
+            max = Math.Max(max, priors[i] = logits[_encoding.PolicyIndex(moves[i])]);
         if (double.IsNegativeInfinity(max))
         {
             priors[..moves.Length].Fill(1.0 / moves.Length);

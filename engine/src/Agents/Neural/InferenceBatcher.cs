@@ -20,11 +20,17 @@ public sealed class InferenceBatcher : IDisposable
 {
     public const int DefaultMaxBatch = 512;
 
-    /// <summary>One position waiting for the network; owned and reused by one caller (one search at a time).</summary>
-    public sealed class Request
+    /// <summary>
+    /// One position waiting for the network; owned and reused by one caller (one search at a time). Sized for one
+    /// Encoding version, which must be the network's (Encoding v1 when none is given).
+    /// </summary>
+    public sealed class Request(EncodingVersion encoding)
     {
-        public readonly float[] Input = new float[NetworkEncoding.InputSize];
-        public readonly float[] Policy = new float[NetworkEncoding.PolicySize];
+        public Request() : this(EncodingVersion.V1) { }
+
+        public EncodingVersion Encoding => encoding;
+        public readonly float[] Input = new float[encoding.InputSize];
+        public readonly float[] Policy = new float[encoding.PolicySize];
         public readonly float[] Outcome = new float[NetworkEncoding.OutcomeClasses.Length];
         public float Value;
         internal readonly ManualResetEventSlim Done = new(false);
@@ -66,6 +72,8 @@ public sealed class InferenceBatcher : IDisposable
     /// <summary>Evaluates the request's <see cref="Request.Input"/>, filling its policy logits, value and outcome logits.</summary>
     public void Evaluate(Request request)
     {
+        if (request.Encoding != Network.Encoding)
+            throw new ArgumentException($"The request is sized for {request.Encoding}, the network uses {Network.Encoding}", nameof(request));
         request.Done.Reset();
         request.Error = null;
         lock (_queue)
@@ -80,8 +88,8 @@ public sealed class InferenceBatcher : IDisposable
 
     void Loop()
     {
-        var inputSize = NetworkEncoding.InputSize;
-        var policySize = NetworkEncoding.PolicySize;
+        var inputSize = Network.Encoding.InputSize;
+        var policySize = Network.Encoding.PolicySize;
         var outcomeSize = NetworkEncoding.OutcomeClasses.Length;
         var inputs = new float[MaxBatch * inputSize];
         var policies = new float[MaxBatch * policySize];

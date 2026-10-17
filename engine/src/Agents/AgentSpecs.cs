@@ -1,3 +1,5 @@
+using SevenWondersDuel.Engine;
+
 namespace SevenWondersDuel.Agents;
 
 /// <summary>
@@ -36,4 +38,10 @@ public static class AgentSpecs
 
     /// <summary>Throws a <see cref="FormatException"/> unless the spec names an Agent that can be built.</summary>
     public static void Validate(string spec) => Create(spec, 0);
+
+    /// <summary>
+    /// Also throws a <see cref="NotSupportedException"/> when the Agent cannot play games of these rules (a neural
+    /// Agent whose network's Encoding version cannot encode them: a Pantheon game needs Encoding v2).
+    /// </summary>
+    public static void Validate(string spec, Ruleset rules) => (Create(spec, 0) as NeuralAgent)?.EncodingFor(rules);
 }

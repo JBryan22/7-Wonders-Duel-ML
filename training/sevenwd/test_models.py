@@ -6,6 +6,7 @@
     wrong-version.onnx  like zero.onnx but stamped with Encoding version 999, which C# must refuse
     no-derived.onnx     a seeded random network (8 x 1) that drops the derived-feature inputs (dropped_inputs=derived)
     bad-drop.onnx       like zero.onnx but claiming to drop an input block the Encoding doesn't have: refused
+    zero-v2.onnx        like zero.onnx but for Encoding v2 (data/encoding/v2.json: v1 plus the Pantheon blocks)
 
 Regenerate with `uv run python -m sevenwd.test_models` (from training/) after a change to the network or the export.
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 import torch
 
 from .export import export_onnx
-from .manifest import REPO_ROOT, Manifest, load_manifest
+from .manifest import REPO_ROOT, Manifest, default_manifest_path, load_manifest
 from .network import Network, NetworkConfig
 
 DEFAULT_DIR = REPO_ROOT / "engine" / "tests" / "Agents.Tests" / "Models"
@@ -66,7 +67,18 @@ def write_test_models(out: Path, manifest: Manifest | None = None) -> list[Path]
     ]
     expected_path = out / "tiny.expected.json"
     expected_path.write_text(json.dumps(expected) + "\n", encoding="utf-8")
-    return [*paths, expected_path]
+    return [*paths, expected_path, *write_v2_test_models(out)]
+
+
+def write_v2_test_models(out: Path, manifest: Manifest | None = None) -> list[Path]:
+    """The Encoding v2 fixtures (spec-pantheon P-A7): zero-v2.onnx, a uniform network C# loads as Encoding v2."""
+    manifest = manifest or load_manifest(default_manifest_path(2))
+    out.mkdir(parents=True, exist_ok=True)
+    zero = Network(NetworkConfig.from_manifest(manifest, width=1, blocks=1)).eval()
+    with torch.no_grad():
+        for p in zero.parameters():
+            p.zero_()
+    return [export_onnx(zero, manifest, out / "zero-v2.onnx")]
 
 
 def main(argv: list[str] | None = None) -> int:

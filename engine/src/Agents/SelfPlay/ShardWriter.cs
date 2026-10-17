@@ -22,9 +22,13 @@ public static class ShardWriter
     public const string Format = "7wd-shard";
     public const string HeaderName = "shard.json";
 
-    /// <summary>Writes the shard of <paramref name="records"/> to <paramref name="directory"/> (replacing one there); returns its positions.</summary>
-    public static int Write(string directory, IReadOnlyList<GameRecord> records)
+    /// <summary>
+    /// Writes the shard of <paramref name="records"/> to <paramref name="directory"/> (replacing one there) in
+    /// <paramref name="encoding"/> (default Encoding v1); returns its positions.
+    /// </summary>
+    public static int Write(string directory, IReadOnlyList<GameRecord> records, EncodingVersion? encoding = null)
     {
+        encoding ??= EncodingVersion.V1;
         var full = Path.GetFullPath(directory);
         var temp = full + ".tmp";
         if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
@@ -36,15 +40,16 @@ public static class ShardWriter
         var probs = new List<float>(positions * 16);
         var values = new float[positions];
         var outcomes = new sbyte[positions];
-        var input = new float[NetworkEncoding.InputSize];
-        var half = new Half[NetworkEncoding.InputSize];
+        var input = new float[encoding.InputSize];
+        var half = new Half[encoding.InputSize];
         var moves = new Move[GameState.MaxMoves];
         var row = 0;
-        using (var inputs = Npy.Create<Half>(Path.Combine(temp, "input.npy"), positions, NetworkEncoding.InputSize))
+        using (var inputs = Npy.Create<Half>(Path.Combine(temp, "input.npy"), positions, encoding.InputSize))
         {
             foreach (var record in records)
             {
                 var parsed = MoveLog.Parse(record.Log);
+                encoding.CheckSupports(parsed.Rules, $"Game {record.Game}'s shard");
                 var result = parsed.State.Result ?? throw new FormatException($"Game {record.Game}: the Move Log does not finish the game");
                 var game = new Game(parsed.Rules);
                 var next = 0;
@@ -60,12 +65,12 @@ public static class ShardWriter
                         var n = observation.LegalMoves(moves);
                         if (decision.Target.Length != n)
                             throw new FormatException($"Game {record.Game}, entry {e}: {decision.Target.Length} targets for {n} legal Moves");
-                        NetworkEncoding.Encode(observation, input);
+                        encoding.Encode(observation, input);
                         for (var i = 0; i < input.Length; i++) half[i] = (Half)input[i];
                         inputs.Write(half);
                         for (var i = 0; i < n; i++)
                         {
-                            indices.Add((short)NetworkEncoding.PolicyIndex(moves[i]));
+                            indices.Add((short)encoding.PolicyIndex(moves[i]));
                             probs.Add(decision.Target[i]);
                         }
                         offsets[row + 1] = indices.Count;
@@ -89,7 +94,7 @@ public static class ShardWriter
         File.WriteAllText(Path.Combine(temp, HeaderName), JsonSerializer.Serialize(new Dictionary<string, object>
         {
             ["format"] = Format,
-            ["encoding_version"] = NetworkEncoding.Version,
+            ["encoding_version"] = encoding.Number,
             ["positions"] = positions,
         }, new JsonSerializerOptions { WriteIndented = true }) + "\n");
 

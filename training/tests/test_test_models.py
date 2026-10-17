@@ -4,7 +4,8 @@ import numpy as np
 import onnxruntime as ort
 
 from sevenwd.export import INPUT_NAME, read_metadata
-from sevenwd.test_models import DEFAULT_DIR, WRONG_VERSION, fixed_inputs, write_test_models
+from sevenwd.manifest import default_manifest_path, load_manifest
+from sevenwd.test_models import DEFAULT_DIR, WRONG_VERSION, fixed_inputs, write_test_models, write_v2_test_models
 
 
 def test_test_models_are_what_the_csharp_tests_expect(manifest, tmp_path):
@@ -35,3 +36,16 @@ def test_committed_test_models_match_their_expected_outputs(manifest):
     policy, value, _ = tiny.run(None, {INPUT_NAME: fixed_inputs(manifest).numpy()})
     assert np.allclose(policy, expected["policy"], atol=1e-5)
     assert np.allclose(value, expected["value"], atol=1e-5)
+
+
+def test_the_v2_test_model_is_a_uniform_encoding_v2_network(tmp_path):
+    v2 = load_manifest(default_manifest_path(2))
+    write_v2_test_models(tmp_path, v2)
+    for path in (tmp_path / "zero-v2.onnx", DEFAULT_DIR / "zero-v2.onnx"):
+        metadata = read_metadata(path)
+        assert metadata["encoding_version"] == "2"
+        assert (int(metadata["input_size"]), int(metadata["policy_size"])) == (v2.input_size, v2.policy_size)
+        session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        policy, value, outcome = session.run(None, {INPUT_NAME: fixed_inputs(v2).numpy()})
+        assert policy.shape == (2, v2.policy_size)
+        assert not policy.any() and not value.any() and not outcome.any()

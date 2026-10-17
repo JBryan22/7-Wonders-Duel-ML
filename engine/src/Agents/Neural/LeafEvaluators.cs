@@ -13,20 +13,28 @@ public interface ILeafEvaluator
 
     /// <summary>True when the outcome logits mean something (a trained network's outcome head); the references write zeros.</summary>
     bool HasOutcomeHead => false;
+
+    /// <summary>
+    /// The Encoding the policy logits are indexed by (a network's own version), or null for an evaluator that works
+    /// with any (the references): the search then uses the oldest version that can encode the game.
+    /// </summary>
+    EncodingVersion? Encoding => null;
 }
 
-/// <summary>The network: encodes the position (spec A6) and runs it through the shared <see cref="InferenceBatcher"/>.</summary>
+/// <summary>The network: encodes the position (spec A6, in the network's own Encoding version) and runs it through the shared <see cref="InferenceBatcher"/>.</summary>
 public sealed class NetworkEvaluator(InferenceBatcher batcher) : ILeafEvaluator
 {
-    readonly InferenceBatcher.Request _request = new();
+    readonly InferenceBatcher.Request _request = new(batcher.Network.Encoding);
 
     public InferenceBatcher Batcher => batcher;
 
     public bool HasOutcomeHead => true;
 
+    public EncodingVersion Encoding => batcher.Network.Encoding;
+
     public float Evaluate(GameState state, int me, Span<float> policy, Span<float> outcome)
     {
-        NetworkEncoding.Encode(state, me, _request.Input);
+        _request.Encoding.Encode(state, me, _request.Input);
         batcher.Evaluate(_request);
         _request.Policy.CopyTo(policy);
         _request.Outcome.CopyTo(outcome);
@@ -66,6 +74,8 @@ public sealed class PlayoutEvaluator(ulong seed) : ILeafEvaluator
         outcome.Clear();
         _scratch.CopyFrom(state);
         var s = _scratch;
+        // The root is evaluated from the Observation itself: a Pantheon one may hold hidden Divinities (base: no-op).
+        _chance.FillExpansion(s);
         while (!s.IsOver)
         {
             if (s.Step == StepKind.Reveal) s.Apply(_chance.Next(s));
