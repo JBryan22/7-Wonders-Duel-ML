@@ -23,6 +23,19 @@ public sealed class AdvisorSession
     /// <summary>The comment line that records the owner's seat in a saved Move Log (comments are ignored by the parser).</summary>
     public const string SeatPrefix = "# advisor seat=";
 
+    /// <summary>
+    /// The comment line that keeps one of the AI's private log lines in a Pantheon game against the AI (ticket 12): the
+    /// log index and the true line, base64-encoded so a glance at the file doesn't spoil it. The log itself holds the
+    /// line as the owner sees it ("reveal P2 divinities greek ? ?", "P2 divinity ? 4").
+    /// </summary>
+    public const string SecretPrefix = "# advisor ai-secret ";
+
+    /// <summary>
+    /// The AI's private log lines (Pantheon, against the AI): log index → the true line where the log holds its redacted
+    /// form. Only <see cref="TrueGame"/> and the AI's Observation use them; the owner's view never does.
+    /// </summary>
+    readonly SortedDictionary<int, string> _secrets = [];
+
     AdvisorSession(Ruleset rules, int seat, Game game, AiOpponent? ai = null)
     {
         Rules = rules;
@@ -63,6 +76,7 @@ public sealed class AdvisorSession
     public AdvisorSession WithRules(Ruleset rules)
     {
         var session = new AdvisorSession(rules, Seat, new Game(rules), Ai);
+        foreach (var (index, line) in _secrets) session._secrets[index] = line;
         session.Replay([.. Log]);
         return session;
     }
@@ -72,10 +86,12 @@ public sealed class AdvisorSession
     {
         var seat = 0;
         AiOpponent? ai = null;
+        var secrets = new SortedDictionary<int, string>();
         foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
         {
             var line = raw.Trim();
             if (line.StartsWith(AiOpponent.Prefix, StringComparison.Ordinal)) ai = AiOpponent.Parse(line[AiOpponent.Prefix.Length..]);
+            if (line.StartsWith(SecretPrefix, StringComparison.Ordinal)) ReadSecret(line[SecretPrefix.Length..], secrets);
             if (!line.StartsWith(SeatPrefix, StringComparison.Ordinal)) continue;
             seat = line[SeatPrefix.Length..] switch
             {
@@ -86,6 +102,7 @@ public sealed class AdvisorSession
         }
         var game = MoveLog.Parse(text);
         var session = new AdvisorSession(game.Rules, seat, game, ai);
+        foreach (var (index, line) in secrets) session._secrets[index] = line;
         session.Replay([.. game.Log]);
         session.Deal();
         return session;
@@ -99,6 +116,8 @@ public sealed class AdvisorSession
         sb.Append(Rules).Append('\n');
         sb.Append(SeatPrefix).Append(Seat == 0 ? "P1" : "P2").Append('\n');
         if (Ai is not null) sb.Append(AiOpponent.Prefix).Append(Ai.Write()).Append('\n');
+        foreach (var (index, line) in _secrets)
+            sb.Append(SecretPrefix).Append(index).Append(' ').Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(line))).Append('\n');
         foreach (var e in Log) sb.Append(MoveLog.Format(e)).Append('\n');
         return sb.ToString();
     }
@@ -185,11 +204,45 @@ public sealed class AdvisorSession
     public void Deal()
     {
         if (Ai is null) return;
+        var pantheon = Rules.HasExpansion(Expansions.Pantheon);
         while (State.Step == StepKind.Reveal)
         {
-            var reveal = new RandomChanceSource(AiOpponent.Mix(Ai.Seed, (ulong)Log.Count, 1)).Next(State);
-            Enter(MoveLog.Format(reveal));
+            // Pantheon: deal from the true game, which knows the AI's face-down Divinities and the cards it put back
+            // (the Gate, the Pantheon Reveal and later draws must agree with them); the AI's private draws and Divine
+            // Theater are logged as the owner sees them and kept as secrets. A base game deals from the log's state, as before.
+            var chance = new RandomChanceSource(AiOpponent.Mix(Ai.Seed, (ulong)Log.Count, 1));
+            if (!pantheon)
+            {
+                Enter(MoveLog.Format(chance.Next(State)));
+                continue;
+            }
+            EnterSeen(chance.Next(TrueGame().State));
         }
+    }
+
+    /// <summary>
+    /// Enters an entry of the AI game as the owner sees it (<see cref="MoveLog.AsSeenBy"/>); when that hides something,
+    /// the true line is kept as a secret at its log index.
+    /// </summary>
+    void EnterSeen(LogEntry entry)
+    {
+        var seen = MoveLog.AsSeenBy(entry, Seat);
+        var at = Log.Count;
+        Enter(MoveLog.Format(seen));
+        if (!ReferenceEquals(seen, entry)) _secrets[at] = MoveLog.Format(entry);
+    }
+
+    /// <summary>
+    /// The game as it really is in a game against the AI: the log with the AI's private lines put back (the owner's
+    /// own lines are already named in the log). Without secrets it is the log's game itself.
+    /// </summary>
+    public Game TrueGame()
+    {
+        if (_secrets.Count == 0) return Game;
+        var game = new Game(Rules);
+        for (var i = 0; i < Log.Count; i++)
+            game.Apply(_secrets.TryGetValue(i, out var line) ? MoveLog.ParseEntry(line, game.State) : Log[i]);
+        return game;
     }
 
     /// <summary>
@@ -200,7 +253,7 @@ public sealed class AdvisorSession
     public Observation AiObservation()
     {
         if (Ai is null) throw new InvalidOperationException("Not a game against the AI");
-        if (!State.LibraryDrawHidden || State.PlayerToDecide != AiSeat) return State.Observe(AiSeat);
+        if (!State.LibraryDrawHidden || State.PlayerToDecide != AiSeat) return TrueGame().State.Observe(AiSeat);
         var at = Log.ToList().FindLastIndex(e => e is LibraryReveal { Redacted: true } l && l.Player == AiSeat);
         var box = ProgressTokens.In(State.TokensSetAside).ToArray();
         var rng = new Rng(AiOpponent.Mix(Ai.Seed, (ulong)at, 2));
@@ -212,7 +265,9 @@ public sealed class AdvisorSession
         var draw = box[..GameState.LibraryDrawSize];
         Array.Sort(draw);
         var game = new Game(Rules);
-        for (var i = 0; i < Log.Count; i++) game.Apply(i == at ? new LibraryReveal(AiSeat, draw) : Log[i]);
+        for (var i = 0; i < Log.Count; i++)
+            game.Apply(i == at ? new LibraryReveal(AiSeat, draw)
+                : _secrets.TryGetValue(i, out var line) ? MoveLog.ParseEntry(line, game.State) : Log[i]);
         return game.State.Observe(AiSeat);
     }
 
@@ -223,7 +278,8 @@ public sealed class AdvisorSession
     public void EnterAiMove(Move move)
     {
         if (!AiToMove) throw new EntryException("It is not the AI's turn");
-        Enter(MoveLog.Format(new MoveEntry(AiSeat, move)));
+        // A face-down placement or a Divine Theater restack is private: the log shows "P2 divinity ? 4".
+        EnterSeen(new MoveEntry(AiSeat, move));
         Deal();
     }
 
@@ -292,22 +348,38 @@ public sealed class AdvisorSession
                 return $"P{l.Player + 1}'s Great Library draw is private: only they see it, so it stays '? ? ?'";
             case LibraryReveal { Redacted: true } l when l.Player == Seat:
                 return "Name the 3 Progress tokens you drew for the Great Library";
+            case DivinityDrawReveal { Redacted: false } d when d.Player != Seat:
+                return $"P{d.Player + 1}'s Divinity draw is private: only they see it, so it stays '? ?'";
+            case DivinityDrawReveal { Redacted: true } d when d.Player == Seat:
+                return "Name the Divinities you drew (top card first)";
+            case TheaterReveal { Redacted: false } t when t.Player != Seat:
+                return $"P{t.Player + 1}'s Divine Theater is private: only they see the deck";
+            case TheaterReveal { Redacted: true } t when t.Player == Seat:
+                return "Name the cards of the deck your Divine Theater shows (top card first)";
+            case MoveEntry { Move.Kind: MoveKind.Divinity } m when m.Player != Seat && m.Move.Divinity != PantheonState.Hidden:
+                return $"P{m.Player + 1} places a Divinity face down: you see only the space ('P{m.Player + 1} divinity ? <space>')";
+            case MoveEntry { Move.Kind: MoveKind.TheaterOrder } m when m.Player != Seat && m.Move.Divinity != PantheonState.Hidden:
+                return $"P{m.Player + 1}'s restack is private: it stays '?'";
             case SlotReveal r when r.Age == s.Age:
                 var named = new HashSet<int>();
                 foreach (var (slot, card) in r.Cards)
                 {
-                    if (slot < 0 || slot >= GameState.SlotCount || card < 0 || card >= GameData.Cards.Length) continue;
-                    var name = GameData.Cards[card].Name;
+                    if (slot < 0 || slot >= GameState.SlotCount || !GameData.IsCard(card)) continue;
+                    var def = GameData.Card(card);
+                    var name = def.Name;
+                    // Pantheon: Grand Temple backs take the Guild backs' place (and the Guilds are not used).
+                    var back = s.Pantheon is null ? "Guild" : "Grand Temple";
+                    var special = s.Pantheon is null ? def.IsGuild : def.Color == CardColor.Temple;
                     if (s.SlotCard(slot) >= 0)
-                        return $"Slot {s.Layout.SlotName(slot)} already shows {GameData.Cards[s.SlotCard(slot)].Name}; rewind the log to change it";
+                        return $"Slot {s.Layout.SlotName(slot)} already shows {GameData.Card(s.SlotCard(slot)).Name}; rewind the log to change it";
                     if (s.Seen.Contains(card) || !named.Add(card))
                         return $"{name} has already been revealed: every card is in the game only once";
-                    if (s.SlotCard(slot) == GameState.HiddenGuild && !GameData.Cards[card].IsGuild)
-                        return $"Slot {s.Layout.SlotName(slot)} shows a Guild back, but {name} is not a Guild";
-                    if (s.SlotCard(slot) == GameState.Hidden && GameData.Cards[card].IsGuild)
-                        return $"{name} is a Guild, but slot {s.Layout.SlotName(slot)} does not show a Guild back";
-                    if (!GameData.Cards[card].IsGuild && GameData.Cards[card].Age != s.Age)
-                        return $"{name} is an Age {GameData.Cards[card].Age} card, not Age {s.Age}";
+                    if (s.SlotCard(slot) == GameState.HiddenGuild && !special)
+                        return $"Slot {s.Layout.SlotName(slot)} shows a {back} back, but {name} is not a {back}";
+                    if (s.SlotCard(slot) == GameState.Hidden && special)
+                        return $"{name} is a {back}, but slot {s.Layout.SlotName(slot)} does not show a {back} back";
+                    if (!special && !def.IsGuild && def.Age != s.Age)
+                        return $"{name} is an Age {def.Age} card, not Age {s.Age}";
                 }
                 return null;
             default:
@@ -321,6 +393,8 @@ public sealed class AdvisorSession
     /// </summary>
     void Replay(List<LogEntry> entries)
     {
+        // Secrets belong to log lines; lines cut off take theirs along (a takeback).
+        foreach (var index in _secrets.Keys.Where(i => i >= entries.Count).ToList()) _secrets.Remove(index);
         var game = new Game(Rules);
         foreach (var e in entries)
         {
@@ -333,10 +407,32 @@ public sealed class AdvisorSession
                 throw new EntryException(Friendly(ex.Message));
             }
         }
-        while (game.State.Step == StepKind.Reveal && game.State.SlotsToReveal == 0 && game.State.AwaitingLibraryDraw
-               && game.State.PlayerToDecide != Seat)
-            game.Apply(LibraryReveal.Hidden(game.State.PlayerToDecide));
+        while (game.State.Step == StepKind.Reveal && game.State.SlotsToReveal == 0 && HiddenRevealDue(game.State) is { } hidden)
+            game.Apply(hidden);
         Game = game;
+    }
+
+    /// <summary>
+    /// The opponent's private Reveal that is due, as this table logs it: their Great Library draw, and in a Pantheon game
+    /// entered by hand their Divinity draw ("reveal P2 divinities greek ? ?") or their Divine Theater ("reveal P2 theater
+    /// greek ? ? ?"). Against the AI the Pantheon ones are dealt from the true game instead (<see cref="Deal"/>).
+    /// </summary>
+    LogEntry? HiddenRevealDue(GameState s)
+    {
+        if (s.AwaitingLibraryDraw && s.PlayerToDecide != Seat) return LibraryReveal.Hidden(s.PlayerToDecide);
+        if (Ai is not null || s.Pantheon is not { } p) return null;
+        // Only once no other Pantheon Reveal comes first (the Engine's order: Zeus, the Gate, the Theater, setup, the draw).
+        if (p.AwaitingZeusDiscard || p.AwaitingGateReveal || s.PendingCount == 0) return null;
+        var d = s.Pending(0);
+        if (d.Player == Seat) return null;
+        if (p.AwaitingTheaterReveal) return TheaterReveal.Hidden(d.Player, p.TheaterDeck, p.DeckSize(p.TheaterDeck));
+        if (p.AwaitingMythologyTokens || p.AwaitingPantheon || p.AwaitingOfferings || p.AwaitingEnki) return null;
+        if (d.Kind == DecisionKind.PlaceDivinity && !p.HasDraw)
+        {
+            var m = (Mythology)d.Wonder;
+            return DivinityDrawReveal.Hidden(d.Player, m, Math.Min(2, p.DeckSize(m)));
+        }
+        return null;
     }
 
     /// <summary>The Engine's messages are already specific; this only drops the "Illegal move '...': " lead-in.</summary>
@@ -349,4 +445,21 @@ public sealed class AdvisorSession
     }
 
     static string Capitalise(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+    static void ReadSecret(string text, SortedDictionary<int, string> secrets)
+    {
+        var space = text.IndexOf(' ');
+        try
+        {
+            if (space > 0 && int.TryParse(text.AsSpan(0, space), out var index) && index >= 0)
+            {
+                secrets[index] = Encoding.UTF8.GetString(Convert.FromBase64String(text[(space + 1)..].Trim()));
+                return;
+            }
+        }
+        catch (FormatException)
+        {
+        }
+        throw new FormatException($"Bad advisor ai-secret line: '{text}'");
+    }
 }

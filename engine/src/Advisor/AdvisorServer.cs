@@ -20,7 +20,7 @@ namespace SevenWondersDuel.Advisor;
 /// </summary>
 public sealed record AdvisorOptions(string DataFolder, int Port = AdvisorServer.DefaultPort, string? WebFolder = null,
     string Agent = AdviceSettings.DefaultAgent, int? Simulations = null, Func<ITableSource>? TableSource = null,
-    bool TtsPolling = true, string? RunsFolder = null, TimeSpan? AiPause = null);
+    bool TtsPolling = true, string? RunsFolder = null, TimeSpan? AiPause = null, string? PantheonAgent = null);
 
 /// <summary>
 /// The Advisor Window's local web server (spec A8): serves the page from web/ and a small JSON API. It listens on
@@ -28,7 +28,7 @@ public sealed record AdvisorOptions(string DataFolder, int Port = AdvisorServer.
 /// nothing.
 /// <code>
 /// GET  /api/state              the game view (or the new-game screen when there is no game) and the advice box
-/// POST /api/new     {messe, liberty, rule2015, seat}   start a new game (the previous one is archived); with
+/// POST /api/new     {messe, liberty, rule2015, pantheon, seat}   start a new game (the previous one is archived); with
 ///                   vsAi, opponent, opponentLabel, aiSimulations, randomSeat: a game against the AI (ticket 36)
 /// POST /api/entry   {line, then?}  enter one Move Log line ("P1 build baths", "reveal 3.1 baths", ...); with then, two
 ///                              lines as one change (a Statue keep/give pair), both or neither. Against the AI: the
@@ -172,7 +172,7 @@ public sealed class AdvisorServer : IDisposable
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args ?? [], WebRootPath = web });
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.WebHost.UseUrls($"http://127.0.0.1:{options.Port}");
-        var advice = new AdviceSettings(options.Agent, options.Simulations ?? AdviceSettings.DefaultSimulations);
+        var advice = new AdviceSettings(options.Agent, options.Simulations ?? AdviceSettings.DefaultSimulations, options.PantheonAgent);
         var server = new AdvisorServer(new AdvisorStore(options.DataFolder), advice, fixedBudget: options.Simulations is not null,
             options.TableSource, options.TtsPolling, options.RunsFolder, options.AiPause);
         builder.Services.AddSingleton(server);
@@ -202,6 +202,7 @@ public sealed class AdvisorServer : IDisposable
             var settings = _store.LoadSettings() with
             {
                 Messe = r.Messe, Liberty = r.Liberty, Rule2015 = r.Rule2015, Seat = r.Seat is 1 ? 1 : 0, VsAi = r.VsAi,
+                Pantheon = r.Pantheon,
             };
             if (!r.VsAi)
             {
@@ -267,7 +268,8 @@ public sealed class AdvisorServer : IDisposable
             }
         });
 
-        app.MapGet("/api/play/opponents", () => Results.Ok(new OpponentsResponse(_runsFolder, Opponents.List(_runsFolder), _store.LoadSettings())));
+        app.MapGet("/api/play/opponents", () => Results.Ok(new OpponentsResponse(_runsFolder, Opponents.List(_runsFolder), _store.LoadSettings(),
+            Opponents.List(_runsFolder, Expansions.Pantheon))));
         app.MapPost("/api/play/advice", (AutoRequest r) => Respond(() => _aiAdvice = r.On, save: false));
         app.MapPost("/api/play/retry", () => Respond(() =>
         {
@@ -309,7 +311,7 @@ public sealed class AdvisorServer : IDisposable
             settings.AiSimulations, (ulong)Random.Shared.NextInt64() ^ (ulong)DateTime.UtcNow.Ticks);
         try
         {
-            ai.Validate();
+            ai.Validate(settings.ToRuleset());
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -408,7 +410,8 @@ public sealed class AdvisorServer : IDisposable
                     _changes++;
                     return;
                 }
-                _aiLast = AiPlayer.Describe(before, move);
+                // A private Move (a face-down Divinity, a Divine Theater restack) is described as the owner sees it.
+                _aiLast = AiPlayer.Describe(before, ((MoveEntry)MoveLog.AsSeenBy(new MoveEntry(_session.AiSeat, move), _session.Seat)).Move);
                 _aiKey = null;
                 SaveQuietly();
                 AfterAiChange();
@@ -571,7 +574,8 @@ public sealed class AdvisorServer : IDisposable
     /// </summary>
     void Reconcile(bool force)
     {
-        if (_settled is not { } snapshot || !_tts.Following || _session?.Ai is not null)
+        // Pantheon pieces on the TTS table are not read yet (ticket 13): a Pantheon game is entered by hand.
+        if (_settled is not { } snapshot || !_tts.Following || _session?.Ai is not null || PantheonGame)
         {
             if (_sync is not null || _syncText is not null) _changes++;
             _sync = null;
@@ -628,6 +632,8 @@ public sealed class AdvisorServer : IDisposable
         _syncLog = log;
     }
 
+    bool PantheonGame => _session?.Rules.HasExpansion(Expansions.Pantheon) == true;
+
     void SaveQuietly()
     {
         try
@@ -662,6 +668,8 @@ public sealed class AdvisorServer : IDisposable
             TableLifecycle.Each(promos).Select(p => new TtsPromoView(p.Id, p.Name)).ToList(), newGame, _catchUp && _session is not null);
 
         if (!c.Following) return View("off", null);
+        if (PantheonGame)
+            return View("pantheon", "Following the TTS table doesn't read the Pantheon pieces yet: enter this game's Moves here by hand.");
         // The colour first: nothing is read from the table until the Advisor knows which side is the owner's.
         if (_syncText is not null && _side is null)
             return View("seat", "Which colour do you play? Your TTS seat isn't White or Red: sit at White or Red in TTS, or choose your colour under \"You sit\".");
@@ -740,7 +748,7 @@ public sealed class AdvisorServer : IDisposable
 }
 
 public sealed record NewGameRequest(bool Messe, bool Liberty, bool Rule2015, int Seat, bool VsAi = false, string? Opponent = null,
-    string? OpponentLabel = null, int? AiSimulations = null, bool RandomSeat = false);
+    string? OpponentLabel = null, int? AiSimulations = null, bool RandomSeat = false, bool Pantheon = false);
 public sealed record EntryRequest(string? Line, string? Then = null);
 public sealed record RewindRequest(int Count);
 public sealed record AdviceRequest(bool Longer);
@@ -789,5 +797,10 @@ public sealed record PlayView(string Opponent, string Spec, int? Simulations, in
     string? LastAi, string? Error, bool Advice, int Takebacks, bool CanTakeBack, TallyView Tally, string ResultsFile,
     AiMoveView[] AiMoves);
 
-/// <summary>The opponents for the new-game screen, the runs folder they were read from, and the remembered choices.</summary>
-public sealed record OpponentsResponse(string? RunsFolder, IReadOnlyList<OpponentOption> Opponents, NewGameSettings Settings);
+/// <summary>
+/// The opponents for the new-game screen, the runs folder they were read from, and the remembered choices.
+/// <see cref="PantheonOpponents"/> are those offered when the Pantheon box is ticked: only networks trained for Pantheon
+/// (Encoding v2) can play it (spec-pantheon P-A7).
+/// </summary>
+public sealed record OpponentsResponse(string? RunsFolder, IReadOnlyList<OpponentOption> Opponents, NewGameSettings Settings,
+    IReadOnlyList<OpponentOption>? PantheonOpponents = null);

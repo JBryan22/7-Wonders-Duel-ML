@@ -52,6 +52,7 @@ public static class Reasons
         Chains(before, after, me, move, tags);
         Uncovered(before, after, me, move, tags);
         FollowUp(before, me, move, tags);
+        if (before.Pantheon is not null) Pantheon(before, after, me, move, tags);
         if (tags.Count == 0) tags.Add(Fallback(before, move));
         return [.. tags];
     }
@@ -85,7 +86,7 @@ public static class Reasons
     static void Denial(GameState before, Move move, int me, List<string> tags)
     {
         if (!move.TakesCard) return;
-        if (GameData.Cards[move.Card].Science is { } sym && before.SymbolCount(1 - me, sym) == 1)
+        if (GameData.Card(move.Card).Science is { } sym && before.SymbolCount(1 - me, sym) == 1)
             tags.Add($"denies their {Symbol(sym)} pair");
     }
 
@@ -157,8 +158,8 @@ public static class Reasons
     /// <summary>A free build through a chain, and the chains a new card opens.</summary>
     static void Chains(GameState before, GameState after, int me, Move move, List<string> tags)
     {
-        if (move.Kind == MoveKind.Build && GameData.Cards[move.Card].FreeIf is var from and >= 0 && Payment.IsChained(before, me, move.Card))
-            tags.Add($"free through the {GameData.Cards[from].Name} chain");
+        if (move.Kind == MoveKind.Build && GameData.Card(move.Card).FreeIf is var from and >= 0 && Payment.IsChained(before, me, move.Card))
+            tags.Add($"free through the {GameData.Card(from).Name} chain");
         if (DerivedFeatures.OpenChains(after, me) <= DerivedFeatures.OpenChains(before, me)) return;
         var gone = after.City(0) | after.City(1) | after.DiscardPile | after.CardsUnderWonders(0) | after.CardsUnderWonders(1);
         foreach (var built in (after.City(me) & ~before.City(me)).Cards())
@@ -186,7 +187,7 @@ public static class Reasons
         {
             if (!after.IsOccupied(slot) || !after.IsAccessible(slot) || before.IsAccessible(slot)) continue;
             var card = after.SlotCard(slot);
-            if (card >= 0) named.Add(GameData.Cards[card].Name);
+            if (card >= 0) named.Add(GameData.Card(card).Name);
             else faceDown++;
         }
         if (named.Count > 0) tags.Add($"uncovers {string.Join(" and ", named)} for {forWhom}");
@@ -197,7 +198,7 @@ public static class Reasons
     static void FollowUp(GameState before, int me, Move move, List<string> tags)
     {
         if (move.Kind != MoveKind.Wonder) return;
-        var w = GameData.Wonders[move.Wonder];
+        var w = GameData.Wonder(move.Wonder);
         var text = w.Effect switch
         {
             WonderEffect.DestroyBrown => "then you destroy one of their brown cards",
@@ -211,10 +212,34 @@ public static class Reasons
         if (text is not null) tags.Add(text);
     }
 
+    /// <summary>
+    /// Pantheon (ticket 12): Mythology and Offering tokens taken, Astarte's coins, a new Divinity activated, what the
+    /// Divine Theater's Wonder power asks next. Divinities are named only when the owner can see them.
+    /// </summary>
+    static void Pantheon(GameState before, GameState after, int me, Move move, List<string> tags)
+    {
+        var (b, a) = (before.Pantheon!, after.Pantheon!);
+        foreach (var m in PantheonData.Mythologies)
+            if (a.MythologyTokens(me, m.Mythology) > b.MythologyTokens(me, m.Mythology))
+                tags.Add($"takes the {m.Name} token: draw {m.Name} Divinities, {m.Name} Grand Temple free");
+        foreach (var o in PantheonData.Offerings)
+            if ((a.OfferingTokens(me) & ~b.OfferingTokens(me) & 1 << o.Index) != 0)
+                tags.Add($"takes {o.Name}: −{o.Value} coins on an activation");
+        if (a.AstarteCoins(me) > b.AstarteCoins(me)) tags.Add($"+{a.AstarteCoins(me) - b.AstarteCoins(me)} coins on Astarte (safe, 1 VP each)");
+        var activated = a.Activated(me) & ~b.Activated(me);
+        foreach (var d in PantheonData.Divinities)
+            if ((activated & 1 << d.Index) != 0 && move.Kind != MoveKind.Activate) tags.Add($"activates {d.Name}");
+        if (move.Kind == MoveKind.Activate && PantheonData.Divinities[move.Divinity].IsGate) tags.Add("then you activate a deck top");
+        if (move.Kind == MoveKind.Wonder && GameData.Wonder(move.Wonder).Effect == WonderEffect.Theater)
+            tags.Add("then you look through a Mythology deck and activate one card");
+        if (a.Minerva != b.Minerva && a.Minerva != PantheonState.NoMinerva) tags.Add($"Minerva on {PantheonText.TrackSpace(a.Minerva)}");
+        if (a.Snake != b.Snake && a.Snake >= 0) tags.Add($"the Snake gives you {GameData.Card(a.Snake).Name}'s science symbol");
+    }
+
     /// <summary>Progress tokens whose effect is not (only) an immediate change on the board.</summary>
     static void TokenTag(Move move, List<string> tags)
     {
-        if (move.Kind is MoveKind.Token or MoveKind.Library && TokenEffect(GameData.Tokens[move.Token].Id) is { } text) tags.Add(text);
+        if (move.Kind is MoveKind.Token or MoveKind.Library && TokenEffect(GameData.Token(move.Token).Id) is { } text) tags.Add(text);
     }
 
     /// <summary>What a Progress token does later, for the tokens whose effect is not an immediate board change.</summary>
@@ -227,18 +252,21 @@ public static class Reasons
         "strategy" => "+1 shield on every later military card",
         "theology" => "every Wonder you build lets you play again",
         "urbanism" => "+4 coins every time you build through a chain",
+        "mysticism" => "2 VP per Mythology and Offering token you still hold at the end",
+        "poliorcetics" => "each shield you add costs them 1 coin",
+        "engineering" => "cards with a chain symbol cost you 1 coin",
         _ => null,
     };
 
     /// <summary>A tag for a Move that changes no board signal (a draft pick, who starts, a Statue keep).</summary>
     static string Fallback(GameState s, Move move) => move.Kind switch
     {
-        MoveKind.Draft => $"{GameData.Wonders[move.Wonder].Name}: {BoardView.WonderSummary(GameData.Wonders[move.Wonder])}",
+        MoveKind.Draft => $"{GameData.Wonder(move.Wonder).Name}: {BoardView.WonderSummary(GameData.Wonder(move.Wonder))}",
         MoveKind.StartMe => $"you play first in Age {s.Age}",
         MoveKind.StartOpponent => $"they play first in Age {s.Age}",
-        MoveKind.LibertyKeep => $"keeps {GameData.Cards[move.Card].Name} to build",
-        MoveKind.LibertyGive => $"gives {GameData.Cards[move.Card].Name} to them",
+        MoveKind.LibertyKeep => $"keeps {GameData.Card(move.Card).Name} to build",
+        MoveKind.LibertyGive => $"gives {GameData.Card(move.Card).Name} to them",
         MoveKind.Discard => "no change on the board",
-        _ => "no immediate change on the board",
+        _ => PantheonText.Label(s, move) ?? "no immediate change on the board",
     };
 }

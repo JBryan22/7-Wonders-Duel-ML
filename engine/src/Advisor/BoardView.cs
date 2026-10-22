@@ -10,12 +10,15 @@ public sealed record CardView(string Id, string Name, string Color, int Age);
 public sealed record OptionView(string Id, string Name, string? Color, bool Enabled, string? Reason, string? Ref = null);
 /// <summary>A clickable action; <see cref="Refs"/> name the cards, Wonders or tokens it is about ("card:baths", "wonder:sphinx", "token:law").</summary>
 public sealed record ActionView(string Label, string Line, bool Enabled, string? Reason, string Kind, string? Then = null, string[]? Refs = null);
+/// <summary>A pyramid slot; <see cref="Token"/> / <see cref="TokenName"/> are a Pantheon Mythology or Offering token lying on it.</summary>
 public sealed record SlotView(
     int Slot, string Name, int Row, int Col, string Face, CardView? Card, bool Accessible,
-    bool Pulse, string? RevealPrefix, OptionView[]? Candidates, ActionView[] Actions, PriceView[]? Prices = null);
+    bool Pulse, string? RevealPrefix, OptionView[]? Candidates, ActionView[] Actions, PriceView[]? Prices = null,
+    string? Token = null, string? TokenName = null);
 /// <summary>The pyramid; <see cref="PricePlayer"/> is whose price the card faces show (the player to decide, else the owner).</summary>
 public sealed record PyramidView(int Age, int Rows, int Columns, SlotView[] Slots, int PricePlayer);
-public sealed record RevealView(string Kind, string Title, int Count, string LinePrefix, OptionView[] Options);
+/// <summary>A Reveal to enter; the Pantheon forms (kind "fields") pick one option per <see cref="Fields"/> entry.</summary>
+public sealed record RevealView(string Kind, string Title, int Count, string LinePrefix, OptionView[] Options, FieldView[]? Fields = null);
 public sealed record DecisionView(string Kind, int Player, bool You, string Title, ActionView[] Tiles);
 public sealed record WonderView(string Id, string Name, bool Built, bool Removed, CardView? Card, string Summary, PriceView[]? Prices = null);
 public sealed record TokenView(string Id, string Name);
@@ -23,7 +26,8 @@ public sealed record PlayerView(
     int Index, string Label, bool You, bool First, bool ToDecide, int Coins, int Vp, string Production,
     string[] Science, CardView[] Cards, WonderView[] Wonders, TokenView[] Tokens);
 public sealed record MilitaryTokenView(int Victim, int Coins, int Zone, bool Left);
-public sealed record ConflictView(int Pawn, MilitaryTokenView[] Tokens);
+/// <summary>The Military track; <see cref="Minerva"/> is the Pantheon's Minerva pawn's space, if she is on it.</summary>
+public sealed record ConflictView(int Pawn, MilitaryTokenView[] Tokens, int? Minerva = null);
 public sealed record LogLineView(int Index, string Text, string Kind, int Player, bool Auto);
 public sealed record ScoreRowView(string Category, int P1, int P2);
 public sealed record ResultView(int Winner, string Victory, string Summary, ScoreRowView[] Scores, int P1Total, int P2Total);
@@ -31,7 +35,7 @@ public sealed record GameView(
     string Screen, int Seat, string Rules, bool Messe, bool Liberty, bool Rule2015, int Age, string Step, string Prompt,
     PyramidView? Pyramid, RevealView? Reveal, DecisionView? Decision, PlayerView[] Players, ConflictView Conflict,
     TokenView[] BoardTokens, CardView[] Discard, string[] Offer, LogLineView[] Log, ResultView? Result, bool CanUndo,
-    string SavedTo);
+    string SavedTo, bool PantheonGame = false, PantheonView? Pantheon = null);
 
 /// <summary>Builds the <see cref="GameView"/> of an <see cref="AdvisorSession"/>.</summary>
 public static class BoardView
@@ -57,17 +61,19 @@ public static class BoardView
             Players: [PlayerOf(session, 0), PlayerOf(session, 1)],
             Conflict: new ConflictView(s.ConflictPawn, Enumerable.Range(0, GameState.MilitaryTokenCount)
                 .Select(t => new MilitaryTokenView(t / 2, GameState.MilitaryTokenCoins(t), GameState.MilitaryTokenZone(t), s.MilitaryTokenLeft(t)))
-                .ToArray()),
+                .ToArray(), s.Pantheon is { Minerva: var minerva } && minerva != PantheonState.NoMinerva ? minerva : null),
             BoardTokens: ProgressTokens.In(s.BoardTokens).Select(Token).ToArray(),
             Discard: s.DiscardPile.Cards().Select(Card).ToArray(),
             Offer: OfferText(s),
             Log: session.Log.Select((e, i) => new LogLineView(i, MoveLog.Format(e),
                 e is MoveEntry ? "move" : "reveal",
-                e switch { MoveEntry m => m.Player, LibraryReveal l => l.Player, _ => -1 },
-                e is LibraryReveal { Redacted: true })).ToArray(),
+                e switch { MoveEntry m => m.Player, LibraryReveal l => l.Player, DivinityDrawReveal d => d.Player, TheaterReveal t => t.Player, _ => -1 },
+                e is LibraryReveal { Redacted: true } or DivinityDrawReveal { Redacted: true } or TheaterReveal { Redacted: true })).ToArray(),
             Result: s.Result is { } r ? ResultOf(r) : null,
             CanUndo: session.Ai is null ? session.Log.Count > 0 : session.CanTakeBack,
-            SavedTo: savedTo);
+            SavedTo: savedTo,
+            PantheonGame: s.Pantheon is not null,
+            Pantheon: s.Pantheon is not null ? PantheonText.Board(session) : null);
     }
 
     static string Who(AdvisorSession session, int player) =>
@@ -97,11 +103,12 @@ public static class BoardView
             var face = value switch
             {
                 GameState.Empty => "empty",
-                GameState.HiddenGuild => "guild",
+                GameState.HiddenGuild => s.Pantheon is null ? "guild" : "temple",
                 GameState.Hidden => "down",
                 _ => "up",
             };
             var pulse = (toReveal & 1u << slot.Index) != 0;
+            var (token, tokenName) = PantheonText.SlotToken(s, slot.Index);
             return new SlotView(
                 Slot: slot.Index,
                 Name: name,
@@ -114,7 +121,8 @@ public static class BoardView
                 RevealPrefix: pulse ? (s.AgeUntouched ? $"reveal age{s.Age} {name}" : $"reveal {name}") : null,
                 Candidates: pulse ? Candidates(s, slot.Index) : null,
                 Actions: takeCard && value >= 0 && s.IsAccessible(slot.Index) ? CardActions(s, value) : [],
-                Prices: value >= 0 ? [CardText.CardPrice(s, 0, value, PriceWho(session, 0)), CardText.CardPrice(s, 1, value, PriceWho(session, 1))] : null);
+                Prices: value >= 0 ? [CardText.CardPrice(s, 0, value, PriceWho(session, 0)), CardText.CardPrice(s, 1, value, PriceWho(session, 1))] : null,
+                Token: token, TokenName: tokenName);
         }).ToArray();
         var pricePlayer = s.Step == StepKind.Decision ? s.PlayerToDecide : session.Seat;
         return new PyramidView(s.Age, layout.RowCount, layout.Slots.Max(x => x.Col) + 2, slots, pricePlayer);
@@ -124,9 +132,9 @@ public static class BoardView
     static string PriceWho(AdvisorSession session, int player) =>
         player == session.Seat ? "you" : session.Ai is not null ? "AI" : $"P{player + 1}";
 
-    static string CardRef(int card) => $"card:{GameData.Cards[card].Id}";
-    static string WonderRef(int wonder) => $"wonder:{GameData.Wonders[wonder].Id}";
-    static string TokenRef(int token) => $"token:{GameData.Tokens[token].Id}";
+    static string CardRef(int card) => $"card:{GameData.Card(card).Id}";
+    static string WonderRef(int wonder) => $"wonder:{GameData.Wonder(wonder).Id}";
+    static string TokenRef(int token) => $"token:{GameData.Token(token).Id}";
 
     /// <summary>
     /// What a face-down slot may be named as: every Guild behind a Guild back, else every card of the Age. Cards already
@@ -136,8 +144,9 @@ public static class BoardView
     {
         var guild = s.SlotCard(slot) == GameState.HiddenGuild;
         var pool = s.UnseenPoolFor(slot);
-        return GameData.Cards
-            .Where(c => guild ? c.IsGuild : !c.IsGuild && c.Age == s.Age)
+        // Pantheon: Grand Temples stand behind the Temple backs (the Guilds are not used).
+        var behindBack = s.Pantheon is null ? GameData.Cards.Where(c => c.IsGuild) : PantheonData.TempleCards;
+        return (guild ? behindBack : GameData.Cards.Where(c => !c.IsGuild && c.Age == s.Age))
             .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
             .Select(c => new OptionView(c.Id, c.Name, Color(c.Color), pool.Contains(c.Index),
                 pool.Contains(c.Index) ? null : WhereSeen(s, c.Index), CardRef(c.Index)))
@@ -168,7 +177,7 @@ public static class BoardView
         {
             var move = Move.BuildWonder(card, w);
             var wonderCost = Payment.QuoteWonder(s, player, w).Total;
-            actions.Add(Action($"Wonder: {GameData.Wonders[w].Name} ({Coins(wonderCost)})", $"{p} {move}", s.WhyIllegal(move), "wonder") with { Refs = [WonderRef(w)] });
+            actions.Add(Action($"Wonder: {GameData.Wonder(w).Name} ({Coins(wonderCost)})", $"{p} {move}", s.WhyIllegal(move), "wonder") with { Refs = [WonderRef(w)] });
         }
         return [.. actions];
     }
@@ -188,23 +197,28 @@ public static class BoardView
                 [.. Enumerable.Range(0, 2).Select(p => new OptionView($"P{p + 1}", Who(session, p), null, true, null))]);
         if (s.AwaitingTokens)
             return new RevealView("tokens", "Name the 5 Progress tokens set out on the board", ProgressTokens.OnBoard, "reveal tokens",
-                [.. GameData.Tokens.Select(t => new OptionView(t.Id, t.Name, null, true, null, TokenRef(t.Index)))]);
+                [.. TokenPool(s).Select(t => new OptionView(t.Id, t.Name, null, true, null, TokenRef(t.Index)))]);
         if (s.AwaitingDraftOffer)
             return new RevealView("draft", $"Name the 4 Wonders offered in draft round {s.DraftPicks / GameState.DraftOfferSize + 1}",
                 GameState.DraftOfferSize, "reveal draft",
-                [.. GameState.WondersIn(s.WonderPool).Select(w => new OptionView(GameData.Wonders[w].Id, GameData.Wonders[w].Name, null,
+                [.. GameState.WondersIn(s.WonderPool).Select(w => new OptionView(GameData.Wonder(w).Id, GameData.Wonder(w).Name, null,
                     (s.UnseenWonders & 1 << w) != 0, (s.UnseenWonders & 1 << w) != 0 ? null : "already offered", WonderRef(w)))]);
         if (s.AwaitingGuildPattern)
         {
             var layout = s.Layout;
-            return new RevealView("guilds", "Age III: click the 3 cards showing a purple Guild back", GameState.GuildsPerGame, "reveal guilds",
+            // Pantheon: the 3 Grand Temples have their own back (R6) and take the Guilds' place.
+            var (title, prefix) = s.Pantheon is null
+                ? ("Age III: click the 3 cards showing a purple Guild back", "reveal guilds")
+                : ("Age III: click the 3 cards showing a Grand Temple back", "reveal temples");
+            return new RevealView("guilds", title, GameState.GuildsPerGame, prefix,
                 [.. layout.Slots.Select(x => new OptionView(layout.SlotName(x.Index), layout.SlotName(x.Index), null, true, null))]);
         }
         if (s.SlotsToReveal == 0 && s.AwaitingLibraryDraw)
             // Only the owner's own draw gets here: the opponent's is logged redacted by the session.
             return new RevealView("library", "The Great Library: name the 3 Progress tokens you drew", GameState.LibraryDrawSize,
                 $"reveal P{s.PlayerToDecide + 1} library",
-                [.. ProgressTokens.In(s.TokensSetAside).Select(t => new OptionView(GameData.Tokens[t].Id, GameData.Tokens[t].Name, null, true, null, TokenRef(t)))]);
+                [.. ProgressTokens.In(s.TokensSetAside).Select(t => new OptionView(GameData.Token(t).Id, GameData.Token(t).Name, null, true, null, TokenRef(t)))]);
+        if (s.Pantheon is not null && PantheonText.Reveal(session) is { } pantheon) return pantheon;
         if (s.SlotsToReveal == 0 && s.AwaitingReturnedCards)
         {
             var pool = s.UnseenPool(s.Age);
@@ -231,26 +245,29 @@ public static class BoardView
         var p = $"P{d.Player + 1}";
         var moves = s.LegalMoves();
         ActionView Tile(Move m, string label) => new(label, $"{p} {m}", true, null, m.Kind.ToString().ToLowerInvariant(), Refs: RefsOf(m));
+        if (d.Kind == DecisionKind.TakeCard && s.Pantheon is not null && s.Age >= 2)
+            return new("take-card", d.Player, d.Player == session.Seat,
+                $"{who} takes a card{(s.PlayAgain ? " (and plays again after this)" : "")}: click an outlined card, or activate a Divinity in the Pantheon", []);
         return d.Kind switch
         {
             DecisionKind.TakeCard => new("take-card", d.Player, d.Player == session.Seat,
                 $"{who} takes a card{(s.PlayAgain ? " (and plays again after this)" : "")}: click an outlined card", []),
             DecisionKind.DraftWonder => new("draft", d.Player, d.Player == session.Seat, $"{who} drafts a Wonder",
-                [.. moves.Select(m => Tile(m, GameData.Wonders[m.Wonder].Name))]),
+                [.. moves.Select(m => Tile(m, GameData.Wonder(m.Wonder).Name))]),
             DecisionKind.ChooseToken => new("token", d.Player, d.Player == session.Seat, $"{who} takes a Progress token (science pair)",
-                [.. moves.Select(m => Tile(m, GameData.Tokens[m.Token].Name))]),
+                [.. moves.Select(m => Tile(m, GameData.Token(m.Token).Name))]),
             DecisionKind.Library => new("library", d.Player, d.Player == session.Seat,
                 s.LibraryDrawHidden ? $"The Great Library: which token did {who} keep?" : $"The Great Library: {who} keeps one token",
-                [.. moves.Select(m => Tile(m, GameData.Tokens[m.Token].Name))]),
+                [.. moves.Select(m => Tile(m, GameData.Token(m.Token).Name))]),
             DecisionKind.ChooseStarter => new("start", d.Player, d.Player == session.Seat, $"Age {Roman(s.Age)}: {who} chooses who starts",
                 [Tile(Move.StartMe, $"{who} starts"), Tile(Move.StartOpponent, $"{Who(session, 1 - d.Player)} starts")]),
             DecisionKind.Destroy => new("destroy", d.Player, d.Player == session.Seat,
-                $"{GameData.Wonders[d.Wonder].Name}: {who} destroys one of {Who(session, 1 - d.Player)}'s {s.DestroyColor.ToString()!.ToLowerInvariant()} cards",
-                [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
+                $"{GameData.Wonder(d.Wonder).Name}: {who} destroys one of {Who(session, 1 - d.Player)}'s {s.DestroyColor.ToString()!.ToLowerInvariant()} cards",
+                [.. moves.Select(m => Tile(m, GameData.Card(m.Card).Name))]),
             DecisionKind.Mausoleum => new("mausoleum", d.Player, d.Player == session.Seat, $"The Mausoleum: {who} builds a discarded card for free",
-                [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
+                [.. moves.Select(m => Tile(m, GameData.Card(m.Card).Name))]),
             DecisionKind.Messe => new("messe", d.Player, d.Player == session.Seat, $"The Messe: {who} builds a top-row card for free",
-                [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
+                [.. moves.Select(m => Tile(m, GameData.Card(m.Card).Name))]),
             // The keep and the give are entered together, as one of the 6 pairs (spec A8).
             DecisionKind.LibertyKeep => new("liberty-keep", d.Player, d.Player == session.Seat,
                 $"Statue of Liberty: which card does {who} keep, and which does {who} give to {Who(session, 1 - d.Player)}? (the third is discarded)",
@@ -258,13 +275,13 @@ public static class BoardView
                 {
                     var after = s.Clone();
                     after.Apply(keep);
-                    return after.LegalMoves().Select(give => Tile(keep, $"Keep {GameData.Cards[keep.Card].Name}, give {GameData.Cards[give.Card].Name}")
+                    return after.LegalMoves().Select(give => Tile(keep, $"Keep {GameData.Card(keep.Card).Name}, give {GameData.Card(give.Card).Name}")
                         with { Then = $"{p} {give}", Refs = [CardRef(keep.Card), CardRef(give.Card)] });
                 })]),
             DecisionKind.LibertyGive => new("liberty-give", d.Player, d.Player == session.Seat,
                 $"Statue of Liberty: which card does {who} give to {Who(session, 1 - d.Player)}? (the other is discarded)",
-                [.. moves.Select(m => Tile(m, GameData.Cards[m.Card].Name))]),
-            _ => throw new InvalidOperationException($"Unknown decision {d.Kind}"),
+                [.. moves.Select(m => Tile(m, GameData.Card(m.Card).Name))]),
+            _ => PantheonText.Decision(session, who, Who(session, 1 - d.Player)) ?? throw new InvalidOperationException($"Unknown decision {d.Kind}"),
         };
     }
 
@@ -279,9 +296,9 @@ public static class BoardView
 
     static string[] OfferText(GameState s)
     {
-        if (s.DraftOffer != 0) return [.. GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonders[w].Name)];
-        if (!s.LibertyOffer.IsEmpty) return [.. s.LibertyOffer.Cards().Select(c => GameData.Cards[c].Name)];
-        if (s.LibraryDraw != 0) return [.. ProgressTokens.In(s.LibraryDraw).Select(t => GameData.Tokens[t].Name)];
+        if (s.DraftOffer != 0) return [.. GameState.WondersIn(s.DraftOffer).Select(w => GameData.Wonder(w).Name)];
+        if (!s.LibertyOffer.IsEmpty) return [.. s.LibertyOffer.Cards().Select(c => GameData.Card(c).Name)];
+        if (s.LibraryDraw != 0) return [.. ProgressTokens.In(s.LibraryDraw).Select(t => GameData.Token(t).Name)];
         return [];
     }
 
@@ -309,8 +326,8 @@ public static class BoardView
             Science: science,
             Cards: [.. s.City(player).Cards().Select(Card).OrderBy(c => ColorOrder(c.Color)).ThenBy(c => c.Age)],
             Wonders: [.. GameState.WondersIn(s.Wonders(player)).Select(w => new WonderView(
-                GameData.Wonders[w].Id, GameData.Wonders[w].Name, s.IsWonderBuilt(w), s.IsWonderRemoved(w),
-                s.WonderCard(w) >= 0 ? Card(s.WonderCard(w)) : null, WonderSummary(GameData.Wonders[w]),
+                GameData.Wonder(w).Id, GameData.Wonder(w).Name, s.IsWonderBuilt(w), s.IsWonderRemoved(w),
+                s.WonderCard(w) >= 0 ? Card(s.WonderCard(w)) : null, WonderSummary(GameData.Wonder(w)),
                 s.IsWonderBuilt(w) || s.IsWonderRemoved(w) || s.Age == 0 ? null : [CardText.WonderPrice(s, player, w, PriceWho(session, player))]))],
             Tokens: [.. ProgressTokens.In(s.Tokens(player)).Select(Token)]);
     }
@@ -332,6 +349,7 @@ public static class BoardView
             WonderEffect.Mausoleum => "build from the discard pile",
             WonderEffect.Messe => "build a top-row card free",
             WonderEffect.Liberty => "the 3 removed cards return",
+            WonderEffect.Theater => "look through a Mythology deck, activate one for free",
             _ => w.Effect.ToString(),
         });
         return string.Join(" · ", parts);
@@ -357,11 +375,14 @@ public static class BoardView
 
     static CardView Card(int card)
     {
-        var c = GameData.Cards[card];
+        var c = GameData.Card(card);
         return new CardView(c.Id, c.Name, Color(c.Color), c.Age);
     }
 
-    static TokenView Token(int token) => new(GameData.Tokens[token].Id, GameData.Tokens[token].Name);
+    static TokenView Token(int token) => new(GameData.Token(token).Id, GameData.Token(token).Name);
+
+    /// <summary>The Progress tokens the setup draws from: the base 10, and Pantheon's 3 in a Pantheon game.</summary>
+    static IEnumerable<TokenDef> TokenPool(GameState s) => s.Pantheon is null ? GameData.Tokens : GameData.Tokens.Concat(PantheonData.Tokens);
 
     static string Color(CardColor c) => c.ToString().ToLowerInvariant();
 

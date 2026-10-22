@@ -258,3 +258,29 @@ table.compare tr.shown.tags td:first-child { box-shadow: inset 3px 0 0 #2b5fb4, 
 .card.empty.ai-took .slotname { color: #2b5fb4; }
 .flash { animation: flash 1s ease-in-out 3; }
 @keyframes flash { 0%, 100% { box-shadow: 0 0 0 0 rgba(43,95,180,0); } 50% { box-shadow: 0 0 0 5px rgba(43,95,180,.55); } }
+
+/* Pantheon (ticket 12): Grand Temple backs, tokens on slots, the Pantheon board, Minerva, the Reveal forms */
+.card.temple .slotname { top: 2px; bottom: auto; }
+.card.temple { background: repeating-linear-gradient(45deg, #8a6d1f, #8a6d1f 6px, #b08d2c 6px, #b08d2c 12px); }
+.card .temple-back { position: absolute; left: 6px; top: 16px; font-size: 22px; }
+.card .slot-token { position: absolute; left: 3px; top: 17px; right: 3px; font-size: 10.5px; padding: 1px 4px; border-radius: 9px;
+  background: #fff; color: #222; border: 1px solid #222; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot-token.tok-offering { background: #fde9b3; }
+.tok-greek { background: #dfe9fb !important; } .tok-phoenician { background: #f5dcf0 !important; } .tok-mesopotamian { background: #e6f3d8 !important; }
+.tok-egyptian { background: #fbedcf !important; } .tok-roman { background: #f6d9d6 !important; }
+.pantheon { margin: 10px 0; }
+.pspaces { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.pspace { border: 2px solid var(--line); border-radius: 6px; padding: 4px 6px; background: #fff; min-height: 74px; font-size: 12.5px; }
+.pspace.down, .pspace.hidden { background: repeating-linear-gradient(45deg, #efe9dd, #efe9dd 6px, #e4dccb 6px, #e4dccb 12px); }
+.pspace.gate { border-color: var(--gold); }
+.pspace.up { border-color: #555; }
+.pspace .pcost { display: flex; justify-content: space-between; color: var(--muted); }
+.pspace .pcost b { color: var(--ink); }
+.pspace .pname { font-weight: 700; }
+.pspace .btn { margin-top: 4px; padding: 3px 6px; font-size: 12px; width: 100%; }
+.pspace .btn .badge { position: static; margin-left: 4px; box-shadow: none; }
+.pan-hold { margin: 3px 0; }
+.chip.myth { color: #222; }
+.track span.minerva { background: #c9b8e8; font-size: 11px; }
+.fields { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.field-label { font-weight: 600; margin-bottom: 2px; }

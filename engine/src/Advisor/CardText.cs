@@ -16,9 +16,17 @@ public sealed record InfoView(
     string CostIcons, string CostText, string EffectIcons, string[] Effect,
     string? ChainFrom, string[] ChainTo);
 
-/// <summary>Everything the page needs to draw readable cards: the legend and every card, Wonder and token.</summary>
+/// <summary>
+/// Everything the page needs to draw readable cards: the legend and every card, Wonder and token, and Pantheon's
+/// (<see cref="Pantheon"/>: the Grand Temples, its 2 Wonders, 3 Progress tokens and the Divinities, with their own legend).
+/// </summary>
 public sealed record CatalogView(
-    IconView[] Legend, Dictionary<string, InfoView> Cards, Dictionary<string, InfoView> Wonders, Dictionary<string, InfoView> Tokens);
+    IconView[] Legend, Dictionary<string, InfoView> Cards, Dictionary<string, InfoView> Wonders, Dictionary<string, InfoView> Tokens,
+    PantheonCatalogView? Pantheon = null);
+
+/// <summary>Pantheon's pieces in words and icons (spec-pantheon P-A9), shown in Pantheon games.</summary>
+public sealed record PantheonCatalogView(IconView[] Legend, Dictionary<string, InfoView> Cards, Dictionary<string, InfoView> Wonders,
+    Dictionary<string, InfoView> Tokens, Dictionary<string, InfoView> Divinities);
 
 /// <summary>What one player pays for a card or Wonder right now (the Engine's automatic payment).</summary>
 public sealed record PriceView(int Player, string Who, int Total, int CardCoins, int TradeCoins, bool Chain, bool Affordable,
@@ -43,6 +51,14 @@ public static class Icons
     public const string Mausoleum = "⚰️";
     public const string Messe = "🎪";
     public const string Liberty = "🗽";
+    // Pantheon
+    public const string Divinity = "✨";
+    public const string Temple = "🛕";
+    public const string Gate = "⛩️";
+    public const string Theater = "🎭";
+    public const string Snake = "🐍";
+    public const string Minerva = "🦉";
+    public const string Steal = "🫳";
 
     public static string Of(Resource r) => r switch
     {
@@ -123,6 +139,7 @@ public static class CardText
         CardColor.Yellow => "Commercial building (yellow card)",
         CardColor.Blue => "Civilian building (blue card)",
         CardColor.Purple => "Guild (purple card)",
+        CardColor.Temple => "Grand Temple",
         _ => c.ToString(),
     };
 
@@ -132,7 +149,52 @@ public static class CardText
         Icons.Legend(),
         GameData.Cards.ToDictionary(c => c.Id, Card),
         GameData.Wonders.ToDictionary(w => w.Id, Wonder),
-        GameData.Tokens.ToDictionary(t => t.Id, Token));
+        GameData.Tokens.ToDictionary(t => t.Id, Token),
+        new PantheonCatalogView(PantheonLegend(),
+            PantheonData.TempleCards.ToDictionary(c => c.Id, Card),
+            PantheonData.Wonders.ToDictionary(w => w.Id, Wonder),
+            PantheonData.Tokens.ToDictionary(t => t.Id, Token),
+            PantheonData.Divinities.ToDictionary(d => d.Id, Divinity)));
+
+    static IconView[] PantheonLegend() =>
+    [
+        new(Icons.Divinity, "activate a Divinity of the Pantheon (from Age II, instead of taking a card)"),
+        new(Icons.Temple, "Grand Temple: 5 / 12 / 21 VP for 1 / 2 / 3"),
+        new(Icons.Gate, "the Gate: activate a deck top"),
+        new(Icons.Theater, "the Divine Theater: look through a deck, activate one"),
+        new(Icons.Snake, "Nisaba's Snake: copy a green card's science symbol"),
+        new(Icons.Minerva, "Minerva: the Conflict pawn stops before her"),
+        new(Icons.Steal, "take something of your opponent's"),
+    ];
+
+    // ---------------------------------------------------------------- Pantheon's Divinities
+
+    /// <summary>A Divinity (or the Gate) in words: the numbers from the data, the rest by id as the Engine implements them.</summary>
+    public static InfoView Divinity(DivinityDef d)
+    {
+        var (icons, words) = d.Id switch
+        {
+            "aphrodite" => ($"{d.VictoryPoints}{Icons.Vp}", $"Worth {d.VictoryPoints} VP at the end of the game."),
+            "hades" => ($"{Icons.Mausoleum}", "Build one card from the discard pile for free."),
+            "zeus" => ($"{Icons.Destroy}", "Put a card of the structure (face up or face down) into the discard pile; you take any token on it."),
+            "astarte" => ($"{d.ProtectedCoins}{Icons.Coin}", $"{d.ProtectedCoins} coins on Astarte: spent after your treasury, never lost, 1 VP each left at the end."),
+            "baal" => ($"{Icons.Steal}{Icons.Of(CardColor.Brown)}/{Icons.Of(CardColor.Grey)}", "Steal a brown or grey card from your opponent's city."),
+            "tanit" => ($"{d.Coins}{Icons.Coin}", $"Take {d.Coins} coins."),
+            "enki" => ($"{Icons.Token}", "Two Progress tokens from the box lie on Enki: keep one of them."),
+            "ishtar" => (Icons.Of(ScienceSymbol.Law), "The law science symbol: it counts toward pairs and the 6 symbols of a science victory."),
+            "nisaba" => ($"{Icons.Snake}{Icons.Of(CardColor.Green)}", "Put the Snake on a green card of your opponent's: its science symbol counts for you too."),
+            "anubis" => ($"{Icons.Destroy}{Icons.Wonder}", "Unbuild a built Wonder (either player's): its card goes to the discard pile and it can be built again."),
+            "isis" => ($"{Icons.Wonder}{Icons.Mausoleum}", "Build one of your Wonders for free, with a card from the discard pile."),
+            "ra" => ($"{Icons.Steal}{Icons.Wonder}", "Steal one of your opponent's unbuilt Wonders."),
+            "mars" => (string.Concat(Enumerable.Repeat(Icons.Shield, d.Shields)), $"{Plural(d.Shields, "shield", "shields")}: the Conflict pawn moves toward your opponent's capital."),
+            "minerva" => (Icons.Minerva, "Put the Minerva pawn on a Military space: the first time the Conflict pawn would enter it, it stops before it and she leaves."),
+            "neptune" => ($"{Icons.Destroy}{Icons.OpponentLoses}", "Discard a Military token, then apply another one (either side): your opponent loses its coins."),
+            "gate" => (Icons.Gate, "Costs double. The top card of each Mythology deck is shown to both players: activate one of them."),
+            _ => throw new InvalidOperationException($"No text for Divinity {d.Id}"),
+        };
+        var type = d.Mythology is { } m ? $"{PantheonData.MythologyDef(m).Name} Divinity" : "The Gate";
+        return new InfoView("divinity", d.Id, d.Name, type, "divinity", 0, "", "Activation cost: the space's price for you", icons, [words], null, []);
+    }
 
     // ---------------------------------------------------------------- costs
 
@@ -192,6 +254,12 @@ public static class CardText
             words.Add($"Science symbol: {Word(sym)}. A pair of the same symbol gives you a Progress token; 6 different symbols win the game.");
         }
         if (c.Guild != GuildKind.None) Guild(c.Guild, icons, words);
+        if (c.Color == CardColor.Temple)
+        {
+            icons.Add($"{Icons.Temple} 5/12/21{Icons.Vp}");
+            words.Add("At the end: 5 VP for 1 Grand Temple, 12 for 2, 21 for 3.");
+            words.Add("Free while you hold a Mythology token of its Mythology (not a chain: Urbanism gives nothing; you keep the token).");
+        }
         if (c.Coins > 0)
         {
             icons.Add($"{c.Coins}{Icons.Coin}");
@@ -212,7 +280,7 @@ public static class CardText
             icons.Add($"{c.VictoryPoints}{Icons.Vp}");
             words.Add($"Worth {c.VictoryPoints} VP at the end of the game.");
         }
-        var from = c.FreeIf >= 0 ? GameData.Cards[c.FreeIf].Name : null;
+        var from = c.FreeIf >= 0 ? GameData.Card(c.FreeIf).Name : null;
         var to = GameData.Cards.Where(o => o.FreeIf == c.Index).Select(o => o.Name).ToArray();
         if (from is not null) words.Add($"Chain: free if you own {from}.");
         foreach (var t in to) words.Add($"Chain: makes {t} (a later Age) free for you.");
@@ -300,6 +368,15 @@ public static class CardText
                 icons.Add(Icons.Liberty);
                 words.Add("The 3 cards removed from this Age come back: keep one, give one to your opponent, discard the third.");
                 break;
+            case WonderEffect.Theater:
+                icons.Add(Icons.Theater);
+                words.Add("Look through one Mythology deck (only you see it) and activate one of its Divinities for free; stack the rest back in the order you like.");
+                break;
+        }
+        if (w.Id == "sanctuary")
+        {
+            icons.Add($"{Icons.Divinity}−2{Icons.Coin}");
+            words.Add("Activating a Divinity costs you 2 coins less.");
         }
         if (w.PlayAgain)
         {
@@ -312,7 +389,7 @@ public static class CardText
             words.Add($"Worth {w.VictoryPoints} VP at the end of the game.");
         }
         words.Add("Built by tucking any card you take from the pyramid under it. Only 7 of the 8 Wonders get built.");
-        return new InfoView("wonder", w.Id, w.Name, w.IsPromo ? "Wonder (promo)" : "Wonder", "wonder", 0,
+        return new InfoView("wonder", w.Id, w.Name, w.IsPromo ? "Wonder (promo)" : w.Index >= GameData.Wonders.Length ? "Wonder (Pantheon)" : "Wonder", "wonder", 0,
             CostIcons(w.Cost), CostWords(w.Cost), string.Join(' ', icons), [.. words], null, []);
     }
 
@@ -333,6 +410,9 @@ public static class CardText
             var i when i == ProgressTokens.Strategy => ($"{Icons.Of(CardColor.Red)} +1{Icons.Shield}", "Each red card you build from now on gives 1 extra shield (not Wonders)."),
             var i when i == ProgressTokens.Theology => ($"{Icons.Wonder}{Icons.PlayAgain}", "All your Wonders get 'play again' (including the ones built later)."),
             var i when i == ProgressTokens.Urbanism => ($"{t.Coins}{Icons.Coin} {Icons.Chain}+{ProgressTokens.UrbanismChainCoins}{Icons.Coin}", $"Gives {t.Coins} coins now, and {ProgressTokens.UrbanismChainCoins} coins each time you build a card for free through a chain."),
+            _ when t.Id == "mysticism" => ($"2{Icons.Vp}/{Icons.Divinity}", "At the end: 2 VP per Mythology and Offering token you still hold."),
+            _ when t.Id == "poliorcetics" => ($"{Icons.Shield}{Icons.OpponentLoses}1", "Each space the Conflict pawn moves toward your opponent's capital costs them 1 coin."),
+            _ when t.Id == "engineering" => ($"{Icons.Chain}=1{Icons.Coin}", "A card showing a chain symbol under its cost costs you at most 1 coin (not a chain build: Urbanism gives nothing)."),
             _ => throw new InvalidOperationException($"No text for Progress token {t.Id}"),
         };
         return new InfoView("token", t.Id, t.Name, "Progress token", "token", 0, "", "", icons, [words], null, []);
@@ -343,10 +423,10 @@ public static class CardText
     /// <summary>What <paramref name="player"/> pays to build <paramref name="card"/> now, with the reasons.</summary>
     public static PriceView CardPrice(GameState s, int player, int card, string who)
     {
-        var def = GameData.Cards[card];
+        var def = GameData.Card(card);
         if (Payment.IsChained(s, player, card))
             return new PriceView(player, who, 0, 0, 0, true, true, $"free ({Icons.Chain})",
-                [$"Free: chain from {GameData.Cards[def.FreeIf].Name}."]);
+                [$"Free: chain from {GameData.Card(def.FreeIf).Name}."]);
         var quote = Payment.Quote(s, player, card);
         var discount = def.Color == CardColor.Blue && s.HasToken(player, ProgressTokens.Masonry) ? "Masonry" : null;
         return Price(s, player, def.Cost, quote, who, discount);
@@ -357,7 +437,7 @@ public static class CardText
     {
         var quote = Payment.QuoteWonder(s, player, wonder);
         var discount = s.HasToken(player, ProgressTokens.Architecture) ? "Architecture" : null;
-        return Price(s, player, GameData.Wonders[wonder].Cost, quote, who, discount);
+        return Price(s, player, GameData.Wonder(wonder).Cost, quote, who, discount);
     }
 
     static PriceView Price(GameState s, int player, Cost cost, PaymentQuote quote, string who, string? discount)
@@ -379,8 +459,9 @@ public static class CardText
                            + (discount is not null ? $"{discount} ({ProgressTokens.Discount} resources free) and \"one of\" producers" : "\"one of\" producers")
                            + $", so trading costs {quote.TradeCoins}{Icons.Coin}.");
         }
-        var afford = quote.Total <= s.Coins(player);
-        if (!afford) detail.Add($"Has only {s.Coins(player)}{Icons.Coin}: can't afford it.");
+        // Pantheon: Astarte's coins are spent after the treasury (R7); in a base game this is the treasury.
+        var afford = quote.Total <= s.SpendableCoins(player);
+        if (!afford) detail.Add($"Has only {s.SpendableCoins(player)}{Icons.Coin}: can't afford it.");
         var shortText = quote.Total == 0 ? "free" : $"{quote.Total}{Icons.Coin}";
         return new PriceView(player, who, quote.Total, quote.CardCoins, quote.TradeCoins, false, afford, shortText, [.. detail]);
     }

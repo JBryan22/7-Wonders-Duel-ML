@@ -5,15 +5,17 @@ namespace SevenWondersDuel.Advisor;
 
 /// <summary>
 /// The new-game choices the Advisor remembers (spec A8: the promo boxes keep the last choice), and those of "Play against
-/// the AI" (ticket 36): the mode, the opponent's spec and name, its simulations and a random seat.
+/// the AI" (ticket 36): the mode, the opponent's spec and name, its simulations and a random seat. <see cref="Pantheon"/>
+/// is the Pantheon expansion box (spec-pantheon P-A9).
 /// </summary>
 public sealed record NewGameSettings(bool Messe = false, bool Liberty = false, bool Rule2015 = false, int Seat = 0,
     bool VsAi = false, string? Opponent = null, string? OpponentLabel = null, int AiSimulations = AiOpponent.DefaultSimulations,
-    bool RandomSeat = false)
+    bool RandomSeat = false, bool Pantheon = false)
 {
     public Ruleset ToRuleset() => new(
         Rule2015 ? StartChoice.Rule2015 : StartChoice.New,
-        (Messe ? Promos.Messe : Promos.None) | (Liberty ? Promos.Liberty : Promos.None));
+        (Messe ? Promos.Messe : Promos.None) | (Liberty ? Promos.Liberty : Promos.None),
+        Pantheon ? Expansions.Pantheon : Expansions.None);
 }
 
 /// <summary>

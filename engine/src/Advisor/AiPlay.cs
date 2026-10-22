@@ -47,11 +47,16 @@ public sealed record AiOpponent(string Spec, string Label, int Simulations, ulon
     [System.Text.Json.Serialization.JsonIgnore]
     public bool Searches => AdviceSettings.Split(Spec).Name is "mcts" or "neural";
 
-    /// <summary>Throws a <see cref="FormatException"/> (or the network's load error) unless the spec builds an Agent.</summary>
-    public void Validate()
+    /// <summary>
+    /// Throws a <see cref="FormatException"/> (or the network's load error) unless the spec builds an Agent, and a
+    /// <see cref="NotSupportedException"/> when it can't play games of <paramref name="rules"/> (a base network in a
+    /// Pantheon game).
+    /// </summary>
+    public void Validate(Ruleset? rules = null)
     {
         if (Simulations < 1) throw new FormatException("The AI needs at least 1 simulation");
-        AiPlayer.Create(this, 0);
+        var agent = AiPlayer.Create(this, 0);
+        if (rules is not null) (agent as NeuralAgent)?.EncodingFor(rules);
     }
 }
 
@@ -80,7 +85,7 @@ public static class AiPlayer
     {
         MoveKind.StartMe => "AI played: the AI starts this Age",
         MoveKind.StartOpponent => "AI played: you start this Age",
-        MoveKind.Library => $"AI played: kept {Engine.Data.GameData.Tokens[move.Token].Name} from its Great Library draw",
+        MoveKind.Library => $"AI played: kept {Engine.Data.GameData.Token(move.Token).Name} from its Great Library draw",
         _ => $"AI played: {AdviceTable.Label(before, move)}",
     };
 }
@@ -103,7 +108,8 @@ public static class Opponents
 
     public static string NetworkSpec(string onnx) => $"neural:{Path.GetFullPath(onnx)},mode=classic";
 
-    public static List<OpponentOption> List(string? runsFolder)
+    /// <param name="expansions">Pantheon: only Runs trained for it (their <c>run.json</c> says Encoding v2) are listed.</param>
+    public static List<OpponentOption> List(string? runsFolder, Expansions expansions = Expansions.None)
     {
         var list = new List<OpponentOption>();
         if (runsFolder is not null && Directory.Exists(runsFolder))
@@ -113,6 +119,7 @@ public static class Opponents
             var dirs = Directory.GetDirectories(runsFolder);
             var preferred = PreferredRun(runsFolder);
             foreach (var run in dirs
+                         .Where(r => expansions == Expansions.None || EncodingVersionOf(r) >= 2)
                          .OrderByDescending(r => preferred is not null && SamePath(r, preferred))
                          .ThenByDescending(r => File.Exists(Path.Combine(r, "best.json")) ? File.GetLastWriteTimeUtc(Path.Combine(r, "best.json")) : DateTime.MinValue)
                          .ThenBy(r => r, StringComparer.OrdinalIgnoreCase))
@@ -135,6 +142,22 @@ public static class Opponents
         list.Add(new OpponentOption("Built-in", "Heuristic (weak)", "Heuristic", "heuristic"));
         list.Add(new OpponentOption("Built-in", "Random (very weak)", "Random", "random"));
         return list;
+    }
+
+    /// <summary>A Run's Encoding version from its <c>run.json</c> (1 when it doesn't say, as for the first Runs).</summary>
+    static int EncodingVersionOf(string run)
+    {
+        try
+        {
+            var path = Path.Combine(run, "run.json");
+            if (!File.Exists(path)) return 1;
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            return doc.RootElement.TryGetProperty("encoding_version", out var v) && v.TryGetInt32(out var n) ? n : 1;
+        }
+        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+        {
+            return 1;
+        }
     }
 
     /// <summary>The Run the main training Run is called by (ticket 28: <c>C:\7wd-runs\main</c>).</summary>

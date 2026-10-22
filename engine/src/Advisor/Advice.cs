@@ -9,8 +9,13 @@ namespace SevenWondersDuel.Advisor;
 /// Anchor, the default until a trained network exists) or <c>neural:&lt;onnx&gt;[,...]</c>; <see cref="Simulations"/>
 /// is the budget of a normal request (800); the Think longer button runs 4× that (3,200). The budget overrides any
 /// <c>sims=</c> in the spec.
+/// <para>
+/// Pantheon games are advised by <see cref="PantheonAgent"/> (spec-pantheon P-A7: the Advisor picks the network by the
+/// game's Ruleset). Null: <see cref="Agent"/> when its network can play Pantheon (Encoding v2), else <c>mcts</c>.
+/// </para>
 /// </summary>
-public sealed record AdviceSettings(string Agent = AdviceSettings.DefaultAgent, int Simulations = AdviceSettings.DefaultSimulations)
+public sealed record AdviceSettings(string Agent = AdviceSettings.DefaultAgent, int Simulations = AdviceSettings.DefaultSimulations,
+    string? PantheonAgent = null)
 {
     public const string DefaultAgent = "mcts";
     public const int DefaultSimulations = 800;
@@ -26,6 +31,33 @@ public sealed record AdviceSettings(string Agent = AdviceSettings.DefaultAgent, 
         if (name is not ("mcts" or "neural"))
             throw new FormatException($"Advice needs a search Agent: 'mcts' or 'neural:<onnx file>', not '{Agent}'");
         AdviceSearch.CreateAgent(Agent, 1, 0);
+        if (PantheonAgent is not null)
+        {
+            if (Split(PantheonAgent).Name is not ("mcts" or "neural"))
+                throw new FormatException($"Advice needs a search Agent: 'mcts' or 'neural:<onnx file>', not '{PantheonAgent}'");
+            (AdviceSearch.CreateAgent(PantheonAgent, 1, 0) as NeuralAgent)?.EncodingFor(PantheonRules);
+        }
+    }
+
+    static readonly Ruleset PantheonRules = new(Expansions: Expansions.Pantheon);
+
+    /// <summary>
+    /// The search that advises games of <paramref name="rules"/>: <see cref="Agent"/> for base games; for Pantheon,
+    /// <see cref="PantheonAgent"/>, else <see cref="Agent"/> if its network can play Pantheon, else the MCTS Anchor.
+    /// </summary>
+    public string AgentFor(Ruleset rules)
+    {
+        if (!rules.HasExpansion(Expansions.Pantheon)) return Agent;
+        if (PantheonAgent is not null) return PantheonAgent;
+        try
+        {
+            (AdviceSearch.CreateAgent(Agent, 1, 0) as NeuralAgent)?.EncodingFor(PantheonRules);
+            return Agent;
+        }
+        catch (NotSupportedException)
+        {
+            return DefaultAgent;
+        }
     }
 
     internal static (string Name, string? Argument) Split(string spec)
@@ -227,7 +259,7 @@ public static class AdviceTable
                 var isBest = ReferenceEquals(m, best);
                 var noise = Noise(best.StdErr, m.StdErr);
                 var gap = isBest ? 0 : best.Win - m.Win;
-                var label = m.Then is { } then ? $"Keep {GameData.Cards[m.Move.Card].Name}, give {GameData.Cards[then.Card].Name}" : Label(state, m.Move);
+                var label = m.Then is { } then ? $"Keep {GameData.Card(m.Move.Card).Name}, give {GameData.Card(then.Card).Name}" : Label(state, m.Move);
                 return new AdviceRow(m.Move, $"P{player + 1} {m.Move}", label, m.Then is null ? SlotOf(state, m.Move) : null, m.Visits, m.Share,
                     m.Win, m.StdErr, gap, isBest ? 0 : noise, isBest || Math.Abs(gap) <= noise, isBest)
                 {
@@ -245,10 +277,14 @@ public static class AdviceTable
     static ExpectedStep[] Expected(GameState state, MoveAdvice m)
     {
         var own = m.Then is null ? 1 : 2;
+        var afterChance = false;
         return [.. m.Line.Select((step, i) =>
         {
             var slot = SlotOf(state, step.Move);
-            var label = step.Move.TakesCard && slot is null ? Unseen(step.Move)
+            // Pantheon: after a chance step the search's Divinities come from a sampled world, so they are not named.
+            afterChance |= step.AfterReveal;
+            var label = afterChance && i >= own && Sampled(step.Move) is { } generic ? generic
+                : step.Move.TakesCard && slot is null ? Unseen(step.Move)
                 : step.Player != state.PlayerToDecide && step.Move.Kind == MoveKind.StartMe ? "They start the Age"
                 : step.Player != state.PlayerToDecide && step.Move.Kind == MoveKind.StartOpponent ? "They let you start the Age"
                 : Label(state, step.Move);
@@ -257,11 +293,21 @@ public static class AdviceTable
         })];
     }
 
+    /// <summary>A Pantheon Move naming a Divinity that a chance step decided, in words that don't name it.</summary>
+    static string? Sampled(Move m) => m.Kind switch
+    {
+        MoveKind.Divinity => $"Place a drawn Divinity on space {m.Space + 1}",
+        MoveKind.Gate => "The Gate: activate a deck top",
+        MoveKind.Theater => "Divine Theater: activate a card of the deck",
+        MoveKind.TheaterOrder => "Stack the deck back",
+        _ => null,
+    };
+
     static string Unseen(Move m) => m.Kind switch
     {
         MoveKind.Build => "Build a newly revealed card",
         MoveKind.Discard => "Discard a newly revealed card",
-        _ => $"Wonder {GameData.Wonders[m.Wonder].Name} (with a newly revealed card)",
+        _ => $"Wonder {GameData.Wonder(m.Wonder).Name} (with a newly revealed card)",
     };
 
     /// <summary>The pyramid slot of the card a take-card Move takes (for the % badges), or null.</summary>
@@ -276,9 +322,9 @@ public static class AdviceTable
     /// <summary>The Move in the owner's words: "Build Baths", "Wonder The Pyramids (with Baths)", "Token Law", ...</summary>
     public static string Label(GameState s, Move m)
     {
-        string Card(int c) => GameData.Cards[c].Name;
-        string Wonder(int w) => GameData.Wonders[w].Name;
-        string Token(int t) => GameData.Tokens[t].Name;
+        string Card(int c) => GameData.Card(c).Name;
+        string Wonder(int w) => GameData.Wonder(w).Name;
+        string Token(int t) => GameData.Token(t).Name;
         return m.Kind switch
         {
             MoveKind.Build => $"Build {Card(m.Card)}",
@@ -294,7 +340,7 @@ public static class AdviceTable
             MoveKind.Messe => $"Messe: {Card(m.Card)}",
             MoveKind.LibertyKeep => $"Keep {Card(m.Card)}",
             MoveKind.LibertyGive => $"Give {Card(m.Card)}",
-            _ => m.ToString(),
+            _ => PantheonText.Label(s, m) ?? m.ToString(),
         };
     }
 }

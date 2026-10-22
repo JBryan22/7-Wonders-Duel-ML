@@ -19,6 +19,8 @@
   <ItemGroup>
     <!-- The tiny test network (ticket 20), for advice from a network instead of MCTS. -->
     <None Include="..\Agents.Tests\Models\tiny.onnx" Link="Models\tiny.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <!-- An Encoding v2 network (ticket 10's surgery fixture), for Pantheon advice (ticket 12). -->
+    <None Include="..\Agents.Tests\Models\surgery-child.onnx" Link="Models\surgery-child.onnx" CopyToOutputDirectory="PreserveNewest" />
     <!-- The mid-game Age II TTS save (research ticket 03) and the snapshot it gives (ticket 32). -->
     <None Include="..\..\..\docs\research\tts-mod\ml-practice.json" Link="Tts\ml-practice.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\..\tts\fixtures\*.json" Link="Tts\fixtures\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

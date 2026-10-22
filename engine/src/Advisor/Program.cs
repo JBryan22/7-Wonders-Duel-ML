@@ -6,12 +6,14 @@ using SevenWondersDuel.Advisor;
 using SevenWondersDuel.Advisor.Tts;
 
 const string Usage = """
-    usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--sims N] [--runs DIR] [--no-browser] [--tts-file F]
+    usage: 7wd-advisor [--port N] [--data DIR] [--agent SPEC] [--pantheon-agent SPEC] [--sims N] [--runs DIR] [--no-browser] [--tts-file F]
            7wd-advisor tts-snapshot [options]   reads the Tabletop Simulator table (tts-snapshot --help)
       Starts the Advisor Window on http://localhost:N (default 7700) and opens it in the browser.
       --data DIR    where the game in progress and earlier games are saved
                     (default: %LOCALAPPDATA%\7wd\advisor on Windows, ~/.local/share/7wd/advisor on Linux)
       --agent SPEC  the search that gives advice: mcts (default) or neural:<onnx file>[,settings]
+      --pantheon-agent SPEC  the search for Pantheon games (default: --agent if its network was trained for
+                    Pantheon, else mcts); a Pantheon network is neural:<a Pantheon Run's onnx file>
       --sims N      simulations per advice request (default 800; Think longer runs 4x)
       --runs DIR    where "Play against the AI" lists trained networks (default: SEVENWD_RUNS, else
                     C:\7wd-runs on Windows, ~/7wd-runs on Linux); only read, never written
@@ -29,6 +31,7 @@ var agent = AdviceSettings.DefaultAgent;
 int? sims = null;
 string? ttsFile = null;
 string? runs = null;
+string? pantheonAgent = null;
 for (var i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -42,6 +45,9 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--agent" when i + 1 < args.Length:
             agent = args[++i];
+            break;
+        case "--pantheon-agent" when i + 1 < args.Length:
+            pantheonAgent = args[++i];
             break;
         case "--sims" when i + 1 < args.Length && int.TryParse(args[i + 1], out var n) && n > 0:
             sims = n;
@@ -66,9 +72,9 @@ WebApplication app;
 try
 {
     app = AdvisorServer.Build(new AdvisorOptions(data, port, Agent: agent, Simulations: sims,
-        TableSource: ttsFile is null ? null : () => new FileTableSource(ttsFile), RunsFolder: runs));
+        TableSource: ttsFile is null ? null : () => new FileTableSource(ttsFile), RunsFolder: runs, PantheonAgent: pantheonAgent));
 }
-catch (Exception e) when (e is FormatException or IOException or InvalidOperationException)
+catch (Exception e) when (e is FormatException or IOException or InvalidOperationException or NotSupportedException)
 {
     Console.Error.WriteLine($"Bad --agent: {e.Message}");
     return 1;
@@ -85,7 +91,7 @@ catch (IOException e) when (e.InnerException is SocketException || e.Message.Con
 
 var url = $"http://localhost:{port}/";
 Console.WriteLine($"7wd Advisor Window: {url}");
-Console.WriteLine($"Advice from {agent}");
+Console.WriteLine($"Advice from {agent}{(pantheonAgent is null ? "" : $"; Pantheon games: {pantheonAgent}")}");
 Console.WriteLine($"Games are saved in {Path.GetFullPath(data)}");
 Console.WriteLine("Press Ctrl+C to stop.");
 if (browser) OpenBrowser(url);

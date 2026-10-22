@@ -7,6 +7,7 @@ let view = null;          // the last StateResponse
 let showNewGame = false;  // the new-game screen was opened over a game in progress
 let guildPick = [];       // slots chosen for the Age III Guild back pattern
 let multiPick = [];       // options chosen in a multi-pick Reveal (tokens, draft, library, returned cards)
+let fieldPick = {};       // Pantheon Reveal forms: the option chosen per field (by field index)
 
 // ------------------------------------------------------------------ server
 
@@ -214,7 +215,7 @@ function drawMarkers(r) {
 }
 
 const enter = (line, then) => {
-  guildPick = []; multiPick = [];
+  guildPick = []; multiPick = []; fieldPick = {};
   return call('POST', '/api/entry', then ? { line, then } : { line });
 };
 
@@ -247,8 +248,13 @@ async function loadCatalog() {
 function info(ref) {
   if (!catalog || !ref) return null;
   const [kind, id] = ref.split(':');
-  return (kind === 'card' ? catalog.cards : kind === 'wonder' ? catalog.wonders : catalog.tokens)[id] ?? null;
+  const pan = catalog.pantheon;
+  if (kind === 'divinity') return pan?.divinities[id] ?? null;
+  const base = kind === 'card' ? catalog.cards : kind === 'wonder' ? catalog.wonders : catalog.tokens;
+  const extra = !pan ? null : kind === 'card' ? pan.cards : kind === 'wonder' ? pan.wonders : pan.tokens;
+  return base[id] ?? extra?.[id] ?? null;
 }
+const hasCost = (i) => i.kind !== 'token' && i.kind !== 'divinity';
 
 // One compact icon line: effect, then cost (the card faces have their own layout).
 function iconLine(ref, { cost = true } = {}) {
@@ -256,7 +262,7 @@ function iconLine(ref, { cost = true } = {}) {
   if (!i) return null;
   return h('span', { class: 'icons' },
     i.effectIcons ? h('span', { class: 'eff' }, i.effectIcons) : null,
-    cost && i.kind !== 'token' ? h('span', { class: 'cost', title: `Cost: ${i.costText}` }, i.costIcons || 'free') : null);
+    cost && hasCost(i) ? h('span', { class: 'cost', title: `Cost: ${i.costText}` }, i.costIcons || 'free') : null);
 }
 
 // A small chip for a card, Wonder or token: colour, name and effect icons; details on hover.
@@ -273,7 +279,7 @@ function infoBlock(ref, prices) {
   if (!i) return null;
   const box = h('div', { class: 'info' },
     h('div', { class: 'info-head' }, h('b', {}, i.name), h('span', { class: `info-type t-${i.color}` }, i.type)));
-  if (i.kind !== 'token') box.append(h('div', {}, h('span', { class: 'k' }, 'Cost '),
+  if (hasCost(i)) box.append(h('div', {}, h('span', { class: 'k' }, 'Cost '),
     i.costIcons ? h('span', { class: 'big-icons' }, i.costIcons) : null, h('span', { class: 'muted' }, ` ${i.costText}`)));
   box.append(h('div', {}, h('span', { class: 'k' }, 'Effect '), h('span', { class: 'big-icons' }, i.effectIcons)));
   box.append(h('ul', {}, i.effect.map(e => h('li', {}, e))));
@@ -315,13 +321,15 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest?.('#tip')) hideTip();
 }, true);
 
-// The icon key.
-function legendPanel() {
+// The icon key (Pantheon's icons too in a Pantheon game).
+function legendPanel(pantheon) {
   if (!catalog) return null;
-  const open = localStorage.getItem('7wd-legend') !== 'closed';
+  let open = true;
+  try { open = localStorage.getItem('7wd-legend') !== 'closed'; } catch { /* no storage */ }
+  const icons = pantheon && catalog.pantheon ? [...catalog.legend, ...catalog.pantheon.legend] : catalog.legend;
   const d = h('details', { class: 'legend-box', open },
     h('summary', {}, 'Icon key'),
-    h('div', { class: 'legend-grid' }, catalog.legend.map(l => h('span', {}, h('b', {}, l.icon), ' ', l.meaning))),
+    h('div', { class: 'legend-grid' }, icons.map(l => h('span', {}, h('b', {}, l.icon), ' ', l.meaning))),
     h('div', { class: 'small muted' }, 'Hover (or tap) any card, Wonder or token for its full text and what it costs right now.'));
   d.addEventListener('toggle', () => localStorage.setItem('7wd-legend', d.open ? 'open' : 'closed'));
   return d;
@@ -483,10 +491,11 @@ function boardPanel(g) {
   if (g.pyramid) panel.append(h('h2', {}, `Age ${['', 'I', 'II', 'III'][g.age]}`), pyramid(g));
   else if (g.age === 0) panel.append(h('p', { class: 'muted' }, 'Setup: the first player, the Progress tokens and the Wonder draft.'));
   if (g.age > 0) panel.append(track(g.conflict));
+  if (g.pantheon) panel.append(pantheonPanel(g));
   if (g.boardTokens.length) panel.append(h('div', { class: 'board-tokens' }, 'Progress tokens on the board: ',
     g.boardTokens.map(t => chip(`token:${t.id}`, t.name))));
   panel.append(h('div', { class: 'cities' }, g.players.map(p => city(p, g))));
-  const key = legendPanel();
+  const key = legendPanel(g.pantheonGame);
   if (key) panel.append(key);
   return panel;
 }
@@ -537,7 +546,7 @@ function sidePanel(g) {
     advicePanel(view.advice),
     h('div', { class: 'panel' }, h('h2', {}, 'Move Log'),
       h('div', { class: 'small muted', style: 'margin-bottom:6px' }, g.rules,
-        play ? ' · the program deals the cards; "? ? ?" is the AI\'s private draw' : ' · click a line to rewind to it'),
+        play ? ' · the program deals the cards; "?" is what the AI keeps private' : ' · click a line to rewind to it'),
       log,
       h('div', { class: 'small muted', style: 'margin-top:6px' }, 'Saved after every entry to ', g.savedTo)),
   ];
@@ -573,7 +582,9 @@ function pyramid(g) {
       title: s.card || s.face === 'empty' ? null : `slot ${s.name}: face down`,
       'data-slot': s.slot,
       'data-ref': s.card ? `card:${s.card.id}` : null,
-    }, h('span', { class: 'slotname' }, s.name), s.card ? cardFace(s, p.pricePlayer, s.accessible) : null);
+    }, h('span', { class: 'slotname' }, s.name), s.card ? cardFace(s, p.pricePlayer, s.accessible) : null,
+      s.token ? h('span', { class: `slot-token tok-${s.token.startsWith('offering') ? 'offering' : s.token}`, title: `${s.tokenName}: whoever takes this card (or Zeus) takes it` }, s.tokenName) : null,
+      s.face === 'temple' ? h('span', { class: 'temple-back' }, '🛕') : null);
     if (s.card) el._prices = s.prices;
     const b = mine ? view.advice?.badges.find(x => x.slot === s.slot) : null;
     if (b) el.append(badge(b.share, b.top));
@@ -690,6 +701,27 @@ function trayFor(g) {
 
 function revealTray(r) {
   const tray = h('div', { class: 'tray' }, h('div', { class: 'title' }, r.title));
+  if (r.kind === 'fields') {
+    // A Pantheon Reveal form: one choice per field, written in field order after the prefix ("1.0 greek 1.2 roman ...").
+    const fields = r.fields ?? [];
+    fields.forEach((f, i) => {
+      if (fieldPick[i] && !f.options.some(o => o.id === fieldPick[i] && o.enabled)) delete fieldPick[i];
+      const only = f.options.filter(o => o.enabled);
+      if (!fieldPick[i] && only.length === 1) fieldPick[i] = only[0].id;
+    });
+    tray.append(h('div', { class: 'fields' }, fields.map((f, i) => h('div', { class: 'field' },
+      h('div', { class: 'field-label small' }, f.label),
+      h('div', { class: 'tiles' }, f.options.map(o => h('button', {
+        class: `tile${o.ref ? ' rich' : ''}${fieldPick[i] === o.id ? ' sel' : ''}`, disabled: !o.enabled, title: o.reason ?? '', 'data-ref': o.ref,
+        onclick: () => { fieldPick[i] = o.id; render(); },
+      }, h('span', { class: 'tile-label' }, o.name), o.ref ? h('span', { class: 'tile-icons' }, iconLine(o.ref)) : null)))))));
+    const done = fields.every((f, i) => fieldPick[i]);
+    const line = `${r.linePrefix} ${fields.map((f, i) => f.key ? `${f.key} ${fieldPick[i]}` : fieldPick[i]).join(' ')}`;
+    tray.append(h('div', { class: 'tray-actions' },
+      h('span', { class: 'muted small' }, `${fields.filter((f, i) => fieldPick[i]).length} of ${fields.length} chosen`),
+      h('button', { class: 'btn', disabled: !done, onclick: () => enter(line) }, 'Confirm')));
+    return tray;
+  }
   if (r.kind === 'guilds') {
     tray.append(h('div', { class: 'tray-actions' },
       h('span', { class: 'muted small' }, `Chosen: ${guildPick.join(', ') || 'none'} (${guildPick.length} of ${r.count})`),
@@ -743,10 +775,10 @@ function track(c) {
   for (let x = -9; x <= 9; x++) {
     const tok = c.tokens.find(t => t.left && (t.victim === 0 ? -t.zone : t.zone) === x);
     cells.push(h('span', {
-      class: `${Math.abs(x) === 9 ? 'cap' : ''}${x === c.pawn ? ' pawn' : ''}${tok ? ' tok' : ''}`,
+      class: `${Math.abs(x) === 9 ? 'cap' : ''}${x === c.pawn ? ' pawn' : ''}${tok ? ' tok' : ''}${x === c.minerva ? ' minerva' : ''}`,
       'data-tok': tok ? `-${tok.coins}` : null,
-      title: x === c.pawn ? 'Conflict Pawn' : '',
-    }, x === c.pawn ? '◆' : ''));
+      title: x === c.pawn ? 'Conflict Pawn' : x === c.minerva ? 'Minerva: the Conflict pawn stops before her' : '',
+    }, x === c.pawn ? '◆' : x === c.minerva ? '🦉' : ''));
   }
   return h('div', {}, h('div', { class: 'track', title: 'Conflict track: P1 capital on the left, P2 on the right' }, cells));
 }
@@ -769,7 +801,52 @@ function city(p, g) {
     p.science.length ? h('div', { class: 'muted' }, 'Science: ', p.science.join(', ')) : null,
     h('div', { style: 'margin:4px 0' }, p.cards.length ? p.cards.map(c => chip(`card:${c.id}`, c.name)) : h('span', { class: 'muted' }, 'No cards yet')),
     p.tokens.length ? h('div', {}, p.tokens.map(t => chip(`token:${t.id}`, t.name))) : null,
+    g.pantheon ? holdings(g.pantheon.players[p.index]) : null,
     wonders);
+}
+
+// ------------------------------------------------------------------ Pantheon (spec-pantheon P-A9)
+
+// A player's Pantheon holdings: Mythology and Offering tokens, Astarte's coins, the Divinities they activated.
+function holdings(hd) {
+  const parts = [];
+  if (hd.mythologyTokens.length) parts.push(h('span', {}, 'Mythology tokens: ', hd.mythologyTokens.map(m => h('span', { class: `chip light myth tok-${m.toLowerCase()}` }, m))));
+  if (hd.offerings.length) parts.push(h('span', {}, ' Offerings: ', hd.offerings.map(o => h('span', { class: 'chip light' }, o)), ` (worth ${hd.offeringValue}🪙)`));
+  if (hd.astarte) parts.push(h('span', { title: "Astarte's coins: spent after the treasury, never lost, 1 VP each at the end" }, ` Astarte: ${hd.astarte}🪙`));
+  if (hd.activated.length) parts.push(h('div', { class: 'muted small' }, 'Activated: ', hd.activated.join(', ')));
+  return parts.length ? h('div', { class: 'pan-hold small' }, parts) : null;
+}
+
+// The Pantheon board: 6 spaces (space 1 at P1's capital end) with both players' costs, face-down Mythologies, the
+// Gate, and an Activate button while the player to decide may activate instead of taking a card.
+function pantheonPanel(g) {
+  const pan = g.pantheon;
+  const mine = !aiTurn(g);
+  const spaces = pan.spaces.map(sp => {
+    const cls = ['pspace', sp.face, sp.mythology ? `myth-${sp.mythology}` : ''].join(' ');
+    const body = [];
+    if (sp.face === 'empty') body.push(h('div', { class: 'muted small' }, 'empty'));
+    else if (sp.face === 'hidden') body.push(h('div', { class: 'pname' }, `${sp.mythologyName}`), h('div', { class: 'muted small' }, `face down (P${sp.placer + 1}'s, unseen)`));
+    else if (sp.face === 'down') body.push(h('div', { class: 'pname', 'data-ref': `divinity:${sp.id}` }, sp.name), h('div', { class: 'muted small' }, `face down (P${sp.placer + 1}'s)`));
+    else body.push(h('div', { class: 'pname', 'data-ref': `divinity:${sp.id}` }, sp.name, ' ', h('span', { class: 'icons' }, info(`divinity:${sp.id}`)?.effectIcons ?? '')),
+      h('div', { class: 'muted small' }, sp.face === 'gate' ? 'the Gate (double cost)' : sp.mythologyName));
+    if (sp.costsNow) body.push(h('div', { class: 'small' }, `now: P1 ${sp.costsNow[0]}🪙 · P2 ${sp.costsNow[1]}🪙`));
+    if (sp.activate && mine) {
+      const share = sp.activate.enabled ? shareOf(sp.activate.line) : null;
+      body.push(h('button', { class: 'btn act-activate', disabled: !sp.activate.enabled, title: sp.activate.reason ?? '', onclick: () => enter(sp.activate.line) },
+        sp.activate.label, share === null ? null : badge(share, isBestKey(sp.activate.line))));
+    }
+    return h('div', { class: cls },
+      h('div', { class: 'pcost small' }, h('span', { title: "P1's cost" }, `P1 ${sp.costs[0]}`), h('b', {}, sp.number), h('span', { title: "P2's cost" }, `P2 ${sp.costs[1]}`)),
+      body);
+  });
+  const extra = [];
+  extra.push(h('div', { class: 'small muted' }, 'Decks (top first): ', pan.decks.map(d => `${d.name} [${d.cards.join(', ') || 'empty'}]`).join(' · ')));
+  if (pan.drawn.length) extra.push(h('div', { class: 'small' }, 'Drawn: ', pan.drawn.join(', ')));
+  if (pan.enki.length) extra.push(h('div', { class: 'small' }, "On Enki: ", pan.enki.join(', ')));
+  if (pan.snake) extra.push(h('div', { class: 'small' }, `🐍 Nisaba's Snake is on ${pan.snake}`));
+  return h('div', { class: 'pantheon' }, h('h2', {}, 'Pantheon ', h('span', { class: 'small muted' }, "space 1 is at P1's capital end")),
+    h('div', { class: 'pspaces' }, spaces), extra);
 }
 
 // ------------------------------------------------------------------ new game, undo, rewind
@@ -793,6 +870,7 @@ function newGameScreen() {
   const s = view?.settings ?? remembered ?? { messe: view?.game?.messe ?? false, liberty: view?.game?.liberty ?? false, rule2015: view?.game?.rule2015 ?? false, seat: view?.game?.seat ?? 0 };
   const messe = h('input', { type: 'checkbox', checked: s.messe });
   const liberty = h('input', { type: 'checkbox', checked: s.liberty });
+  const pantheon = h('input', { type: 'checkbox', id: 'pantheon', checked: !!s.pantheon });
   const ruleNew = h('input', { type: 'radio', name: 'rule', checked: !s.rule2015 });
   const rule2015 = h('input', { type: 'radio', name: 'rule', checked: s.rule2015 });
   const seat1 = h('input', { type: 'radio', name: 'seat', checked: s.seat !== 1 && !(s.vsAi && s.randomSeat) });
@@ -801,16 +879,23 @@ function newGameScreen() {
   const modeHand = h('input', { type: 'radio', name: 'mode', id: 'mode-hand', checked: !s.vsAi });
   const modeAi = h('input', { type: 'radio', name: 'mode', id: 'mode-ai', checked: !!s.vsAi });
 
-  // The opponent: a Run's best network, a Generation, the MCTS Anchor, the Heuristic, Random, or any Agent spec.
-  const list = opponents?.opponents ?? [];
+  // The opponent: a Run's best network, a Generation, the MCTS Anchor, the Heuristic, Random, or any Agent spec. With
+  // Pantheon ticked, only networks trained for Pantheon are listed.
   const select = h('select', { id: 'opponent' });
-  const groups = new Map();
-  for (const o of list) {
-    if (!groups.has(o.group)) groups.set(o.group, h('optgroup', { label: o.group }));
-    groups.get(o.group).append(h('option', { value: o.spec, 'data-label': o.label, selected: o.spec === s.opponent }, o.text));
-  }
-  select.append(...groups.values(), h('option', { value: CUSTOM }, 'Other: type an Agent spec…'));
-  if (s.opponent && !list.some(o => o.spec === s.opponent)) select.value = CUSTOM;
+  const fillOpponents = (initial) => {
+    const list = (pantheon.checked ? opponents?.pantheonOpponents : opponents?.opponents) ?? [];
+    const want = initial ? s.opponent : select.value;
+    const groups = new Map();
+    for (const o of list) {
+      if (!groups.has(o.group)) groups.set(o.group, h('optgroup', { label: o.group }));
+      groups.get(o.group).append(h('option', { value: o.spec, 'data-label': o.label }, o.text));
+    }
+    select.replaceChildren(...groups.values(), h('option', { value: CUSTOM }, 'Other: type an Agent spec…'));
+    if (want && list.some(o => o.spec === want)) select.value = want;
+    else if (initial && want) select.value = CUSTOM;
+    else select.value = list[0]?.spec ?? CUSTOM;
+  };
+  fillOpponents(true);
   const custom = h('input', { type: 'text', id: 'opponent-spec', placeholder: 'e.g. neural:C:\\7wd-runs\\pilot-1-small\\net\\gen-0003.onnx,mode=classic',
     value: s.opponent && select.value === CUSTOM ? s.opponent : '', style: 'width:100%' });
   const sims = h('input', { type: 'number', id: 'ai-sims', min: 1, step: 100, value: s.aiSimulations ?? 800, style: 'width:7em' });
@@ -831,9 +916,10 @@ function newGameScreen() {
   modeHand.addEventListener('change', syncAi);
   modeAi.addEventListener('change', syncAi);
   select.addEventListener('change', syncAi);
+  pantheon.addEventListener('change', () => { fillOpponents(false); syncAi(); });
 
   const start = async () => {
-    const body = { messe: messe.checked, liberty: liberty.checked, rule2015: rule2015.checked, seat: seat2.checked ? 1 : 0 };
+    const body = { messe: messe.checked, liberty: liberty.checked, pantheon: pantheon.checked, rule2015: rule2015.checked, seat: seat2.checked ? 1 : 0 };
     if (modeAi.checked) {
       const isCustom = select.value === CUSTOM;
       Object.assign(body, {
@@ -858,6 +944,8 @@ function newGameScreen() {
     aiBox,
     h('fieldset', {}, h('legend', {}, 'Promo Wonders in the pool'),
       h('label', {}, messe, ' The Messe'), h('label', {}, liberty, ' Statue of Liberty')),
+    h('fieldset', {}, h('legend', {}, 'Expansion'),
+      h('label', {}, pantheon, ' Pantheon (Divinities, Mythology and Offering tokens, Grand Temples)')),
     h('fieldset', {}, h('legend', {}, 'Who starts the next Age when military is tied'),
       h('label', {}, ruleNew, ' The player who took the last card chooses (current rule)'),
       h('label', {}, rule2015, ' The player who took the last card starts (2015 rule)')),

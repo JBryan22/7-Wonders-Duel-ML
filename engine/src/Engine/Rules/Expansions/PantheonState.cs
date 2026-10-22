@@ -163,6 +163,15 @@ public sealed class PantheonState : ExpansionState
     public bool AwaitingOfferings => (Awaiting & SetupStep.Offerings) != 0;
     public bool AwaitingEnki => (Awaiting & SetupStep.Enki) != 0;
 
+    /// <summary>
+    /// What activating a face-up card of the Pantheon costs a player now (P-A4): their cost for its space, doubled for
+    /// the Gate, minus 2 with the Sanctuary. For the Advisor's prices.
+    /// </summary>
+    public static int ActivationCost(GameState s, int player, int divinity) => PantheonModule.ActivationCost(s, player, divinity);
+
+    /// <summary>The coins a set of Offering tokens is worth (one bit per Offering index).</summary>
+    public static int OfferingValue(int offerings) => PantheonModule.OfferingValue(offerings);
+
     /// <summary>The Move Log slug of a slot token code: the Mythology's, or the Offering token's.</summary>
     public static string TokenSlug(int code) => code >= OfferingToken
         ? PantheonData.Offerings[code - OfferingToken].Id

@@ -35,8 +35,9 @@ public sealed class AdviceService : IDisposable
 {
     const int CacheSize = 64;
 
-    sealed class Job(string key, int simulations, bool longer, Observation observation)
+    sealed class Job(string key, int simulations, bool longer, Observation observation, string agent)
     {
+        public readonly string Agent = agent;
         public readonly string Key = key;
         public readonly int Simulations = simulations;
         public readonly bool Longer = longer;
@@ -52,6 +53,8 @@ public sealed class AdviceService : IDisposable
     readonly Lock _lock = new();
     readonly Lock _logLock = new();
     readonly AdviceSettings _settings;
+    /// <summary>The search for Pantheon games (spec-pantheon P-A7), worked out once.</summary>
+    readonly string _pantheonAgent;
     readonly string? _logPath;
     readonly Action<AdvicePrefs>? _savePrefs;
     readonly List<(string Key, int Simulations, Result Result)> _cache = [];
@@ -71,6 +74,7 @@ public sealed class AdviceService : IDisposable
     {
         settings.Validate();
         _settings = settings;
+        _pantheonAgent = settings.AgentFor(new Ruleset(Expansions: Expansions.Pantheon));
         _fixedBudget = fixedBudget;
         _logPath = logPath;
         _savePrefs = savePrefs;
@@ -79,6 +83,9 @@ public sealed class AdviceService : IDisposable
     }
 
     public string Agent => _settings.Agent;
+
+    /// <summary>The search that advises a game of these rules: the base one, or the Pantheon one.</summary>
+    public string AgentFor(Ruleset rules) => rules.HasExpansion(Expansions.Pantheon) ? _pantheonAgent : _settings.Agent;
 
     /// <summary>The budget of a normal request on this computer (800, or 400 after the slow-computer rule).</summary>
     public int DefaultSimulations { get; private set; }
@@ -167,7 +174,7 @@ public sealed class AdviceService : IDisposable
         if (Cached(key) is { } done && done.Advice.Simulations >= simulations) return;
         CancelLocked();
         _failed = null;
-        var job = new Job(key, simulations, longer, session.State.Observe(session.Seat));
+        var job = new Job(key, simulations, longer, session.State.Observe(session.Seat), AgentFor(session.Rules));
         _job = job;
         var seed = Seed(key);
         job.Task = Task.Run(() => Run(job, seed));
@@ -178,9 +185,9 @@ public sealed class AdviceService : IDisposable
         var watch = Stopwatch.StartNew();
         try
         {
-            var outcome = AdviceSearch.Run(job.Observation, _settings.Agent, job.Simulations, seed, job.Cancel.Token);
+            var outcome = AdviceSearch.Run(job.Observation, job.Agent, job.Simulations, seed, job.Cancel.Token);
             var seconds = watch.Elapsed.TotalSeconds;
-            var advice = new Advice(job.Key, _settings.Agent, outcome.Simulations, seconds, AdviceTable.Rank(job.State, outcome), outcome.Line)
+            var advice = new Advice(job.Key, job.Agent, outcome.Simulations, seconds, AdviceTable.Rank(job.State, outcome), outcome.Line)
             {
                 HasOutcome = outcome.HasOutcome,
             };
@@ -255,7 +262,7 @@ public sealed class AdviceService : IDisposable
                 .Select(g => new SlotBadgeView(g.Key, g.Sum(r => r.Share), g.Any(r => r.Best)))
                 .OrderBy(b => b.Slot)
                 .ToArray();
-            return new AdviceView(status, message, _settings.Agent,
+            return new AdviceView(status, message, session is null ? _settings.Agent : AgentFor(session.Rules),
                 advice?.Simulations ?? job?.Simulations ?? 0, result?.Longer ?? job?.Longer ?? false, advice?.Seconds ?? 0,
                 [.. rows.Take(AdviceTable.MaxRows).Select(r => new AdviceRowView(r.Label, r.Line, r.Slot, r.Visits, r.Share, r.Win,
                     r.StdErr, r.Gap, r.Noise, r.Same, r.Best, r.Key, r.ThenLine, r.Reasons, r.Expected, r.HasLine, r.Outcome))],
@@ -287,7 +294,7 @@ public sealed class AdviceService : IDisposable
     void Log(Job job, double seconds, string what)
     {
         var line = string.Create(CultureInfo.InvariantCulture,
-            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} advice agent={_settings.Agent} sims={job.Simulations} seconds={seconds:0.000} " +
+            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} advice agent={job.Agent} sims={job.Simulations} seconds={seconds:0.000} " +
             $"log-lines={job.Key.Count(c => c == '\n') - 3} best=\"{what}\"");
         Console.WriteLine(line);
         if (_logPath is null) return;
