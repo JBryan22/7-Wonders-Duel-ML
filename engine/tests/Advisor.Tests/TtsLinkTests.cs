@@ -36,7 +36,9 @@ public sealed class TtsLinkTests
         Assert.Equal(first, second.Text); // an unchanged table gives an identical snapshot
         Assert.Equal(2, tts.Scripts.Count);
         Assert.NotEqual(tts.Scripts[0], tts.Scripts[1]); // each request carries its own id in the committed script
-        Assert.Equal(TtsData.SnapshotScript, Regex.Replace(tts.Scripts[0], "\"r1-\\d+\"", $"\"{TtsData.RequestPlaceholder}\""));
+        // The committed script, with the Pantheon table from tts/names.json filled in.
+        Assert.Equal(TtsData.SnapshotScript.Replace(TtsData.PantheonPlaceholder, TtsData.PantheonLua),
+            Regex.Replace(tts.Scripts[0], "\"r1-\\d+\"", $"\"{TtsData.RequestPlaceholder}\""));
     }
 
     [Fact]

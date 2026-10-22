@@ -8,11 +8,14 @@ using MoonSharp.Interpreter;
 
 namespace SevenWondersDuel.Advisor.Tests;
 
-/// <summary>One object on a fake TTS table. <see cref="Contents"/> is set for containers (decks, bags).</summary>
+/// <summary>
+/// One object on a fake TTS table. <see cref="Contents"/> is set for containers (decks, bags); <see cref="Image"/> is a
+/// custom object's face image URL (what getCustomObject().image returns).
+/// </summary>
 internal sealed record FakeObject(
     string Type, string Guid, string Name, double X, double Y, double Z,
     bool FaceDown = false, IReadOnlyList<string>? Tags = null, string Description = "",
-    IReadOnlyList<FakeContent>? Contents = null, string? HeldBy = null, bool Resting = true);
+    IReadOnlyList<FakeContent>? Contents = null, string? HeldBy = null, bool Resting = true, string? Image = null);
 
 internal sealed record FakeContent(string Guid, string Name, IReadOnlyList<string> Tags);
 
@@ -144,6 +147,12 @@ internal sealed class FakeTable(IReadOnlyList<FakeObject> objects, IReadOnlyList
             string.Equals(tag, args[args.Count - 1].String, StringComparison.OrdinalIgnoreCase))));
         t["getTags"] = Fn(_ => List(script, (o.Tags ?? []).Select(tag => { var x = new Table(script); x[1] = tag; return x; }).ToList()));
         t["getQuantity"] = Fn(_ => DynValue.NewNumber(o.Contents?.Count ?? -1));
+        t["getCustomObject"] = Fn(_ =>
+        {
+            var custom = new Table(script);
+            if (o.Image is not null) custom["image"] = o.Image;
+            return DynValue.NewTable(custom);
+        });
         t["getObjects"] = Fn(_ =>
         {
             if (o.Contents is null) throw new ScriptRuntimeException("getObjects on a non-container");
@@ -202,7 +211,7 @@ internal sealed class FakeTable(IReadOnlyList<FakeObject> objects, IReadOnlyList
             objects.Add(new FakeObject(
                 TtsType(saveType), (string)o["GUID"]!, (string?)o["Nickname"] ?? "", D("posX"), D("posY"), D("posZ"),
                 FaceDown: IsFaceDown(D("rotX"), D("rotZ")), Tags: Tags(o), Description: (string?)o["Description"] ?? "",
-                Contents: contents));
+                Contents: contents, Image: (string?)o["CustomImage"]?["ImageURL"]));
         }
         return new FakeTable(objects, players ?? ProbePlayers, age, hands);
     }

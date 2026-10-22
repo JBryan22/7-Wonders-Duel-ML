@@ -455,9 +455,9 @@ public sealed class PantheonAdvisorTests : IDisposable
             Assert.True(hand.GetProperty("game").GetProperty("pantheonGame").GetBoolean());
             Assert.Equal(6, hand.GetProperty("game").GetProperty("pantheon").GetProperty("spaces").GetArrayLength());
             Assert.True(new AdvisorStore(Path.Combine(_folder, "data")).LoadSettings().Pantheon);
-            // Following the TTS table doesn't read Pantheon pieces yet (ticket 13): it says so and enters nothing.
+            // Following the TTS table works in a Pantheon game as in a base one (ticket 13): here there is no table to read.
             var tts = await ServerTests.Json(await http.PostAsJsonAsync("api/tts", new { follow = true }));
-            Assert.Equal("pantheon", tts.GetProperty("tts").GetProperty("status").GetString());
+            Assert.Equal("reading", tts.GetProperty("tts").GetProperty("status").GetString());
             await http.PostAsJsonAsync("api/tts", new { follow = false });
 
             // A base network can't play Pantheon: refused before the game starts.

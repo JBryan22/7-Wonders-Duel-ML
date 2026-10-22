@@ -54,5 +54,22 @@
       { "side": "White", "value": 5, "x": 15.31, "z": 15.9 }
     ],
     "snap": 1.5
+  },
+  "pantheon": {
+    "about": "Pantheon pieces (spec-pantheon P-A9), placed only in Pantheon games. Computed from the mod file (tts/fixtures/pantheon-pieces.json): the Global script spawns the Pantheon board at the battle track + (0.08, 6.49), scale 5.463, turned 180 degrees, and its 6 snap points (scaled, turned) are the spaces, listed left to right (Red's end first); the area is the Divinity area trigger it spawns (the Age II button counts the 6 cards in it). Activated Divinities lie on each player's Divinity board, inside the mod's pantheonDivinityLeft/Right zones (what its Score button counts), below the player's area. A stolen Wonder (Ra) goes in a 5th row above row 1 (the mod's pantheonLeft/RightRaWonder zones). Mythology and Offering tokens on the structure lie about 0.9 above their card's centre (the mod's Age I and II setup scripts). Minerva stands on the Military track. To be confirmed at the live table (docs/tts-live-checks.md).",
+    "spaces": [
+      { "x": -23.9, "z": 28.04 }, { "x": -15.22, "z": 35.16 }, { "x": -4.47, "z": 37.37 },
+      { "x": 4.02, "z": 37.39 }, { "x": 14.7, "z": 35.18 }, { "x": 23.45, "z": 28.1 }
+    ],
+    "spaceSnap": 2.5,
+    "area": { "x1": -25.81, "x2": 25.68, "z1": 26.69, "z2": 43.19 },
+    "activated": {
+      "Red": { "x1": -43.83, "x2": -6.42, "z1": -56.19, "z2": -42.5 },
+      "White": { "x1": 6.56, "x2": 44.19, "z1": -56.36, "z2": -42.5 }
+    },
+    "raRow": -9.95,
+    "tokenOffsetZ": 0.92,
+    "tokenSnap": 1.0,
+    "track": { "x1": -22.5, "x2": 22.5, "z1": 17.6, "z2": 21.9 }
   }
 }

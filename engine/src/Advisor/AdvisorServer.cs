@@ -574,8 +574,7 @@ public sealed class AdvisorServer : IDisposable
     /// </summary>
     void Reconcile(bool force)
     {
-        // Pantheon pieces on the TTS table are not read yet (ticket 13): a Pantheon game is entered by hand.
-        if (_settled is not { } snapshot || !_tts.Following || _session?.Ai is not null || PantheonGame)
+        if (_settled is not { } snapshot || !_tts.Following || _session?.Ai is not null)
         {
             if (_sync is not null || _syncText is not null) _changes++;
             _sync = null;
@@ -632,8 +631,6 @@ public sealed class AdvisorServer : IDisposable
         _syncLog = log;
     }
 
-    bool PantheonGame => _session?.Rules.HasExpansion(Expansions.Pantheon) == true;
-
     void SaveQuietly()
     {
         try
@@ -651,7 +648,7 @@ public sealed class AdvisorServer : IDisposable
     {
         var s = _store.LoadSettings();
         var promos = s.Messe && s.Liberty ? "The Messe and the Statue of Liberty" : s.Messe ? "The Messe" : s.Liberty ? "the Statue of Liberty" : "no promo Wonders";
-        return $"{promos} · you are P{s.Seat + 1} · {(s.Rule2015 ? "2015 start rule" : "current start rule")}";
+        return $"{(s.Pantheon ? "Pantheon · " : "")}{promos} · you are P{s.Seat + 1} · {(s.Rule2015 ? "2015 start rule" : "current start rule")}";
     }
 
     TtsView TtsBox()
@@ -668,8 +665,6 @@ public sealed class AdvisorServer : IDisposable
             TableLifecycle.Each(promos).Select(p => new TtsPromoView(p.Id, p.Name)).ToList(), newGame, _catchUp && _session is not null);
 
         if (!c.Following) return View("off", null);
-        if (PantheonGame)
-            return View("pantheon", "Following the TTS table doesn't read the Pantheon pieces yet: enter this game's Moves here by hand.");
         // The colour first: nothing is read from the table until the Advisor knows which side is the owner's.
         if (_syncText is not null && _side is null)
             return View("seat", "Which colour do you play? Your TTS seat isn't White or Red: sit at White or Red in TTS, or choose your colour under \"You sit\".");

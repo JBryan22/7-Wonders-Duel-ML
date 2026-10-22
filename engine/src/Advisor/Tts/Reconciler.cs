@@ -22,11 +22,11 @@ public enum SyncStatus
 public sealed record TableChain(IReadOnlyList<LogEntry> Entries)
 {
     /// <summary>
-    /// The lines to enter, in order. The opponent's redacted Great Library draw is left out: the Advisor session logs it
-    /// by itself when it is due.
+    /// The lines to enter, in order. The opponent's redacted private Reveals (their Great Library draw; with Pantheon,
+    /// their Divinity draw and Divine Theater) are left out: the Advisor session logs them by itself when they are due.
     /// </summary>
     public IReadOnlyList<string> Lines { get; } = Entries
-        .Where(e => e is not LibraryReveal { Redacted: true })
+        .Where(e => e is not (LibraryReveal { Redacted: true } or DivinityDrawReveal { Redacted: true } or TheaterReveal { Redacted: true }))
         .Select(MoveLog.Format)
         .ToList();
 
@@ -84,17 +84,20 @@ public static class Reconciler
     public static Reconciliation Reconcile(GameState current, int ownerSeat, SeatSides sides, TableSnapshot snapshot,
         ReconcileOptions? options = null)
     {
-        var search = new Search(ownerSeat, sides, snapshot, options ?? new ReconcileOptions());
+        var search = new Search(ownerSeat, sides, snapshot, options ?? new ReconcileOptions(), current.Pantheon is not null);
         var start = current.Clone();
         AutoReveals(start, ownerSeat);
         var (missing, extra) = search.Diff(start);
-        if (missing.Count == 0 && extra.Count == 0)
+        if (missing.Count == 0 && extra.Count == 0 && !search.ShowsPendingAnswer(start))
             return new Reconciliation(SyncStatus.Matches, [], [], [], search.WhyBlocked(start), search.Notes(start));
 
         search.Run(start, [], 0);
         // Chains reaching the same Game State differ only in history nobody can see any more (two flipped cards taken
         // before the table was read, in either slot): one of them stands for all.
-        var explained = Distinct(search.Explained.GroupBy(e => e.End).Select(g => g.First().Chain).ToList());
+        var found = search.Explained.Count > 0 ? search.Explained : search.Deferred;
+        var explained = Distinct(found.GroupBy(e => e.End).Select(g => g.First().Chain).ToList());
+        if (explained.Count == 0 && missing.Count == 0 && extra.Count == 0)
+            return new Reconciliation(SyncStatus.Matches, [], [], [], search.WhyBlocked(start), search.Notes(start));
         if (explained.Count == 1)
         {
             var end = Apply(start, explained[0].Entries, ownerSeat);
@@ -135,11 +138,14 @@ public static class Reconciler
         AutoReveals(s, ownerSeat);
     }
 
-    /// <summary>The Reveal nobody at the table can name, logged redacted as AdvisorSession does: the opponent's Library draw.</summary>
+    /// <summary>
+    /// The Reveals nobody at the table can name, logged redacted as AdvisorSession does: the opponent's Library draw, and
+    /// with Pantheon their Divinity draw and Divine Theater.
+    /// </summary>
     static void AutoReveals(GameState s, int ownerSeat)
     {
-        if (s.Step == StepKind.Reveal && s.SlotsToReveal == 0 && s.AwaitingLibraryDraw && s.PlayerToDecide != ownerSeat)
-            s.Apply(LibraryReveal.Hidden(s.PlayerToDecide));
+        while (s.Step == StepKind.Reveal && s.SlotsToReveal == 0 && AdvisorSession.HiddenRevealDue(s, ownerSeat, againstAi: false) is Reveal hidden)
+            s.Apply(hidden);
     }
 
     static List<TableChain> Distinct(List<TableChain> chains) =>
@@ -151,28 +157,52 @@ public static class Reconciler
         readonly SeatSides _sides;
         readonly TableSnapshot _snapshot;
         readonly ReconcileOptions _options;
+        readonly bool _pantheon;
         readonly Dictionary<int, TableView> _views = [];
         int _nodes;
         // States already searched (with the Moves and entries used to get there): orders of Moves that reach the same
         // state lead to the same chains, so each is searched once. Matters for the deep catch-up search.
         readonly HashSet<string> _visited = new(StringComparer.Ordinal);
 
-        public Search(int owner, SeatSides sides, TableSnapshot snapshot, ReconcileOptions options)
+        public Search(int owner, SeatSides sides, TableSnapshot snapshot, ReconcileOptions options, bool pantheon)
         {
             _owner = owner;
             _sides = sides;
             _snapshot = snapshot;
             _options = options;
+            _pantheon = pantheon;
         }
 
         /// <summary>Explaining chains with the state each reaches.</summary>
         public List<(TableChain Chain, string End)> Explained { get; } = [];
+        /// <summary>Chains that explain the table but stop at a decision whose answer the table already shows (Neptune).</summary>
+        public List<(TableChain Chain, string End)> Deferred { get; } = [];
+
+        /// <summary>
+        /// Pantheon: the table already shows what the state waits for, though no fact differs: the Gate's deck tops (in
+        /// the box area), the owner's own draw or Divine Theater deck (in their hand), or one of Neptune's decisions (a
+        /// looting token gone: those are soft checks). The search goes on from there.
+        /// </summary>
+        public bool ShowsPendingAnswer(GameState s)
+        {
+            if (s.Pantheon is not { } p) return false;
+            if (s.Step == StepKind.Reveal)
+            {
+                if (s.SlotsToReveal != 0 || !(p.AwaitingGateReveal || p.AwaitingTheaterReveal
+                    || s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity && !p.HasDraw)) return false;
+                var reveals = Reveals(s, out var blocked);
+                return blocked is null && reveals.Count > 0;
+            }
+            if (s.Step != StepKind.Decision || s.Pending(0).Kind is not (DecisionKind.NeptuneDiscard or DecisionKind.NeptuneApply)) return false;
+            var player = s.PlayerToDecide;
+            return s.LegalMoves().Any(m => Plausible(s, player, m));
+        }
         public List<(List<LogEntry> Chain, string Reason, int Mismatches)> Blocked { get; } = [];
 
         /// <summary>The snapshot placed with an Age's pyramid grid (0: no grid, during the draft).</summary>
         TableView View(int age)
         {
-            if (!_views.TryGetValue(age, out var view)) _views[age] = view = TableView.From(_snapshot, age);
+            if (!_views.TryGetValue(age, out var view)) _views[age] = view = TableView.From(_snapshot, age, _pantheon);
             return view;
         }
 
@@ -199,8 +229,14 @@ public static class Reconciler
                 var (missing, extra) = Diff(s);
                 if (missing.Count == 0 && extra.Count == 0)
                 {
-                    Explained.Add((new TableChain([.. chain]), Convert.ToBase64String(s.ToBytes())));
-                    return;
+                    if (!ShowsPendingAnswer(s))
+                    {
+                        Explained.Add((new TableChain([.. chain]), Convert.ToBase64String(s.ToBytes())));
+                        return;
+                    }
+                    // Pantheon's Neptune: the table already shows the answer (looting tokens are never facts): go on, and
+                    // fall back on this chain if nothing longer explains the table.
+                    Deferred.Add((new TableChain([.. chain]), Convert.ToBase64String(s.ToBytes())));
                 }
             }
             if (s.Step == StepKind.GameOver || chain.Count >= _options.MaxEntries) return;
@@ -276,12 +312,15 @@ public static class Reconciler
             }
             if (s.AwaitingGuildPattern)
             {
-                var guilds = view.At(Place.Pyramid).Where(p => p.Piece.Back == "guild").Select(p => p.Slot).Distinct().Order().ToList();
-                if (guilds.Count == GameState.GuildsPerGame) return [new GuildPatternReveal([.. guilds])];
+                // With Pantheon the special backs are Grand Temples' (R6).
+                var back = s.TempleBacks ? "temple" : "guild";
+                var guilds = view.At(Place.Pyramid).Where(p => p.Piece.Back == back).Select(p => p.Slot).Distinct().Order().ToList();
+                if (guilds.Count == GameState.GuildsPerGame) return [new GuildPatternReveal([.. guilds], s.TempleBacks)];
                 // A Guild already taken (before the table was read) left an empty slot: try each.
                 var missing = GameState.GuildsPerGame - guilds.Count;
                 var takenGuilds = view.Pieces.Count(p => p.Place is Place.City or Place.Discard
-                    && CardIndex(p.Slug) is var c and >= 0 && GameData.Cards[c].IsGuild && !s.Seen.Contains(c));
+                    && CardIndex(p.Slug) is var c and >= 0 && (s.TempleBacks ? PantheonData.TempleSet.Contains(c) : GameData.Card(c).IsGuild)
+                    && !s.Seen.Contains(c));
                 if (guilds.Count > GameState.GuildsPerGame || takenGuilds < missing) return [];
                 var empty = Enumerable.Range(0, GameState.SlotCount).Where(i => !view.OnSlot(i).Any()).ToList();
                 var patterns = new List<Reveal>();
@@ -290,7 +329,7 @@ public static class Reconciler
                     if (patterns.Count >= _options.MaxReveals) return;
                     if (chosen.Count == GameState.GuildsPerGame)
                     {
-                        patterns.Add(new GuildPatternReveal([.. chosen.Order()]));
+                        patterns.Add(new GuildPatternReveal([.. chosen.Order()], s.TempleBacks));
                         return;
                     }
                     for (var i = from; i < empty.Count; i++)
@@ -378,7 +417,290 @@ public static class Reconciler
                 blocked = "Turn the Statue of Liberty's 3 cards face up on the table, or name them in the Advisor Window.";
                 return [];
             }
+            if (s.Pantheon is { } pantheon) return PantheonReveals(s, pantheon, view, out blocked);
             return [];
+        }
+
+        // ---------------------------------------------------------------- Pantheon (spec-pantheon P-A9)
+
+        /// <summary>
+        /// The Divinities in the owner's own hand: snapshot.lua names only the host's hand ("own"), and only when the host
+        /// sits at the owner's colour is that the owner's.
+        /// </summary>
+        List<int> OwnHand(TableView view)
+        {
+            if (_snapshot.HostColor != _sides.Of(_owner).ToString()) return [];
+            return view.At(Place.Hand).Where(p => p.Piece.Own).Select(p => DivinityIndex(p.Slug)).Where(d => d >= 0).Distinct().ToList();
+        }
+
+        static List<int> OfMythology(IEnumerable<int> divinities, Mythology m) =>
+            divinities.Where(d => PantheonData.Divinities[d].Mythology == m).Distinct().ToList();
+
+        /// <summary>
+        /// A deck's top <paramref name="count"/> cards from the cards a hand (or the table) shows, in deck order: cards the
+        /// state knows stay at their positions, the others fill the unknown positions (in index order: which unknown card
+        /// was above which is never seen, and makes no difference once the decision is made). Null if they don't fit.
+        /// </summary>
+        static int[]? DeckOrder(PantheonState p, Mythology m, IReadOnlyCollection<int> cards, int count)
+        {
+            if (cards.Count != count) return null;
+            var order = new int[count];
+            var rest = new SortedSet<int>(cards);
+            for (var i = 0; i < count; i++)
+            {
+                var known = p.DeckCard(m, i);
+                order[i] = known;
+                if (known >= 0 && !rest.Remove(known)) return null;
+            }
+            for (var i = 0; i < count; i++)
+                if (order[i] < 0)
+                {
+                    order[i] = rest.Min;
+                    rest.Remove(order[i]);
+                }
+            return order;
+        }
+
+        /// <summary>
+        /// Pantheon's Reveals, in the Engine's order (Zeus's discard, the Gate, the Divine Theater, the setup Reveals, a
+        /// Divinity draw). The opponent's private ones never come here: they are logged redacted (<see cref="AutoReveals"/>).
+        /// </summary>
+        List<Reveal> PantheonReveals(GameState s, PantheonState p, TableView view, out string? blocked)
+        {
+            blocked = null;
+            if (p.AwaitingZeusDiscard)
+            {
+                var pool = s.UnseenPoolFor(p.ZeusTarget);
+                return view.At(Place.Discard).Select(x => CardIndex(x.Slug)).Where(c => c >= 0 && pool.Contains(c)).Distinct()
+                    .Select(c => (Reveal)new ZeusDiscardReveal(c)).ToList();
+            }
+            if (p.AwaitingGateReveal)
+            {
+                // The deck tops lie face up somewhere off the Pantheon (on their decks in the box area, or on the table); the
+                // one the Gate's owner then chose may already lie on their Divinity board.
+                var activated = p.Activated(0) | p.Activated(1);
+                var shown = view.Pieces
+                    .Where(x => x.Place is not (Place.PantheonSpace or Place.Hand) && !x.Piece.FaceDown && x.Piece.Kind == PieceKind.Card)
+                    .Select(x => DivinityIndex(x.Slug))
+                    .Where(d => d >= 0 && d != PantheonData.Gate && (activated & 1 << d) == 0).Distinct().ToList();
+                var tops = new List<List<int>>();
+                foreach (var m in PantheonData.Mythologies.Where(m => p.DeckSize(m.Mythology) > 0))
+                {
+                    var known = p.DeckCard(m.Mythology, 0);
+                    var candidates = OfMythology(shown, m.Mythology).Where(d => known < 0 || d == known).ToList();
+                    if (candidates.Count == 0)
+                    {
+                        blocked = "Lay the top card of each Mythology deck face up (the Gate), or name them in the Advisor Window.";
+                        return [];
+                    }
+                    tops.Add(candidates);
+                }
+                return Combinations(tops).Select(t => (Reveal)new GateReveal(t)).ToList();
+            }
+            if (p.AwaitingTheaterReveal)
+            {
+                var m = p.TheaterDeck;
+                var player = s.Pending(0).Player;
+                // The chosen card may already lie on the Theater's owner's Divinity board, the rest in their hand.
+                var activated = p.Activated(0) | p.Activated(1);
+                var chosen = view.At(Place.Activated, _sides.Of(player)).Select(x => DivinityIndex(x.Slug))
+                    .Where(d => d >= 0 && (activated & 1 << d) == 0);
+                var cards = OfMythology(OwnHand(view).Concat(chosen), m);
+                if (DeckOrder(p, m, cards, p.DeckSize(m)) is { } order) return [new TheaterReveal(player, m, order)];
+                blocked = $"Take the {PantheonData.MythologyDef(m).Name} deck into your hand in TTS to look through it, or name its cards in the Advisor Window.";
+                return [];
+            }
+            if (p.AwaitingMythologyTokens) return SlotTokenReveals(s, p, view, PantheonData.MythologySlots, offerings: false);
+            if (p.AwaitingPantheon)
+            {
+                // Each face-down card, now face up on its space; or, activated before the table was read, on a Divinity
+                // board (any newly activated card of its Mythology).
+                var activated = p.Activated(0) | p.Activated(1);
+                var boards = view.At(Place.Activated).Select(x => DivinityIndex(x.Slug)).Where(d => d >= 0 && (activated & 1 << d) == 0).ToList();
+                var spaces = new List<int>();
+                var options = new List<List<int>>();
+                for (var space = 0; space < PantheonData.SpaceCount; space++)
+                {
+                    if (!p.IsFaceDown(space)) continue;
+                    var physical = ExpectedTable.EngineSpace(space, _sides);
+                    var d = view.At(Place.PantheonSpace).Where(x => x.Slot == physical && !x.Piece.FaceDown)
+                        .Select(x => DivinityIndex(x.Slug)).FirstOrDefault(-1);
+                    var known = p.IsHidden(space) ? -1 : p.Space(space);
+                    var candidates = d >= 0 ? [d]
+                        : OfMythology(boards, p.SpaceMythology(space)!.Value).Where(c => known < 0 || c == known).ToList();
+                    if (candidates.Count == 0)
+                    {
+                        blocked = "Turn the Pantheon's cards face up (the mod's Age II Setup button does it), or name them in the Advisor Window.";
+                        return [];
+                    }
+                    spaces.Add(space);
+                    options.Add(candidates);
+                }
+                return Combinations(options).Where(c => c.Distinct().Count() == c.Length)
+                    .Select(c => (Reveal)new PantheonReveal(spaces.Select((space, i) => (space, c[i])).ToArray())).ToList();
+            }
+            if (p.AwaitingOfferings) return SlotTokenReveals(s, p, view, PantheonData.OfferingSlots, offerings: true);
+            if (p.AwaitingEnki)
+            {
+                var box = s.TokensSetAside;
+                var tokens = view.At(Place.EnkiToken).Select(x => TokenIndex(x.Slug)).Where(t => t >= 0 && (box & 1 << t) != 0)
+                    .Distinct().Order().ToArray();
+                if (tokens.Length == 2) return [new EnkiReveal(tokens)];
+                blocked = "Put Enki's 2 Progress tokens face up on Enki (the mod deals them when Enki is turned face up), or name them in the Advisor Window.";
+                return [];
+            }
+            if (s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity && !p.HasDraw)
+            {
+                var decision = s.Pending(0);
+                var m = (Mythology)decision.Wonder;
+                var count = Math.Min(2, p.DeckSize(m));
+                var hand = OfMythology(OwnHand(view), m);
+                if (DeckOrder(p, m, hand, count) is { } order) return [new DivinityDrawReveal(decision.Player, m, order)];
+                // One card already placed face down (a card of that Mythology lies on a space the state has empty), the other
+                // still in the hand: the placed one is any card it could be.
+                var placed = Enumerable.Range(0, PantheonData.SpaceCount).Any(space => p.Space(space) == PantheonState.EmptySpace
+                    && view.At(Place.PantheonSpace).Any(x => x.Slot == ExpectedTable.EngineSpace(space, _sides) && x.Piece.Back == PantheonData.MythologyDef(m).Id));
+                if (count == 2 && hand.Count == 1 && placed)
+                {
+                    var unseen = PantheonData.MythologyDef(m).Divinities.Where(d => (p.SeenDivinities & 1 << d) == 0 && d != hand[0]);
+                    var reveals = unseen.Select(d => DeckOrder(p, m, [hand[0], d], count)).OfType<int[]>()
+                        .Select(o => (Reveal)new DivinityDrawReveal(decision.Player, m, o)).ToList();
+                    if (reveals.Count > 0) return reveals;
+                }
+                blocked = $"Draw your {(count == 2 ? "2 " : "")}{PantheonData.MythologyDef(m).Name} Divinit{(count == 2 ? "ies" : "y")} into your hand in TTS, or name {(count == 2 ? "them" : "it")} in the Advisor Window.";
+                return [];
+            }
+            return [];
+        }
+
+        /// <summary>
+        /// The Mythology tokens (Age I) or Offering tokens (Age II) setup puts on the structure, read from the slots; a
+        /// token already taken (its card uncovered before the table was read) lies in a player's area: each assignment of
+        /// those to the empty slots is tried.
+        /// </summary>
+        List<Reveal> SlotTokenReveals(GameState s, PantheonState p, TableView view, int[] slots, bool offerings)
+        {
+            bool Kind(int code) => code >= 0 && code >= PantheonState.OfferingToken == offerings;
+            var onSlots = new Dictionary<int, int>();
+            foreach (var x in view.At(Place.SlotToken))
+                if (slots.Contains(x.Slot) && x.Slug is { } slug && ExpectedTable.TokenCode(slug) is var code && Kind(code)) onSlots.TryAdd(x.Slot, code);
+            var empty = slots.Where(slot => !onSlots.ContainsKey(slot)).ToList();
+            // Held tokens on the table beyond those the state already gives the players.
+            var extra = view.At(Place.HeldToken).Select(x => x.Slug is { } slug ? ExpectedTable.TokenCode(slug) : -1).Where(Kind).ToList();
+            for (var player = 0; player < 2; player++)
+                foreach (var m in PantheonData.Mythologies)
+                    for (var k = 0; k < p.MythologyTokens(player, m.Mythology); k++) extra.Remove((int)m.Mythology);
+            for (var player = 0; player < 2; player++)
+                foreach (var o in PantheonData.Offerings)
+                    if ((p.OfferingTokens(player) & 1 << o.Index) != 0) extra.Remove(PantheonState.OfferingToken + o.Index);
+            var reveals = new List<Reveal>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            void Fill(int i, List<int> left)
+            {
+                if (reveals.Count >= _options.MaxReveals) return;
+                if (i == empty.Count)
+                {
+                    var tokens = slots.Select(slot => (slot, onSlots[slot])).ToArray();
+                    if (!seen.Add(string.Join(',', tokens))) return;
+                    reveals.Add(offerings
+                        ? new OfferingsReveal(tokens.Select(t => (t.slot, t.Item2 - PantheonState.OfferingToken)).ToArray())
+                        : new MythologyTokensReveal(tokens.Select(t => (t.slot, (Mythology)t.Item2)).ToArray()));
+                    return;
+                }
+                for (var k = 0; k < left.Count; k++)
+                {
+                    onSlots[empty[i]] = left[k];
+                    var rest = left.Where((_, j) => j != k).ToList();
+                    Fill(i + 1, rest);
+                    onSlots.Remove(empty[i]);
+                }
+            }
+            Fill(0, extra);
+            return reveals;
+        }
+
+        /// <summary>Every way of picking one value from each list (capped at the Reveal limit).</summary>
+        IEnumerable<int[]> Combinations(List<List<int>> lists)
+        {
+            var result = new List<int[]> { Array.Empty<int>() };
+            foreach (var list in lists)
+                result = result.SelectMany(r => list.Select(v => r.Append(v).ToArray())).Take(_options.MaxReveals).ToList();
+            return result;
+        }
+
+        /// <summary>Evidence for Pantheon's Moves; null for the Moves this doesn't cover.</summary>
+        bool? PantheonPlausible(GameState s, int player, Move move, TableView view)
+        {
+            if (s.Pantheon is not { } p) return null;
+            var side = _sides.Of(player);
+            var other = SeatSides.Other(side);
+            bool OnBoard(Side where, int divinity) => view.At(Place.Activated, where).Any(x => DivinityIndex(x.Slug) == divinity);
+            switch (move.Kind)
+            {
+                case MoveKind.Divinity:
+                {
+                    // A card of the drawn Mythology now lies on that space (face down); the owner's other card is still in hand.
+                    var m = PantheonData.MythologyDef((Mythology)s.Pending(0).Wonder).Id;
+                    var physical = ExpectedTable.EngineSpace(move.Space, _sides);
+                    if (!view.At(Place.PantheonSpace).Any(x => x.Slot == physical && x.Piece.Back == m)) return false;
+                    return move.Divinity < 0 || !OwnHand(view).Contains(move.Divinity);
+                }
+                case MoveKind.Activate:
+                case MoveKind.Gate:
+                case MoveKind.Theater:
+                    return OnBoard(side, move.Divinity);
+                case MoveKind.TheaterDeck:
+                {
+                    var activated = p.Activated(0) | p.Activated(1);
+                    var m = (Mythology)move.Card;
+                    return view.At(Place.Activated, side).Select(x => DivinityIndex(x.Slug))
+                            .Any(d => d >= 0 && (activated & 1 << d) == 0 && PantheonData.Divinities[d].Mythology == m)
+                        || OfMythology(OwnHand(view), m).Count > 0;
+                }
+                case MoveKind.Enki:
+                    return view.At(Place.ProgressArea, side).Any(x => TokenIndex(x.Slug) == move.Token);
+                case MoveKind.Snake:
+                {
+                    var snake = view.At(Place.Snake, other).FirstOrDefault();
+                    if (snake is null) return false;
+                    // The card under the Snake, when one lies close enough to tell.
+                    var under = view.At(Place.City, other).Where(x => CardIndex(x.Slug) >= 0)
+                        .Select(x => (Card: CardIndex(x.Slug), Distance: Math.Abs(x.Piece.X - snake.Piece.X) + Math.Abs(x.Piece.Z - snake.Piece.Z)))
+                        .Where(x => x.Distance <= 1.0).OrderBy(x => x.Distance).Select(x => x.Card).FirstOrDefault(-1);
+                    return under < 0 || under == move.Card || GameData.Card(under).Color != CardColor.Green;
+                }
+                case MoveKind.Steal:
+                    return view.At(Place.City, side).Any(x => x.Piece.Back != "wonder" && CardIndex(x.Slug) == move.Card);
+                case MoveKind.Hades:
+                    // On the discard pile too: a later Move in the chain may send it back there.
+                    return view.Pieces.Any(x => (x.Place == Place.City && x.Side == side || x.Place == Place.Discard)
+                        && x.Piece.Back != "wonder" && CardIndex(x.Slug) == move.Card);
+                case MoveKind.Zeus:
+                    return move.Wonder == s.Age && !view.OnSlot(move.Slot).Any();
+                case MoveKind.Anubis:
+                    return view.At(Place.Wonder).Any(x => WonderIndex(x.Slug) == move.Wonder && !view.WonderBuilt(x.Side!.Value, x.Row));
+                case MoveKind.Isis:
+                    return view.At(Place.Wonder, side).Any(x => WonderIndex(x.Slug) == move.Wonder && view.WonderBuilt(side, x.Row))
+                        && !view.At(Place.Discard).Any(x => CardIndex(x.Slug) == move.Card);
+                case MoveKind.Ra:
+                    return view.At(Place.Wonder, side).Any(x => WonderIndex(x.Slug) == move.Wonder);
+                case MoveKind.Minerva:
+                {
+                    // Read like the Conflict Pawn (approximate): the one or two spaces she stands nearest.
+                    if (view.MinervaSpace is not { } shown) return false;
+                    var expected = _sides.P1 == Side.Red ? move.MilitarySpace : -move.MilitarySpace;
+                    return Math.Abs(shown - expected) < 1.0;
+                }
+                case MoveKind.NeptuneDiscard:
+                case MoveKind.NeptuneApply:
+                {
+                    var t = move.MilitaryToken;
+                    var token = view.Looting.FirstOrDefault(x => x.Side == _sides.Of(t / 2) && x.Value == GameState.MilitaryTokenCoins(t));
+                    return token is null || !token.OnBoard;
+                }
+                default:
+                    return null;
+            }
         }
 
         /// <summary>Only Moves the table has evidence of are tried (keeps the search to a handful of states).</summary>
@@ -390,6 +712,7 @@ public static class Reconciler
             bool Shows(Place place, Side? where, int card) => view.Pieces.Any(p =>
                 p.Place == place && (where is null || p.Side == where) && p.Piece.Back != "wonder" && CardIndex(p.Slug) == card);
             bool TokenIn(Side where, int token) => view.At(Place.ProgressArea, where).Any(p => TokenIndex(p.Slug) == token);
+            if (PantheonPlausible(s, player, move, view) is { } pantheon) return pantheon;
             switch (move.Kind)
             {
                 case MoveKind.Build:
@@ -418,8 +741,13 @@ public static class Reconciler
             }
         }
 
-        static int CardIndex(string? slug) => slug is not null && GameData.TryCardIndex(slug, out var i) ? i : -1;
-        static int WonderIndex(string? slug) => slug is not null && GameData.TryWonderIndex(slug, out var i) ? i : -1;
-        static int TokenIndex(string? slug) => slug is not null && GameData.TryTokenIndex(slug, out var i) ? i : -1;
+        // Pantheon's slugs (Grand Temples, its Wonders and tokens, Divinities) come only from a Pantheon game's view.
+        static int CardIndex(string? slug) => slug is null ? -1 : GameData.TryCardIndex(slug, out var i) ? i
+            : PantheonData.TryTempleIndex(slug, out var t) ? PantheonData.Temples[t].Card : -1;
+        static int WonderIndex(string? slug) => slug is null ? -1 : GameData.TryWonderIndex(slug, out var i) ? i
+            : PantheonData.TryWonderIndex(slug, out var w) ? w : -1;
+        static int TokenIndex(string? slug) => slug is null ? -1 : GameData.TryTokenIndex(slug, out var i) ? i
+            : PantheonData.TryTokenIndex(slug, out var t) ? t : -1;
+        static int DivinityIndex(string? slug) => slug is not null && PantheonData.TryDivinityIndex(slug, out var d) ? d : -1;
     }
 }

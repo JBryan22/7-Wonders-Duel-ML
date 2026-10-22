@@ -1,0 +1,77 @@
+7wd-log v1
+rules base start-choice=new promo=messe,liberty expansion=pantheon
+# advisor seat=P1
+reveal first P1
+reveal tokens agriculture masonry strategy theology poliorcetics
+reveal draft appian-way mausoleum statue-of-liberty sanctuary
+P1 draft statue-of-liberty
+P2 draft sanctuary
+P2 draft appian-way
+P1 draft mausoleum
+reveal draft hanging-gardens pyramids temple-of-artemis messe
+P2 draft hanging-gardens
+P1 draft pyramids
+P1 draft temple-of-artemis
+P2 draft messe
+reveal age1 0.0 logging-camp 0.1 apothecary 2.0 pharmacist 2.1 altar 2.2 stone-pit 2.3 palisade 4.0 clay-pool 4.1 wood-reserve 4.2 guard-tower 4.3 lumber-yard 4.4 baths 4.5 workshop
+reveal myth-tokens 1.0 greek 1.2 roman 3.0 greek 3.2 roman 3.4 mesopotamian
+P1 discard workshop
+P2 build lumber-yard
+P1 wonder guard-tower pyramids
+reveal 3.2 stone-reserve
+reveal P1 divinities roman minerva neptune
+P1 divinity minerva 5
+P2 wonder clay-pool hanging-gardens
+P2 build wood-reserve
+reveal 3.0 clay-pit 3.1 theater
+reveal P2 divinities greek ? ?
+P2 divinity ? 2
+P1 discard stone-reserve
+P2 build baths
+reveal 3.3 stable 3.4 glassworks
+reveal P2 divinities mesopotamian ? ?
+P2 divinity ? 1
+P1 build theater
+P2 discard altar
+P1 discard stable
+P2 discard glassworks
+P1 discard stone-pit
+reveal 1.1 press
+P2 discard clay-pit
+P1 discard palisade
+reveal 1.2 quarry
+reveal P1 divinities roman neptune mars
+P1 divinity neptune 3
+P2 wonder quarry sanctuary
+P2 build pharmacist
+reveal 1.0 garrison
+reveal P2 divinities greek ? ?
+P2 divinity ? 4
+P1 wonder garrison temple-of-artemis
+P1 discard press
+P2 discard apothecary
+P1 build logging-camp
+reveal age2 0.0 barracks 0.1 parade-ground 0.2 courthouse 0.3 brickyard 0.4 dispensary 0.5 temple 2.0 horse-breeders 2.1 drying-room 2.2 caravansery 2.3 customs-house 4.0 school 4.1 library
+reveal pantheon 1 ishtar 2 aphrodite 3 neptune 4 hades 5 minerva
+reveal offerings 1.0 offering-2 1.2 offering-4 1.4 offering-3
+P1 start opponent
+P2 activate gate
+reveal gate zeus tanit nisaba anubis mars
+P2 gate zeus
+P2 zeus 0.1
+P1 build school
+reveal 3.0 laboratory
+P2 discard library
+reveal 3.1 statue 3.2 glass-blower
+P1 activate minerva
+P1 minerva 8
+P2 activate hades
+P2 hades press
+P1 build statue
+P2 discard laboratory
+P1 discard glass-blower
+P2 discard horse-breeders
+reveal 1.0 shelf-quarry
+P1 activate ishtar
+P2 wonder shelf-quarry messe
+P2 messe dispensary

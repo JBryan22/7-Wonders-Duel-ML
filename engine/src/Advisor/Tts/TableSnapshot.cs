@@ -3,21 +3,32 @@ using System.Text.Json;
 namespace SevenWondersDuel.Advisor.Tts;
 
 /// <summary>What <c>tts/snapshot.lua</c> reports for one object on the table.</summary>
-public enum PieceKind { Card, Deck, Token, Pawn, Military, Coin, Bag }
+public enum PieceKind
+{
+    Card, Deck, Token, Pawn, Military, Coin, Bag,
+    /// <summary>Pantheon: a Mythology or Offering token (named by its face image: "greek", "offering-3").</summary>
+    PToken,
+    /// <summary>Pantheon: Nisaba's Snake.</summary>
+    Snake,
+    /// <summary>Pantheon: the Minerva pawn.</summary>
+    Minerva,
+}
 
 /// <summary>
 /// One piece of a <see cref="TableSnapshot"/>, exactly as the Lua reported it. <see cref="Name"/> and
 /// <see cref="Names"/> are present only for public pieces (the Lua filters hidden ones, see snapshot.lua).
 /// </summary>
-/// <param name="Back">Cards only: "age", "guild" or "wonder" (visible on either side).</param>
+/// <param name="Back">Cards: "age", "guild" or "wonder", and with Pantheon a Mythology ("greek"), "gate" or "temple" (visible
+/// on either side). Pantheon tokens: "mythology" or "offering".</param>
 /// <param name="Count">Decks and the Progress token bag: how many objects are inside.</param>
 /// <param name="Value">Coins (1, 3, 6) and looting tokens (2, 5).</param>
 /// <param name="Names">Decks in the discard pile only: every card's name.</param>
-/// <param name="InHand">The piece is in a player's hand (never named).</param>
+/// <param name="InHand">The piece is in a player's hand (never named, except <paramref name="Own"/>).</param>
+/// <param name="Own">Pantheon: a Divinity in the host's own hand (their private draw), named for them alone.</param>
 public sealed record TablePiece(
     PieceKind Kind, double X, double Y, double Z,
     bool FaceDown = false, bool Held = false, bool Moving = false, bool InHand = false,
-    string? Name = null, string? Back = null, int Count = 0, int Value = 0, IReadOnlyList<string>? Names = null);
+    string? Name = null, string? Back = null, int Count = 0, int Value = 0, IReadOnlyList<string>? Names = null, bool Own = false);
 
 /// <summary>A player seated at the TTS table.</summary>
 public sealed record TablePlayer(string Color, bool Host);
@@ -52,6 +63,10 @@ public sealed class TableSnapshot
     /// <summary>The host's seat colour, if the host is seated.</summary>
     public string? HostColor => Players.FirstOrDefault(p => p.Host)?.Color;
 
+    /// <summary>Pantheon pieces are on the table (a Divinity, the Gate, a Grand Temple, a Pantheon token, the Snake, Minerva).</summary>
+    public bool HasPantheonPieces => Pieces.Any(p => p.Kind is PieceKind.PToken or PieceKind.Snake or PieceKind.Minerva
+        || p.Kind == PieceKind.Card && p.Back is not ("age" or "guild" or "wonder"));
+
     /// <summary>Parses the JSON string snapshot.lua sends. Throws <see cref="FormatException"/> on anything else.</summary>
     public static TableSnapshot Parse(string text)
     {
@@ -85,6 +100,9 @@ public sealed class TableSnapshot
             "military" => PieceKind.Military,
             "coin" => PieceKind.Coin,
             "bag" => PieceKind.Bag,
+            "ptoken" => PieceKind.PToken,
+            "snake" => PieceKind.Snake,
+            "minerva" => PieceKind.Minerva,
             var other => throw new FormatException($"Unknown piece kind '{other}'"),
         };
         return new TablePiece(
@@ -95,7 +113,8 @@ public sealed class TableSnapshot
             Back: p.TryGetProperty("back", out var b) ? b.GetString() : null,
             Count: p.TryGetProperty("count", out var c) ? c.GetInt32() : 0,
             Value: p.TryGetProperty("value", out var val) ? val.GetInt32() : 0,
-            Names: p.TryGetProperty("names", out var ns) ? ns.EnumerateArray().Select(e => e.GetString() ?? "").ToList() : null);
+            Names: p.TryGetProperty("names", out var ns) ? ns.EnumerateArray().Select(e => e.GetString() ?? "").ToList() : null,
+            Own: Flag(p, "own"));
     }
 
     static double Hundredths(JsonElement p, string name) => p.GetProperty(name).GetInt64() / 100.0;

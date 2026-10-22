@@ -1,0 +1,551 @@
+{
+ "about": "The Pantheon pieces of the TTS mod '7 Wonders Duel [ULTIMATE ed.]' (Workshop 3368311210, 2024-12-15 version), extracted from the Workshop file (BSON) on 2026-10-22: every object in the mod's pantheonScriptingZone (what choosing Classic destroys), with contents. Image and back URLs are reduced to their hash (the last path segment), which survives TTS's URL rewriting. 'spawned' records what the Global script creates when Pantheon is chosen (SpawnPantheonBoard, the two Divinity boards, the Divinity area trigger), and 'battleTrack' the board the Pantheon board is placed from. Read by Advisor.Tests (TtsPantheonTests).",
+ "battleTrack": {
+  "x": -0.146,
+  "z": 20.2721
+ },
+ "spawned": {
+  "pantheonBoard": {
+   "offset": {
+    "x": 0.0825314,
+    "z": 6.486718
+   },
+   "scale": 5.463348,
+   "rotY": 180,
+   "snapPoints": [
+    [
+     4.36207438,
+     -0.234734237
+    ],
+    [
+     2.77592635,
+     -1.53814876
+    ],
+    [
+     0.8067601,
+     -1.94150424
+    ],
+    [
+     -0.7478836,
+     -1.94596529
+    ],
+    [
+     -2.702479,
+     -1.54155433
+    ],
+    [
+     -4.304508,
+     -0.246183842
+    ]
+   ]
+  },
+  "divinityArea": {
+   "offsetZ": 8.18,
+   "scaleX": 51.49,
+   "scaleZ": 16.5
+  },
+  "divinityBoards": {
+   "Red": {
+    "x": -22.44,
+    "z": -45.38
+   },
+   "White": {
+    "x": 22.44,
+    "z": -45.38
+   },
+   "scale": 5.6,
+   "snapPointsX": [
+    2.08,
+    0.69,
+    -0.7,
+    -2.09
+   ]
+  }
+ },
+ "objects": [
+  {
+   "guid": "057983",
+   "type": "Custom_Model",
+   "nickname": "Minerva Pawn",
+   "tags": [
+    "conflict pawn"
+   ],
+   "x": 53.01,
+   "y": 1.58,
+   "z": 21.92,
+   "rotY": 180,
+   "rotZ": 0
+  },
+  {
+   "guid": "0aeae3",
+   "type": "Bag",
+   "nickname": "Mythology Tokens",
+   "x": 59.47,
+   "y": 1.4,
+   "z": 23.83,
+   "rotY": 0,
+   "rotZ": 0,
+   "contents": [
+    {
+     "guid": "a664b7",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "5CAB141653A2AB079422FF5B093C66E6893D34E2",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "34e319",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "F5C7B7C5035A7B0D9869E470BAF4DD782D33979C",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "5e9ee5",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "7949677F03BCFFAD459CA28B36C36AED5CF5F16F",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "13d909",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "03A1BE7079430581E3205012646488C65361C85B",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "ade44f",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "7949677F03BCFFAD459CA28B36C36AED5CF5F16F",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "a96d82",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "55D0232A78F554A55E3FDFC4ED0135D58ECB2A6F",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "6342cc",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "03A1BE7079430581E3205012646488C65361C85B",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "c5b354",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "5CAB141653A2AB079422FF5B093C66E6893D34E2",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "b01dff",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "55D0232A78F554A55E3FDFC4ED0135D58ECB2A6F",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    },
+    {
+     "guid": "c994b0",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "F5C7B7C5035A7B0D9869E470BAF4DD782D33979C",
+     "imageBottom": "95E6951172008FA5454522C5CE2F82486365EFBC"
+    }
+   ]
+  },
+  {
+   "guid": "16b1d7",
+   "type": "Custom_Token",
+   "nickname": "Snake Token",
+   "x": 53.04,
+   "y": 1.63,
+   "z": 19.31,
+   "rotY": 180,
+   "rotZ": 0,
+   "image": "EE0841FAD13183025057DAA3939F1189D744B511"
+  },
+  {
+   "guid": "227c33",
+   "type": "Deck",
+   "nickname": "",
+   "x": 57.92,
+   "y": 1.6,
+   "z": 28.21,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "A2A1DFC46B6247F07C06699222039DF5B0A267D8",
+   "contents": [
+    {
+     "guid": "78e279",
+     "type": "Card",
+     "nickname": "The Sanctuary",
+     "tags": [
+      "wonder"
+     ],
+     "back": "A2A1DFC46B6247F07C06699222039DF5B0A267D8"
+    },
+    {
+     "guid": "3cc806",
+     "type": "Card",
+     "nickname": "The Divine Theater",
+     "tags": [
+      "wonder"
+     ],
+     "back": "A2A1DFC46B6247F07C06699222039DF5B0A267D8"
+    }
+   ]
+  },
+  {
+   "guid": "373f7e",
+   "type": "Deck",
+   "nickname": "",
+   "x": 81.03,
+   "y": 1.66,
+   "z": 10.2,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "DD0C7A25C266BD5FE7ADB26649699B803932B5D6",
+   "contents": [
+    {
+     "guid": "f96943",
+     "type": "Card",
+     "nickname": "Neptune",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "DD0C7A25C266BD5FE7ADB26649699B803932B5D6"
+    },
+    {
+     "guid": "3240a4",
+     "type": "Card",
+     "nickname": "Minerva",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "DD0C7A25C266BD5FE7ADB26649699B803932B5D6"
+    },
+    {
+     "guid": "a3c11b",
+     "type": "Card",
+     "nickname": "Mars",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "DD0C7A25C266BD5FE7ADB26649699B803932B5D6"
+    }
+   ]
+  },
+  {
+   "guid": "499704",
+   "type": "Bag",
+   "nickname": "Offering Tokens",
+   "x": 56.05,
+   "y": 1.39,
+   "z": 23.81,
+   "rotY": 0,
+   "rotZ": 0,
+   "contents": [
+    {
+     "guid": "dcab44",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "DDBCC8136F5B2DACF6938BA9EDE7F0879429BB9A",
+     "imageBottom": "9154FCF5C1C3D221C0CBEF1BF1634C9B3509F30F"
+    },
+    {
+     "guid": "7a9d47",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "ED4724991C09A2CD0E1FAB2188606C82120FED23",
+     "imageBottom": "9154FCF5C1C3D221C0CBEF1BF1634C9B3509F30F"
+    },
+    {
+     "guid": "208598",
+     "type": "Custom_Tile",
+     "nickname": "",
+     "image": "6FB56EEB0A0454ABAADEF8F128D10298690EA984",
+     "imageBottom": "9154FCF5C1C3D221C0CBEF1BF1634C9B3509F30F"
+    }
+   ]
+  },
+  {
+   "guid": "642b7c",
+   "type": "Custom_Model",
+   "nickname": "Mysticism",
+   "tags": [
+    "progress token"
+   ],
+   "x": 65.27,
+   "y": 1.69,
+   "z": 19.9,
+   "rotY": 180,
+   "rotZ": 0
+  },
+  {
+   "guid": "6cfbb8",
+   "type": "Deck",
+   "nickname": "",
+   "x": 66.02,
+   "y": 1.65,
+   "z": 10.19,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "6E47409EDB675C7B7D7446F9EE9B3BBA8EF9C330",
+   "contents": [
+    {
+     "guid": "08391e",
+     "type": "Card",
+     "nickname": "Enki",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "6E47409EDB675C7B7D7446F9EE9B3BBA8EF9C330"
+    },
+    {
+     "guid": "9c1b22",
+     "type": "Card",
+     "nickname": "Nisaba",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "6E47409EDB675C7B7D7446F9EE9B3BBA8EF9C330"
+    },
+    {
+     "guid": "6b1426",
+     "type": "Card",
+     "nickname": "Ishtar",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "6E47409EDB675C7B7D7446F9EE9B3BBA8EF9C330"
+    }
+   ]
+  },
+  {
+   "guid": "b1fb55",
+   "type": "Custom_Model",
+   "nickname": "Poliorcetics",
+   "tags": [
+    "progress token"
+   ],
+   "x": 61.04,
+   "y": 1.68,
+   "z": 19.92,
+   "rotY": 180,
+   "rotZ": 0
+  },
+  {
+   "guid": "b849b1",
+   "type": "Deck",
+   "nickname": "",
+   "tags": [
+    "rotate flip"
+   ],
+   "x": 51.0,
+   "y": 1.63,
+   "z": 10.2,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "83A079A5B9ED93B6877B9D283F10EA0C8F97A8BC",
+   "contents": [
+    {
+     "guid": "cce79e",
+     "type": "Card",
+     "nickname": "Hades",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "83A079A5B9ED93B6877B9D283F10EA0C8F97A8BC"
+    },
+    {
+     "guid": "36aacc",
+     "type": "Card",
+     "nickname": "Zeus",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "83A079A5B9ED93B6877B9D283F10EA0C8F97A8BC"
+    },
+    {
+     "guid": "7e7517",
+     "type": "Card",
+     "nickname": "Aphrodite",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "83A079A5B9ED93B6877B9D283F10EA0C8F97A8BC"
+    }
+   ]
+  },
+  {
+   "guid": "b8e406",
+   "type": "Deck",
+   "nickname": "",
+   "x": 73.51,
+   "y": 1.66,
+   "z": 10.2,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "76DAC5861321439505CAE3A9A2A15DA37604E670",
+   "contents": [
+    {
+     "guid": "1e05af",
+     "type": "Card",
+     "nickname": "Anubis",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "76DAC5861321439505CAE3A9A2A15DA37604E670"
+    },
+    {
+     "guid": "e62224",
+     "type": "Card",
+     "nickname": "Isis",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "76DAC5861321439505CAE3A9A2A15DA37604E670"
+    },
+    {
+     "guid": "fed203",
+     "type": "Card",
+     "nickname": "Ra",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "76DAC5861321439505CAE3A9A2A15DA37604E670"
+    }
+   ]
+  },
+  {
+   "guid": "d4ed20",
+   "type": "Deck",
+   "nickname": "",
+   "x": 49.25,
+   "y": 1.62,
+   "z": 20.2,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F",
+   "contents": [
+    {
+     "guid": "817513",
+     "type": "Card",
+     "nickname": "Mesopotamian Grand Temple",
+     "tags": [
+      "purple"
+     ],
+     "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F"
+    },
+    {
+     "guid": "8c56e1",
+     "type": "Card",
+     "nickname": "Roman Grand Temple",
+     "tags": [
+      "purple"
+     ],
+     "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F"
+    },
+    {
+     "guid": "4f0639",
+     "type": "Card",
+     "nickname": "Greek Grand Temple",
+     "tags": [
+      "purple"
+     ],
+     "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F"
+    },
+    {
+     "guid": "0476fc",
+     "type": "Card",
+     "nickname": "Phoenician Grand Temple",
+     "tags": [
+      "purple"
+     ],
+     "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F"
+    },
+    {
+     "guid": "3d4a71",
+     "type": "Card",
+     "nickname": "Egyptian Grand Temple",
+     "tags": [
+      "purple"
+     ],
+     "back": "F8810B71E3D3B8CF2DF4F6AC4A4367DE6978BC6F"
+    }
+   ]
+  },
+  {
+   "guid": "d74054",
+   "type": "CardCustom",
+   "nickname": "The Gate",
+   "tags": [
+    "rotate flip"
+   ],
+   "x": 51.0,
+   "y": 1.63,
+   "z": -3.81,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "CA8C742282BCDE6987CA237BEE24016AFAFB8A2D"
+  },
+  {
+   "guid": "e1c5d3",
+   "type": "Custom_Model",
+   "nickname": "Engineering",
+   "tags": [
+    "progress token"
+   ],
+   "x": 56.84,
+   "y": 1.68,
+   "z": 19.98,
+   "rotY": 180,
+   "rotZ": 0
+  },
+  {
+   "guid": "e2643a",
+   "type": "Deck",
+   "nickname": "",
+   "x": 58.51,
+   "y": 1.64,
+   "z": 10.2,
+   "rotY": 180,
+   "rotZ": 180,
+   "back": "53CCD0219B8DE293E597592030B1E40DA1ADE422",
+   "contents": [
+    {
+     "guid": "833cbe",
+     "type": "Card",
+     "nickname": "Tanit",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "53CCD0219B8DE293E597592030B1E40DA1ADE422"
+    },
+    {
+     "guid": "c0ff28",
+     "type": "Card",
+     "nickname": "Astarte",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "53CCD0219B8DE293E597592030B1E40DA1ADE422"
+    },
+    {
+     "guid": "b18dda",
+     "type": "Card",
+     "nickname": "Baal",
+     "tags": [
+      "rotate flip"
+     ],
+     "back": "53CCD0219B8DE293E597592030B1E40DA1ADE422"
+    }
+   ]
+  }
+ ]
+}

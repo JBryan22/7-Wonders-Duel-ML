@@ -21,11 +21,21 @@
 --   * no GUIDs are reported: the mod file fixes each card's GUID, so a GUID would name a face-down card.
 -- Face-down cards still report their back ("age", "guild" or "wonder"), which every player can see.
 --
+-- PANTHEON (spec-pantheon P-A9; nothing below changes what a base-game table reports, which has none of these pieces):
+--   * a Divinity card or the Gate reports its back (its Mythology, or "gate") and a Grand Temple "temple": the backs
+--     differ, so this is public; the name follows the rules above;
+--   * a Divinity in the HOST's hand (the owner's private zone: their own draw, or a deck their Divine Theater looks
+--     through) is named, marked "own"; nothing in any other hand is ever named (the opponent's draws stay hidden);
+--   * Mythology and Offering tokens have no TTS name: one is reported as kind "ptoken", named by its face image (only
+--     face up and not in a hand); the Snake and the Minerva pawn are kinds of their own.
+-- The PANTHEON table (names to backs, token images) is filled in from tts/names.json when the script is sent.
+--
 -- Coordinates are sent as integer hundredths ("x":-5065 is -50.65) so the text never depends on the PC's locale.
 -- Pieces are sorted, so two snapshots of an unchanged table are identical strings (settled-table detection).
 
 do
   local REQUEST = "@REQUEST@"
+  local PANTHEON = @PANTHEON@
 
   -- The discard pile: one face-down deck on a locked tile at about (-50.6, 2.3). Same rectangle as tts/places.json.
   local DISCARD = { x1 = -54, x2 = -47, z1 = -1.2, z2 = 5.8 }
@@ -65,12 +75,25 @@ do
     return ok and r == true
   end
 
+  -- A nameless Pantheon token's identity from its face image (the URL's last segment), or nil.
+  local function pantheonToken(o)
+    local ok, custom = pcall(function() return o.getCustomObject() end)
+    if not ok or type(custom) ~= "table" or type(custom.image) ~= "string" then return nil end
+    local hash = string.match(custom.image, "(%x+)/?$")
+    if hash == nil then return nil end
+    return PANTHEON.tokens[string.upper(hash)]
+  end
+
   local function main()
+    local host = nil
+    for _, pl in ipairs(Player.getPlayers()) do
+      if pl.host == true then host = pl.color end
+    end
     local inHand = {}
     for _, color in ipairs(HAND_COLORS) do
       local ok, objects = pcall(function() return Player[color].getHandObjects() end)
       if ok and type(objects) == "table" then
-        for _, o in ipairs(objects) do inHand[o.getGUID()] = true end
+        for _, o in ipairs(objects) do inHand[o.getGUID()] = color end
       end
     end
 
@@ -84,6 +107,8 @@ do
         if not hasTag(o, "color card") then kind = "card" end
       elseif objectType == "Deck" then
         kind = "deck"
+      elseif PANTHEON.pieces[name] then
+        kind = PANTHEON.pieces[name]
       elseif hasTag(o, "progress token") then
         kind = "token"
       elseif hasTag(o, "conflict pawn") then
@@ -98,6 +123,9 @@ do
         if gold then
           kind = "coin"
           value = tonumber(gold)
+        elseif name == "" then
+          value = pantheonToken(o)
+          if value then kind = "ptoken" end
         end
       end
 
@@ -112,10 +140,19 @@ do
         if not public then table.insert(f, '"hand":true') end
 
         if kind == "card" then
-          local back = "age"
-          if hasTag(o, "wonder") then back = "wonder" elseif hasTag(o, "purple") then back = "guild" end
+          local back = PANTHEON.backs[name]
+          local pantheon = back ~= nil
+          if not pantheon then
+            back = "age"
+            if hasTag(o, "wonder") then back = "wonder" elseif hasTag(o, "purple") then back = "guild" end
+          end
           table.insert(f, '"back":' .. str(back))
-          if public and (not down or inRect(p, DISCARD)) then table.insert(f, '"name":' .. str(name)) end
+          if public and (not down or inRect(p, DISCARD)) then
+            table.insert(f, '"name":' .. str(name))
+          elseif pantheon and back ~= "temple" and host ~= nil and inHand[o.getGUID()] == host then
+            table.insert(f, '"name":' .. str(name))
+            table.insert(f, '"own":true')
+          end
         elseif kind == "deck" then
           local contents = o.getObjects() or {}
           table.insert(f, '"count":' .. #contents)
@@ -126,6 +163,11 @@ do
           end
         elseif kind == "token" then
           if public and not down and not inLibrary(p) then table.insert(f, '"name":' .. str(name)) end
+        elseif kind == "ptoken" then
+          local back = "mythology"
+          if string.sub(value, 1, 9) == "offering-" then back = "offering" end
+          table.insert(f, '"back":' .. str(back))
+          if public and not down then table.insert(f, '"name":' .. str(value)) end
         elseif kind == "bag" then
           table.insert(f, '"count":' .. #(o.getObjects() or {}))
         elseif value then

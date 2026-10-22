@@ -1,4 +1,4 @@
-# Live checks in Tabletop Simulator (tickets 32, 33 and 34)
+# Live checks in Tabletop Simulator (tickets 32, 33 and 34; Pantheon: Part D, ticket 14)
 
 Everything the Tabletop Simulator Adapter does is tested automatically with fake tables, but only a real TTS table
 can confirm it works with the real mod. This is one session of about 40 minutes on the Windows desktop that covers
@@ -70,3 +70,70 @@ all three tickets, in order. You will move both players' pieces yourself; single
   (it says DIFFERENT, which is expected for a game other than the practice save) and leave the files it saves:
   `runs\tts-live-snapshot.json`, plus the Move Log at `%LOCALAPPDATA%\7wd\advisor\current.log`. Restart the Advisor
   with `tools\advisor.cmd` afterwards; it resumes the game.
+
+## Part D: Pantheon (Pantheon ticket 14, about 45 minutes)
+
+The Advisor now follows a Pantheon game from the table (Pantheon ticket 13). Everything was tested on fake tables built
+from the mod's own file, but a few things can only be confirmed at the real table: where the mod really puts the Pantheon
+board's spaces, that TTS reports the Mythology and Offering tokens' pictures the way the Advisor expects, what your own
+hand shows, and how you naturally handle the Divinities. You play both sides; take your time, there is no clock.
+
+**How to look at the table:** close the Advisor's console window, double-click `tools\tts-check.cmd`. It says
+DIFFERENT (it compares with the practice save; that's expected) and lists every piece by place, for example
+`pantheon space 3 (from the left): face-down greek card`, `pyramid 1.0 token: roman`, `divinities White: zeus`,
+`tokens Red: offering-3`, `hand: zeus`. It also saves the table to `runs\tts-live-snapshot.json`. Restart the Advisor with
+`tools\advisor.cmd` afterwards (it resumes the game).
+
+19. **Setup.** In TTS load the mod as a new game and choose **Pantheon** in its version panel. Sit at **White**. In the
+    Advisor click **New game**, tick **Pantheon**, seat P1, Start, and tick **Follow the TTS table**. Expected: "Connected",
+    then the usual first-player buttons once you deal the Wonders. Draft as usual (the Sanctuary and the Divine Theater
+    are in the Wonder pile now).
+20. **Age I and the Mythology tokens.** Press the mod's **Age I Setup**. Expected: the Move Log gets the Age I cards and a
+    `reveal myth-tokens 1.0 … 3.4 …` line naming the 5 tokens the mod laid on the structure. Run `tts-check` once now and
+    note whether the 5 tokens show as `pyramid 1.0 token: …`, `pyramid 1.2 …`, `pyramid 3.0 …`, `pyramid 3.2 …`,
+    `pyramid 3.4 …` with the right Mythology (Greek torch, Phoenician ship, Mesopotamian winged bull, Egyptian ankh,
+    Roman eagle). If a token shows as `loose: …` or not at all, note where it lies.
+21. **Your own draw.** Play until **you (White)** uncover a card with a Mythology token. Move the token into your area
+    (next to your city, as with Progress tokens), then drag the **top 2 cards** of that Mythology's deck (on the right of
+    the table) into **your hand**. Expected: `reveal P1 divinities <mythology> <card> <card>` appears by itself. Then put
+    one **face down** on an empty space of the Pantheon board and the other back **face down on top of its deck**.
+    Expected: `P1 divinity <card> <space>` (if both cards left your hand at once, the Advisor offers two buttons: click
+    the card you placed).
+22. **The opponent's draw.** Do the same for Red, but drag Red's 2 cards into **Red's hand** (the hand area on the left;
+    you can do this from your seat). Expected: the log says `reveal P2 divinities <mythology> ? ?`, and after you place one
+    face down, `P2 divinity ? <space>`: the Advisor never names Red's cards. Run `tts-check` while the 2 cards are in
+    Red's hand: they must show as `hand: …` **without** a card name. Note any card name you see there.
+23. **The spaces.** Before Age II, check with `tts-check` that each placed card shows as
+    `pantheon space N (from the left): face-down <mythology> card` with N counting from Red's end, and that space numbers
+    in the Advisor's Pantheon panel match (the panel counts from P1's capital: with you as P1 at White, its space 1 is
+    the rightmost). Note any card that shows as `loose` or `storage` instead.
+24. **Age II.** Put the Gate face up on the empty space and press **Age II Setup** (it turns the Divinities face up and
+    deals the Offering tokens). Expected: `reveal pantheon …` and `reveal offerings 1.0 … 1.2 … 1.4 …` lines, plus
+    `reveal enki …` if Enki is in the Pantheon (the mod lays its 2 Progress tokens on Enki by itself).
+25. **Activating.** For each player, activate a few Divinities: pay, and move the card to that player's **Divinity board**
+    (the long board below your city, with 4 card spots). Expected: `activate <divinity>` (and `offer …` when Offering tokens
+    were spent: put a spent token back in the box area on the far left, or in the Offering bag, not on the table).
+    Then do the effect on the table as you naturally would and note what the Advisor enters:
+    - **Baal** (move one of Red's brown/grey cards into your city), **Hades** (a discarded card into your city),
+      **Isis** (a discarded card tucked under one of your Wonders), **Anubis** (a built Wonder's card back to the discard
+      pile), **Ra** (one of Red's unbuilt Wonders into your 5th Wonder spot, above your row 1), **Zeus** (a card of the
+      structure to the discard pile), **Enki** (keep one of its 2 tokens in your area, the other back in the bag),
+      **Nisaba** (put the Snake on one of Red's green cards), **Minerva** (put her pawn on a Military track space),
+      **Neptune** (remove 2 Military tokens from the board), **the Gate** (lay the top card of each deck face up next to
+      its deck, then move the one you choose to your Divinity board and put the others back face down).
+    - Expected: each is entered by itself, or as buttons when the table can be read two ways (Neptune: which token was
+      discarded and which applied; Minerva: if she stands between two spaces). Note anything entered wrongly or not at all.
+26. **The Divine Theater** (if a player builds it): take the whole deck you choose into **your hand**. Expected:
+    `theater-deck …` and `reveal P1 theater …`. Put the card you choose on your Divinity board and the 2 others back on the
+    deck: the Advisor offers two buttons for which went on top (the table can't show it). Click the right one.
+27. **Age III.** Press **Age III Setup**. Expected: `reveal temples …` naming the 3 slots with the **Grand Temple backs**;
+    `tts-check` shows them as `face-down temple card`.
+28. **Coins.** Astarte's coins (lying on Astarte) must not be counted as treasury: after activating Astarte, the
+    "Soft checks" box must not complain about coins because of them.
+
+**What to send Claude for Part D:** for each step 19–28, as expected or what you saw instead, plus the `tts-check` listings
+from steps 20, 22 and 23 (copy the console text, or leave `runs\tts-live-snapshot.json`), and the Move Log
+(`%LOCALAPPDATA%\7wd\advisor\current.log`). The positions most likely to need a correction are the Pantheon spaces (step
+23), the tokens on the structure (step 20) and the Divinity boards (step 25): they were computed from the mod file, not
+measured on a live table.
+

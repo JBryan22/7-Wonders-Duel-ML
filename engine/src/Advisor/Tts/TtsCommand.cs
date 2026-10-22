@@ -76,14 +76,16 @@ public static class TtsCommand
             }
             if (save is not null) File.WriteAllText(save, lastText);
 
-            var view = TableView.From(last!, age);
+            // A table with Pantheon pieces on it is read with them (a base table has none, so it reads as before).
+            var pantheon = last!.HasPantheonPieces;
+            var view = TableView.From(last!, age, pantheon);
             output.WriteLine();
             output.WriteLine($"Mod Age: {last!.ModAge}; pyramid grid: {(view.Age is { } a ? $"Age {a}" : "none")}");
             output.WriteLine($"Seated: {(last.Players.Count == 0 ? "nobody" : string.Join(", ", last.Players.Select(p => p.Color + (p.Host ? " (host)" : ""))))}");
             foreach (var fact in view.Facts()) output.WriteLine($"  {fact}");
 
             if (expected is null) return 0;
-            var diffs = TableView.Compare(TableView.From(expected, age).Facts(), view.Facts());
+            var diffs = TableView.Compare(TableView.From(expected, age, pantheon).Facts(), view.Facts());
             output.WriteLine();
             if (diffs.Count == 0)
             {

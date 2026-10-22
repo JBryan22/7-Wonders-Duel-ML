@@ -417,14 +417,20 @@ public sealed class AdvisorSession
     /// entered by hand their Divinity draw ("reveal P2 divinities greek ? ?") or their Divine Theater ("reveal P2 theater
     /// greek ? ? ?"). Against the AI the Pantheon ones are dealt from the true game instead (<see cref="Deal"/>).
     /// </summary>
-    LogEntry? HiddenRevealDue(GameState s)
+    LogEntry? HiddenRevealDue(GameState s) => HiddenRevealDue(s, Seat, Ai is not null);
+
+    /// <summary>
+    /// The opponent's private Reveal that a log kept by <paramref name="seat"/> records by itself, redacted (the TTS
+    /// Adapter's chains follow the same rule: it is never on the table).
+    /// </summary>
+    internal static LogEntry? HiddenRevealDue(GameState s, int seat, bool againstAi)
     {
-        if (s.AwaitingLibraryDraw && s.PlayerToDecide != Seat) return LibraryReveal.Hidden(s.PlayerToDecide);
-        if (Ai is not null || s.Pantheon is not { } p) return null;
+        if (s.AwaitingLibraryDraw && s.PlayerToDecide != seat) return LibraryReveal.Hidden(s.PlayerToDecide);
+        if (againstAi || s.Pantheon is not { } p) return null;
         // Only once no other Pantheon Reveal comes first (the Engine's order: Zeus, the Gate, the Theater, setup, the draw).
         if (p.AwaitingZeusDiscard || p.AwaitingGateReveal || s.PendingCount == 0) return null;
         var d = s.Pending(0);
-        if (d.Player == Seat) return null;
+        if (d.Player == seat) return null;
         if (p.AwaitingTheaterReveal) return TheaterReveal.Hidden(d.Player, p.TheaterDeck, p.DeckSize(p.TheaterDeck));
         if (p.AwaitingMythologyTokens || p.AwaitingPantheon || p.AwaitingOfferings || p.AwaitingEnki) return null;
         if (d.Kind == DecisionKind.PlaceDivinity && !p.HasDraw)

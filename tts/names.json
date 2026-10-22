@@ -105,5 +105,60 @@
     "Strategy": "strategy",
     "Theology": "theology",
     "Urbanism": "urbanism"
+  },
+  "pantheon": {
+    "about": "Pantheon (spec-pantheon P-A9), read only in Pantheon games. Names from the mod file's Pantheon pieces (tts/fixtures/pantheon-pieces.json). Divinity cards and the Gate: the back each shows is public (one per Mythology, the Gate's own), so snapshot.lua reports it from the name; a face-down card's name never leaves TTS. The Mythology and Offering tokens have no TTS name: they are told apart by their face image (the hash at the end of the image URL), mapped in tokenImages. Pieces with no slug that are never game input are listed in 'unknown'.",
+    "divinities": {
+      "Aphrodite": "aphrodite",
+      "Hades": "hades",
+      "Zeus": "zeus",
+      "Astarte": "astarte",
+      "Baal": "baal",
+      "Tanit": "tanit",
+      "Enki": "enki",
+      "Ishtar": "ishtar",
+      "Nisaba": "nisaba",
+      "Anubis": "anubis",
+      "Isis": "isis",
+      "Ra": "ra",
+      "Mars": "mars",
+      "Minerva": "minerva",
+      "Neptune": "neptune",
+      "The Gate": "gate"
+    },
+    "temples": {
+      "Greek Grand Temple": "greek-grand-temple",
+      "Phoenician Grand Temple": "phoenician-grand-temple",
+      "Mesopotamian Grand Temple": "mesopotamian-grand-temple",
+      "Egyptian Grand Temple": "egyptian-grand-temple",
+      "Roman Grand Temple": "roman-grand-temple"
+    },
+    "wonders": {
+      "The Sanctuary": "sanctuary",
+      "The Divine Theater": "divine-theater"
+    },
+    "tokens": {
+      "Mysticism": "mysticism",
+      "Poliorcetics": "poliorcetics",
+      "Engineering": "engineering"
+    },
+    "tokenImages": {
+      "03A1BE7079430581E3205012646488C65361C85B": "greek",
+      "5CAB141653A2AB079422FF5B093C66E6893D34E2": "phoenician",
+      "55D0232A78F554A55E3FDFC4ED0135D58ECB2A6F": "mesopotamian",
+      "F5C7B7C5035A7B0D9869E470BAF4DD782D33979C": "egyptian",
+      "7949677F03BCFFAD459CA28B36C36AED5CF5F16F": "roman",
+      "6FB56EEB0A0454ABAADEF8F128D10298690EA984": "offering-2",
+      "DDBCC8136F5B2DACF6938BA9EDE7F0879429BB9A": "offering-3",
+      "ED4724991C09A2CD0E1FAB2188606C82120FED23": "offering-4"
+    },
+    "pieces": {
+      "Snake Token": "snake",
+      "Minerva Pawn": "minerva"
+    },
+    "unknown": [
+      "Mythology Tokens",
+      "Offering Tokens"
+    ]
   }
 }

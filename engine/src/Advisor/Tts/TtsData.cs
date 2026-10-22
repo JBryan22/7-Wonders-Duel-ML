@@ -23,6 +23,8 @@ public static class TtsData
 {
     /// <summary>The placeholder in snapshot.lua replaced by each request's id.</summary>
     public const string RequestPlaceholder = "@REQUEST@";
+    /// <summary>The placeholder in snapshot.lua replaced by the Pantheon table (<see cref="PantheonLua"/>).</summary>
+    public const string PantheonPlaceholder = "@PANTHEON@";
 
     /// <summary>tts/snapshot.lua as committed.</summary>
     public static string SnapshotScript { get; } = Text("snapshot.lua");
@@ -32,7 +34,29 @@ public static class TtsData
     {
         if (request.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
             throw new ArgumentException("A request id is letters, digits and '-'", nameof(request));
-        return SnapshotScript.Replace(RequestPlaceholder, request, StringComparison.Ordinal);
+        return SnapshotScript.Replace(RequestPlaceholder, request, StringComparison.Ordinal)
+            .Replace(PantheonPlaceholder, PantheonLua, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The Lua table snapshot.lua reads Pantheon pieces with, built from tts/names.json: each Divinity card's back (its
+    /// Mythology, or "gate") and each Grand Temple's ("temple"), the Mythology and Offering tokens by face image, and the
+    /// Snake and Minerva pieces.
+    /// </summary>
+    public static string PantheonLua => LazyPantheonLua.Value;
+
+    static readonly Lazy<string> LazyPantheonLua = new(BuildPantheonLua);
+
+    static string BuildPantheonLua()
+    {
+        static string Lua(string s) => "\"" + s.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+        static string Table(IEnumerable<KeyValuePair<string, string>> pairs) =>
+            "{ " + string.Join(", ", pairs.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"[{Lua(p.Key)}] = {Lua(p.Value)}")) + " }";
+        var p = Names.Pantheon;
+        var backs = p.Divinities.Select(d => KeyValuePair.Create(d.Key,
+                PantheonData.Divinities[PantheonData.DivinityIndex(d.Value)].Mythology is { } m ? PantheonData.MythologyDef(m).Id : "gate"))
+            .Concat(p.Temples.Select(t => KeyValuePair.Create(t.Key, "temple")));
+        return $"{{ backs = {Table(backs)}, tokens = {Table(p.TokenImages)}, pieces = {Table(p.Pieces)} }}";
     }
 
     public static TtsNames Names { get; } = new(JsonNode.Parse(Text("names.json"))!);
@@ -62,7 +86,11 @@ public sealed class TtsNames
         _cards = Table(json, "cards");
         _wonders = Table(json, "wonders");
         _tokens = Table(json, "tokens");
+        Pantheon = new PantheonNames(json["pantheon"]!);
     }
+
+    /// <summary>The Pantheon pieces' names (read only in Pantheon games).</summary>
+    public PantheonNames Pantheon { get; }
 
     public IReadOnlyDictionary<string, string> Cards => _cards;
     public IReadOnlyDictionary<string, string> Wonders => _wonders;
@@ -72,8 +100,38 @@ public sealed class TtsNames
     public string? Wonder(string name) => _wonders.GetValueOrDefault(name);
     public string? Token(string name) => _tokens.GetValueOrDefault(name);
 
-    static Dictionary<string, string> Table(JsonNode json, string key) =>
+    internal static Dictionary<string, string> Table(JsonNode json, string key) =>
         json[key]!.AsObject().ToDictionary(p => p.Key, p => (string)p.Value!, StringComparer.Ordinal);
+}
+
+/// <summary>
+/// tts/names.json's "pantheon" part: Divinities (and the Gate), Grand Temples, the 2 Wonders and 3 Progress tokens by
+/// TTS name; the Mythology and Offering tokens by face image hash (they have no TTS name); the Snake and the Minerva
+/// pawn; and the Pantheon objects that are never game input (<see cref="Unknown"/>).
+/// </summary>
+public sealed class PantheonNames
+{
+    internal PantheonNames(JsonNode json)
+    {
+        Divinities = TtsNames.Table(json, "divinities");
+        Temples = TtsNames.Table(json, "temples");
+        Wonders = TtsNames.Table(json, "wonders");
+        Tokens = TtsNames.Table(json, "tokens");
+        TokenImages = TtsNames.Table(json, "tokenImages");
+        Pieces = TtsNames.Table(json, "pieces");
+        Unknown = json["unknown"]!.AsArray().Select(n => (string)n!).ToList();
+    }
+
+    public IReadOnlyDictionary<string, string> Divinities { get; }
+    public IReadOnlyDictionary<string, string> Temples { get; }
+    public IReadOnlyDictionary<string, string> Wonders { get; }
+    public IReadOnlyDictionary<string, string> Tokens { get; }
+    /// <summary>Face image hash (upper case) → a Mythology slug ("greek") or an Offering token slug ("offering-3").</summary>
+    public IReadOnlyDictionary<string, string> TokenImages { get; }
+    /// <summary>"Snake Token" → "snake", "Minerva Pawn" → "minerva" (the snapshot's piece kinds).</summary>
+    public IReadOnlyDictionary<string, string> Pieces { get; }
+    /// <summary>Pantheon objects with no slug that are never game input (the token bags).</summary>
+    public IReadOnlyList<string> Unknown { get; }
 }
 
 /// <summary>tts/places.json: where things sit on the mod's table (see the file for the measurements).</summary>
@@ -106,6 +164,15 @@ public sealed class TablePlaces
             .Select(t => new LootingHome(Enum.Parse<Side>((string)t!["side"]!), (int)t["value"]!, new TablePoint((double)t["x"]!, (double)t["z"]!)))
             .ToArray();
         LootingSnap = (double)json["military"]!["snap"]!;
+        var pantheon = json["pantheon"]!;
+        PantheonSpaces = pantheon["spaces"]!.AsArray().Select(s => new TablePoint((double)s!["x"]!, (double)s["z"]!)).ToArray();
+        PantheonSpaceSnap = (double)pantheon["spaceSnap"]!;
+        PantheonArea = TableRect.From(pantheon["area"]!);
+        Activated = BySide(pantheon["activated"]!, TableRect.From);
+        RaRow = (double)pantheon["raRow"]!;
+        SlotTokenOffsetZ = (double)pantheon["tokenOffsetZ"]!;
+        SlotTokenSnap = (double)pantheon["tokenSnap"]!;
+        MinervaTrack = TableRect.From(pantheon["track"]!);
     }
 
     public double PyramidXStep { get; }
@@ -130,6 +197,22 @@ public sealed class TablePlaces
     public double TrackStep { get; }
     public IReadOnlyList<LootingHome> Looting { get; }
     public double LootingSnap { get; }
+
+    // Pantheon (placed only in Pantheon games)
+    /// <summary>The 6 Pantheon spaces, left (Red's end) to right.</summary>
+    public IReadOnlyList<TablePoint> PantheonSpaces { get; }
+    public double PantheonSpaceSnap { get; }
+    /// <summary>The Pantheon board (the mod's Divinity area): Enki's Progress tokens, the Snake and Minerva before use.</summary>
+    public TableRect PantheonArea { get; }
+    /// <summary>Each player's Divinity board: their activated Divinities (and the Gate).</summary>
+    public IReadOnlyDictionary<Side, TableRect> Activated { get; }
+    /// <summary>z of the 5th Wonder row (a Wonder stolen with Ra).</summary>
+    public double RaRow { get; }
+    /// <summary>How far above its card's centre a Mythology or Offering token lies on the structure.</summary>
+    public double SlotTokenOffsetZ { get; }
+    public double SlotTokenSnap { get; }
+    /// <summary>Where the Minerva pawn stands when on the Military track.</summary>
+    public TableRect MinervaTrack { get; }
 
     /// <summary>The x of an Age card tucked under a Wonder of this side (about 3 units inwards of the column).</summary>
     public double TuckX(Side side) => WonderX[side] + (side == Side.Red ? WonderTuckInwards : -WonderTuckInwards);
