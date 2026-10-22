@@ -29,6 +29,11 @@ new Run). Layout:
                            `7wd selfplay-check` or `7wd shard` on it)
     matches/gen-NNNN-vs-*/ Generation N's Matches (match.jsonl, summary.json)
 
+A Run with `expansion: pantheon` plays every Self-Play game and every Match with that expansion (7wd --expansion), on
+Encoding v2 (its manifest data/encoding/v2.json); its Elo column and Anchor are on the Pantheon scale. It starts from a
+surgery copy of a base network (config `init`; spec-pantheon P-A8): `uv run sevenwd-train surgery <base Run>/net/
+gen-NNNN.onnx --out <file>` operates on any Generation's network, e.g. the base Run's best (best.json).
+
 A Run with `init_from` (a warm start from a parent Run, e.g. the main Run from pilot 1) starts with the parent's
 training checkpoint copied into net/latest.pt at creation, so Generation 0 is the parent's newest network and training
 carries on with its optimiser and step count; until the Run's own shards fill the window, the parent's newest shards
@@ -79,7 +84,7 @@ from . import stopping
 from .awake import KeepAwake, full_speed
 from .config import ConfigError, RunConfig, load_config
 from .export import export_onnx, read_metadata
-from .manifest import REPO_ROOT, Manifest, load_manifest
+from .manifest import REPO_ROOT, Manifest, default_manifest_path, load_manifest
 from .notify import notify
 from .runstate import (PAUSE, PID, LineCounter, RunError, RunLock, StatusWriter, add_override, clear_pause,
                        pause_requested, read_overrides)
@@ -234,10 +239,11 @@ def create_run(root: str | Path, config_path: str | Path, manifest: Manifest | N
         raise RunError(f"{root} exists and isn't empty: a new Run needs a new directory")
     text = Path(config_path).read_bytes()
     config = load_config(config_path)
-    manifest = manifest or load_manifest()
+    manifest = manifest or load_manifest(default_manifest_path(config.encoding_version))
     if manifest.version != config.encoding_version:
         raise RunError(f"the config asks for Encoding v{config.encoding_version} but the manifest is v{manifest.version}")
     check_dropped_inputs(config, manifest)
+    check_init(config, manifest)
     lineage = check_parent(config, manifest) if config.init_from else None
     root.mkdir(parents=True, exist_ok=True)
     for sub in ("net", "selfplay", "matches"):
@@ -287,7 +293,7 @@ def open_run(root: str | Path, config_path: str | Path | None = None, manifest: 
         raise RunError(f"{config_path} differs from the config {root} was started with. A changed setup is a new "
                        f"Run: give a new directory (or leave out --config to continue this Run)")
     config = load_config(frozen)
-    manifest = manifest or load_manifest()
+    manifest = manifest or load_manifest(default_manifest_path(config.encoding_version))
     if manifest.version != record["encoding_version"] or manifest.version != config.encoding_version:
         raise RunError(f"{root} trains Encoding v{record['encoding_version']} but the manifest is "
                        f"v{manifest.version}: a new Encoding needs a new Run")
@@ -296,6 +302,29 @@ def open_run(root: str | Path, config_path: str | Path | None = None, manifest: 
                        f"{manifest.version}): the Encoding must not change inside a Run")
     check_dropped_inputs(config, manifest)
     return Run(root, config, manifest)
+
+
+def resolve_init(given: str) -> Path:
+    """The config's init checkpoint: absolute, or relative to the repository (when it exists there) or the cwd."""
+    init = Path(given)
+    if not init.is_absolute():
+        init = (REPO_ROOT / init) if (REPO_ROOT / init).exists() else init.resolve()
+    return init
+
+
+def check_init(config: RunConfig, manifest: Manifest) -> None:
+    """An init checkpoint of another Encoding is refused at creation, with the way to make one (network surgery)."""
+    if not config.init:
+        return
+    init = resolve_init(config.init)
+    if not init.is_file():
+        return  # reported when Generation 0 is made
+    import torch
+    version = torch.load(init, map_location="cpu", weights_only=True).get("encoding_version")
+    if version != manifest.version:
+        hint = (f": make an Encoding v{manifest.version} copy with `uv run sevenwd-train surgery {init} --out "
+                f"<new file outside the Run>` and use that" if version == 1 and manifest.version == 2 else "")
+        raise RunError(f"init: {init} is an Encoding v{version} checkpoint, the Run trains v{manifest.version}{hint}")
 
 
 def resolve_parent(given: str) -> Path:
@@ -564,6 +593,10 @@ class Loop:
         with open(self.run.root / "loop.log", "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
+    def expansion_args(self) -> list[str]:
+        """The 7wd option that plays the Run's games with its expansion (none for a base Run)."""
+        return ["--expansion", self.config.expansion] if self.config.expansion else []
+
     def neural_spec(self, net: Path, section) -> str:
         parts = [self.run.rel(net), f"sims={section.simulations}", f"device={section.device}",
                  f"threads={section.threads}"]
@@ -716,9 +749,7 @@ class Loop:
         if out.exists():
             return
         c = self.config
-        init = Path(c.init) if c.init else None
-        if init is not None and not init.is_absolute():
-            init = (REPO_ROOT / init) if (REPO_ROOT / init).exists() else init.resolve()
+        init = resolve_init(c.init) if c.init else None
         if c.init_from:
             if not self.run.checkpoint.exists():
                 raise RunError(f"{self.run.checkpoint} is missing: a Run with init_from starts from the copy of its "
@@ -759,6 +790,7 @@ class Loop:
             args = ["selfplay", self.neural_spec(self.run.net(g - 1), s), "--games", str(s.games),
                     "--out", self.run.rel(directory), "--seed", str(self.config.seed + g * 10_000_000),
                     "--promo-rate", repr(s.promo_rate), "--stop-file", self.run.rel(self.run.pause_path)]
+            args += self.expansion_args()
             if s.parallel:
                 args += ["--parallel", str(s.parallel)]
             if s.workers:
@@ -873,6 +905,7 @@ class Loop:
                 "--stop-file", self.run.rel(self.run.pause_path)]
         if m.promo:
             args += ["--promo", m.promo]
+        args += self.expansion_args()
         if m.parallel:
             args += ["--threads", str(m.parallel)]
         if opponent_elo is not None:

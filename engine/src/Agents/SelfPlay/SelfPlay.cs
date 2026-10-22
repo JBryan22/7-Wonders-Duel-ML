@@ -11,9 +11,11 @@ namespace SevenWondersDuel.Agents;
 /// What a Self-Play session plays (spec A7): <see cref="Games"/> games of the neural search against itself with
 /// <see cref="Agent"/>'s network and settings (spec: 64 Gumbel simulations), game <c>i</c> from seed
 /// <see cref="FirstSeed"/> + i. Each game includes both promo Wonders with probability <see cref="PromoRate"/> (spec
-/// default 100%; drawn from the game's seed) and is otherwise base-only.
+/// default 100%; drawn from the game's seed) and is otherwise base-only. With <see cref="Expansions"/> (Pantheon),
+/// every game is played with that expansion (spec-pantheon P-A8); the seeds are drawn exactly as in base Self-Play.
 /// </summary>
-public sealed record SelfPlaySettings(NeuralSettings Agent, int Games, ulong FirstSeed = 0, double PromoRate = 1)
+public sealed record SelfPlaySettings(NeuralSettings Agent, int Games, ulong FirstSeed = 0, double PromoRate = 1,
+    Expansions Expansions = Expansions.None)
 {
     /// <summary>Simulations per searched decision in training (spec A5), the default for <c>7wd selfplay</c>.</summary>
     public const int DefaultSimulations = 64;
@@ -35,9 +37,14 @@ public sealed record SelfPlaySettings(NeuralSettings Agent, int Games, ulong Fir
     }
 }
 
-/// <summary>The first line of <c>games.jsonl</c>: everything that decides the games. Resuming requires the same header (the model path may differ, its contents may not).</summary>
+/// <summary>
+/// The first line of <c>games.jsonl</c>: everything that decides the games. Resuming requires the same header (the model
+/// path may differ, its contents may not). <see cref="Expansion"/> is the rules header's expansion list (e.g.
+/// <c>pantheon</c>); it is left out of the line for base Self-Play, so base headers are unchanged.
+/// </summary>
 public sealed record SelfPlayHeader(string Format, string Model, string ModelSha256, string Search, int Games, ulong Seed,
-    double PromoRate, int EncodingVersion);
+    double PromoRate, int EncodingVersion,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Expansion = null);
 
 /// <summary>
 /// One Self-Play session's outcome: whether every game is finished (and the shard written), how many games are
@@ -104,7 +111,12 @@ public static class SelfPlay
         if (settings.PromoRate is < 0 or > 1 || double.IsNaN(settings.PromoRate))
             throw new ArgumentOutOfRangeException(nameof(settings), "The promo rate is a probability, 0..1");
         var clock = Stopwatch.StartNew();
-        var header = Header(settings);
+        // The network decides the Encoding (its declared version); a network that can't encode the games is refused
+        // before any game (a Pantheon session with an Encoding v1 network).
+        using var agents = AgentSource.Open(settings.Agent, maxBatch: Math.Max(1, Math.Min(settings.Games, parallel ?? DefaultParallel)),
+            workers ?? DefaultWorkers);
+        var encoding = agents.EncodingFor(SessionRules(settings));
+        var header = Header(settings, encoding);
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, FileName);
         var done = Load(path, header).ToDictionary(r => r.Game);
@@ -112,7 +124,6 @@ public static class SelfPlay
 
         var todo = Enumerable.Range(0, settings.Games).Where(i => !done.ContainsKey(i)).ToArray();
         var threads = Math.Min(todo.Length, parallel ?? DefaultParallel);
-        using var agents = AgentSource.Open(settings.Agent, maxBatch: Math.Max(1, threads), workers ?? DefaultWorkers);
         var played = 0;
         long positions = 0;
         if (todo.Length > 0)
@@ -160,7 +171,7 @@ public static class SelfPlay
         {
             shardPositions = File.Exists(Path.Combine(shard, ShardWriter.HeaderName))
                 ? JsonDocument.Parse(File.ReadAllText(Path.Combine(shard, ShardWriter.HeaderName))).RootElement.GetProperty("positions").GetInt32()
-                : ShardWriter.Write(shard, done.Values.OrderBy(r => r.Game).ToList());
+                : ShardWriter.Write(shard, done.Values.OrderBy(r => r.Game).ToList(), encoding);
         }
         var report = new SelfPlayReport(complete, done.Count, settings.Games, played, positions,
             agents.Batcher?.Positions ?? 0, agents.Batcher?.Batches ?? 0, clock.Elapsed.TotalSeconds, shardPositions);
@@ -195,9 +206,13 @@ public static class SelfPlay
         var rng = new Rng(seed);
         var (chance, p1, p2) = (rng.NextUInt64(), rng.NextUInt64(), rng.NextUInt64());
         var promoDraw = (rng.NextUInt64() >> 11) * (1.0 / (1UL << 53));
-        var rules = new Ruleset(Promos: promoDraw < settings.PromoRate ? Promos.Messe | Promos.Liberty : Promos.None);
+        var rules = new Ruleset(Promos: promoDraw < settings.PromoRate ? Promos.Messe | Promos.Liberty : Promos.None,
+            Expansions: settings.Expansions);
         return (seed, chance, p1, p2, rules);
     }
+
+    /// <summary>The rules every game of the session shares, apart from the promo draw.</summary>
+    static Ruleset SessionRules(SelfPlaySettings settings) => new(Expansions: settings.Expansions);
 
     /// <summary>Plays game <paramref name="game"/> of the session; <paramref name="createAgent"/> builds each player's search from its seed.</summary>
     public static GameRecord PlayGame(SelfPlaySettings settings, int game, Func<ulong, NeuralAgent> createAgent,
@@ -263,9 +278,11 @@ public static class SelfPlay
         return visits == 0 ? 2 * search.RootValue - 1 : sum / visits;
     }
 
-    public static SelfPlayHeader Header(SelfPlaySettings settings) => new(FormatVersion, settings.Agent.Model,
-        ModelIdentity(settings.Agent.Model), settings.SearchSpec, settings.Games, settings.FirstSeed, settings.PromoRate,
-        NetworkEncoding.Version);
+    /// <summary>The session's header; <paramref name="encoding"/> is the network's Encoding (default: the oldest that encodes the games).</summary>
+    public static SelfPlayHeader Header(SelfPlaySettings settings, EncodingVersion? encoding = null) => new(FormatVersion,
+        settings.Agent.Model, ModelIdentity(settings.Agent.Model), settings.SearchSpec, settings.Games, settings.FirstSeed,
+        settings.PromoRate, (encoding ?? EncodingVersion.For(SessionRules(settings))).Number,
+        settings.Expansions == Expansions.None ? null : SessionRules(settings).ToString().Split(" expansion=")[1]);
 
     /// <summary>The SHA-256 of an ONNX model's bytes, or the name of a built-in reference evaluator.</summary>
     public static string ModelIdentity(string model)
@@ -369,6 +386,9 @@ public static class SelfPlay
             settings.Model.ToLowerInvariant() is NeuralSettings.Uniform or NeuralSettings.Playout
                 ? new AgentSource(settings, null)
                 : new AgentSource(settings, new InferenceBatcher(NeuralNetwork.Load(settings.Model, settings.Device, settings.Threads), maxBatch, workers));
+
+        /// <summary>The Encoding the session's searches use for these rules (throws when the network can't encode them).</summary>
+        public EncodingVersion EncodingFor(Ruleset rules) => Create(0).EncodingFor(rules);
 
         public NeuralAgent Create(ulong seed) => Batcher is null
             ? NeuralAgent.Create(_settings, seed)

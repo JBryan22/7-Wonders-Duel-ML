@@ -4,7 +4,10 @@ The file has these sections (every key optional; unknown keys are refused, so a 
 default). `training/configs/default.yaml` lists them all with the spec's starting defaults; `tiny.yaml` is the CPU
 smoke-test config.
 
-    encoding_version: 1     the Encoding the Run trains on; refused if the committed manifest is another version
+    encoding_version: 1     the Encoding the Run trains on (its committed manifest, data/encoding/v<N>.json)
+    expansion: null         the expansion every game of the Run is played with: null (the base game) or pantheon
+                            (spec-pantheon P-A8; needs encoding_version 2). Self-Play and every Match use it, so the
+                            Elo column and the Anchor are on the Pantheon scale (its Anchor: mcts, Elo 1491)
     seed: 0                 Self-Play, training and Match seeds all derive from it
     generations: null       stop after this Generation (null: keep going until stopped)
     init: null              start Generation 0 from this checkpoint (e.g. another Run's net/latest.pt) instead of random
@@ -111,6 +114,7 @@ class StopSection:
 @dataclass(frozen=True)
 class RunConfig:
     encoding_version: int = 1
+    expansion: str | None = None
     seed: int = 0
     generations: int | None = None
     init: str | None = None
@@ -125,6 +129,9 @@ class RunConfig:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
+# The expansions a Run can be played with (the 7wd --expansion values); None is the base game.
+EXPANSIONS = (None, "pantheon")
 
 SECTIONS = {"network": NetworkSection, "selfplay": SelfPlaySection, "training": TrainingSection,
             "matches": MatchSection, "stop": StopSection}
@@ -180,6 +187,9 @@ def validate(c: RunConfig) -> None:
         if not ok:
             raise ConfigError(message)
 
+    need(c.expansion in EXPANSIONS, f"expansion is null (the base game) or one of {', '.join(e for e in EXPANSIONS if e)}")
+    need(c.expansion is None or c.encoding_version >= 2,
+         f"expansion {c.expansion} needs encoding_version 2 (Encoding v1 can't encode it)")
     need(c.network.width > 0 and c.network.blocks > 0, "network width and blocks must be positive")
     need(c.selfplay.games > 0 and c.selfplay.simulations > 0, "selfplay games and simulations must be positive")
     need(c.selfplay.mode in ("gumbel", "classic"), "selfplay.mode is gumbel or classic")

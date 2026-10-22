@@ -120,6 +120,25 @@ def test_cli_operates_on_a_checkpoint_and_exports_an_encoding_v2_onnx(manifest, 
     np.testing.assert_allclose(cv, pv, rtol=1e-4, atol=1e-5)
     np.testing.assert_allclose(co, po, rtol=1e-4, atol=1e-5)
 
+    # The parent can also be its exported network (a Run keeps every Generation's ONNX but only its newest
+    # checkpoint): the same weights, so the same child.
+    from_onnx = tmp_path / "pantheon-from-onnx.pt"
+    assert main(["surgery", str(parent_onnx), "--out", str(from_onnx)]) == 0
+    a, b = load_checkpoint(child_ckpt, v2), load_checkpoint(from_onnx, v2)
+    assert a["network"] == b["network"] and b["surgery"]["parent_step"] is None
+    assert a["model"].keys() == b["model"].keys()
+    for k in a["model"]:
+        assert torch.equal(a["model"][k], b["model"][k]), k
+    # ... but not an ONNX network of another Encoding, nor an ONNX file that isn't a 7wd network.
+    assert main(["surgery", str(child_onnx), "--out", str(tmp_path / "again.pt")]) == 1
+    stranger = tmp_path / "stranger.onnx"
+    import onnx
+    proto = onnx.load_model(str(parent_onnx))
+    del proto.metadata_props[:]
+    onnx.save_model(proto, str(stranger))
+    assert main(["surgery", str(stranger), "--out", str(tmp_path / "again.pt")]) == 1
+    assert not (tmp_path / "again.pt").exists()
+
     # Refused: overwriting the parent, and operating on a network that is already v2.
     assert main(["surgery", str(parent_ckpt), "--out", str(parent_ckpt)]) == 1
     assert main(["surgery", str(child_ckpt), "--out", str(tmp_path / "again.pt")]) == 1

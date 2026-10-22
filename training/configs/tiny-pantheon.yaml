@@ -1,0 +1,38 @@
+# The tiny config for Pantheon (spec-pantheon P-A8, ticket 11): tiny.yaml with every game played with the Pantheon
+# expansion on Encoding v2. CPU-only, for the Pantheon training-loop smoke test; the numbers say nothing about
+# strength. A real Pantheon Run starts from a surgery copy of a base network (init: a v2 checkpoint made by
+# `uv run sevenwd-train surgery <base checkpoint> --out <file>`); without init it starts from random weights.
+encoding_version: 2
+expansion: pantheon
+seed: 0
+generations: 2
+init: null
+
+network:
+  width: 64
+  blocks: 2
+
+selfplay:
+  games: 10
+  simulations: 8
+  device: cpu
+  threads: 1
+  parallel: 10
+  workers: 1
+
+training:
+  window_positions: 1000
+  reuse: 2.0
+  batch_size: 256
+  device: cpu
+  min_steps: 4
+
+matches:
+  pairs: 5
+  simulations: 8
+  device: cpu
+  threads: 1
+  anchor: mcts:sims=50     # a cheap stand-in for the Pantheon Anchor (mcts), so the smoke test exercises the path
+  anchor_elo: null
+  anchor_every: 2
+  generation0_opponent: random

@@ -284,6 +284,47 @@ public sealed class SelfPlayTests : IDisposable
         Assert.True(SelfPlay.SameGame(record, SelfPlay.Replay(record, Agents(classic.Agent, out _))));
     }
 
+    [Fact]
+    public void Base_self_play_headers_name_no_expansion_and_Encoding_v1()
+    {
+        SelfPlay.Run(Settings(games: 1), Dir("b"), parallel: 1);
+        var line = File.ReadLines(Path.Combine(Dir("b"), SelfPlay.FileName)).First();
+        Assert.DoesNotContain("expansion", line, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"encodingVersion\":1", line);
+        var shard = File.ReadAllText(Path.Combine(Dir("b"), "shard", ShardWriter.HeaderName));
+        Assert.Equal(1, JsonDocument.Parse(shard).RootElement.GetProperty("encoding_version").GetInt32());
+    }
+
+    [Fact]
+    public void Pantheon_self_play_writes_Encoding_v2_records_and_shards_that_replay()
+    {
+        var model = Path.Combine(AppContext.BaseDirectory, "Models", "surgery-child.onnx");
+        var settings = new SelfPlaySettings(NeuralSettings.Parse($"{model},sims=8,threads=1"), 2, FirstSeed: 3,
+            Expansions: Expansions.Pantheon);
+        Assert.True(SelfPlay.Run(settings, Dir("p"), parallel: 2).Complete);
+        var (header, records) = SelfPlay.Read(Dir("p"));
+        Assert.Equal(2, header!.EncodingVersion);
+        Assert.Equal("pantheon", header.Expansion);
+        Assert.All(records, r => Assert.Equal(Expansions.Pantheon, r.Rules.Expansions));
+        Assert.Empty(SelfPlay.Check(Dir("p"), games: 2, threads: 1));
+        var shard = File.ReadAllText(Path.Combine(Dir("p"), "shard", ShardWriter.HeaderName));
+        Assert.Equal(2, JsonDocument.Parse(shard).RootElement.GetProperty("encoding_version").GetInt32());
+        ReadNpy<Half>(Path.Combine(Dir("p"), "shard", "input.npy"), "<f2", out var shape);
+        Assert.Equal(EncodingVersion.V2.InputSize, shape[1]);
+
+        // Resuming the same session works; a base session in the same directory is a different one.
+        Assert.True(SelfPlay.Run(settings, Dir("p"), parallel: 2).Complete);
+        Assert.Throws<FormatException>(() => SelfPlay.Run(settings with { Expansions = Expansions.None }, Dir("p")));
+    }
+
+    [Fact]
+    public void Pantheon_self_play_refuses_an_Encoding_v1_network_before_any_game()
+    {
+        var settings = Settings(games: 1) with { Expansions = Expansions.Pantheon };
+        Assert.Throws<NotSupportedException>(() => SelfPlay.Run(settings, Dir("v1")));
+        Assert.False(File.Exists(Path.Combine(Dir("v1"), SelfPlay.FileName)));
+    }
+
     /// <summary>A minimal .npy reader for the test: checks the dtype, returns the data and the shape.</summary>
     static T[] ReadNpy<T>(string path, string dtype, out int[] shape) where T : unmanaged
     {

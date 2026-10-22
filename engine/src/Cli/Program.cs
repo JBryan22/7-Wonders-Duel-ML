@@ -30,10 +30,11 @@ const string Usage = """
                                        The Ladder's recorded Elo is used unless --elo-a/--elo-b is given; with
                                        --expansion pantheon it is the separate Pantheon scale (Random = 0 there too;
                                        its rungs: heuristic, pimc:samples=200, mcts = the Pantheon Anchor)
-      selfplay <onnx>[,sims=64,...] --games N --out DIR [--seed S] [--promo-rate R] [--parallel P] [--workers W]
-            [--stop-file F]
+      selfplay <onnx>[,sims=64,...] --games N --out DIR [--seed S] [--promo-rate R] [--expansion E] [--parallel P]
+            [--workers W] [--stop-file F]
                                        the network plays itself (spec A7): N games from seed S (default 0), each with
-                                       both promos with probability R (default 1), P games at a time (default 32 per
+                                       both promos with probability R (default 1) and expansion E (pantheon: needs an
+                                       Encoding v2 network; shards are in the network's Encoding), P games at a time (default 32 per
                                        core) sharing W inference threads (default 1 per 4 cores, at most 4). The model
                                        takes the neural: settings (default 64 sims, Gumbel, device=cpu,threads=4;
                                        device=cuda uses the GPU). Writes DIR/games.jsonl (the
@@ -43,8 +44,9 @@ const string Usage = """
       selfplay-check <dir> [--games N] [--model ONNX] [--device D] [--threads T]
                                        replay the first N Game Records (default 20) from their seeds with the same
                                        network and check that the Move Logs and policy targets come out identical
-      shard <dir|games.jsonl> --out DIR
-                                       re-encode Game Records into a shard (e.g. under a new Encoding version)
+      shard <dir|games.jsonl> --out DIR [--version V]
+                                       re-encode Game Records into a shard under Encoding v V (default: the version
+                                       the Self-Play header names, e.g. to rebuild a deleted shard)
       netbench <onnx> [--device auto|cpu|cuda] [--threads N] [--seconds S]
                                        network inference speed per batch size (N: CPU threads, default all cores)
       manifest [--version V] [--out PATH]
@@ -71,7 +73,8 @@ try
         ["netbench", var model, .. var options] when !model.StartsWith("--") => NetBench(model, options),
         ["selfplay", var model, .. var options] when !model.StartsWith("--") => RunSelfPlay(model, options),
         ["selfplay-check", var dir, .. var options] when !dir.StartsWith("--") => SelfPlayCheck(dir, options),
-        ["shard", var records, "--out", var dir] => Shard(records, dir),
+        ["shard", var records, "--out", var dir] => Shard(records, dir, null),
+        ["shard", var records, "--out", var dir, "--version", var v] when int.TryParse(v, out var n) => Shard(records, dir, n),
         _ => Fail(Usage),
     };
 }
@@ -264,6 +267,7 @@ static int RunSelfPlay(string model, string[] options)
     string? directory = null, stopFile = null;
     ulong seed = 0;
     var promoRate = 1.0;
+    var expansions = Expansions.None;
     for (var i = 0; i < options.Length; i += 2)
     {
         var value = i + 1 < options.Length ? options[i + 1] : null;
@@ -275,13 +279,15 @@ static int RunSelfPlay(string model, string[] options)
             case "--promo-rate" when double.TryParse(value, CultureInfo.InvariantCulture, out var r) && r is >= 0 and <= 1: promoRate = r; break;
             case "--parallel" when int.TryParse(value, out var p) && p > 0: parallel = p; break;
             case "--workers" when int.TryParse(value, out var w) && w > 0: workers = w; break;
+            case "--expansion" when value is not null: expansions = ParseExpansions(value); break;
             case "--stop-file" when value is not null: stopFile = value; break;
             default: return Fail(Usage);
         }
     }
     if (games is null || directory is null) return Fail(Usage);
     // Self-Play defaults to the training budget of 64 simulations; anything in the spec overrides it.
-    var settings = new SelfPlaySettings(NeuralSettings.Parse($"sims={SelfPlaySettings.DefaultSimulations},{model}"), games.Value, seed, promoRate);
+    var settings = new SelfPlaySettings(NeuralSettings.Parse($"sims={SelfPlaySettings.DefaultSimulations},{model}"), games.Value, seed, promoRate,
+        expansions);
 
     using var stop = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) =>
@@ -295,7 +301,9 @@ static int RunSelfPlay(string model, string[] options)
         : new StopFile(stopFile, stop, onStop: () => Console.Error.WriteLine($"stopping ({stopFile} appeared): finished games are kept, games in progress are dropped"));
     var threads = parallel ?? SelfPlay.DefaultParallel;
     Console.WriteLine($"7wd selfplay: {settings.Agent.Model} ({settings.SearchSpec}, device={settings.Agent.Device}, threads={settings.Agent.Threads}), "
-        + $"{games} games from seed {seed}, promo rate {promoRate:0.##}, {threads} at a time, "
+        + $"{games} games from seed {seed}, promo rate {promoRate:0.##}"
+        + (expansions == Expansions.None ? "" : $", expansion {new Ruleset(Expansions: expansions).ToString().Split(" expansion=")[1]}")
+        + $", {threads} at a time, "
         + $"{workers ?? SelfPlay.DefaultWorkers} inference threads, saved in {directory}");
     var finished = 0;
     var step = Math.Max(1, games.Value / 10);
@@ -337,11 +345,14 @@ static int SelfPlayCheck(string directory, string[] options)
     return 1;
 }
 
-static int Shard(string records, string directory)
+static int Shard(string records, string directory, int? version)
 {
-    var games = SelfPlay.Load(records).OrderBy(r => r.Game).ToList();
-    var positions = ShardWriter.Write(directory, games);
-    Console.WriteLine($"wrote {positions:N0} positions from {games.Count:N0} Game Records to {directory} (Encoding v{NetworkEncoding.Version})");
+    var (header, read) = SelfPlay.Read(records);
+    var games = read.OrderBy(r => r.Game).ToList();
+    var encoding = EncodingVersion.TryOf(version ?? header?.EncodingVersion ?? NetworkEncoding.Version)
+        ?? throw new FormatException($"No Encoding v{version}");
+    var positions = ShardWriter.Write(directory, games, encoding);
+    Console.WriteLine($"wrote {positions:N0} positions from {games.Count:N0} Game Records to {directory} ({encoding})");
     return 0;
 }
 

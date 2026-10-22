@@ -13,12 +13,15 @@ from sevenwd.config import ConfigError, RunConfig, load_config, parse_config
 from sevenwd.export import read_metadata
 from sevenwd.loop import (COLUMNS, Run, RunError, clean_shards, create_run, main, open_run, read_best, read_rows,
                           read_records, window_for)
+from sevenwd.manifest import default_manifest_path, load_manifest
+from sevenwd.train import load_checkpoint
 from sevenwd.shards import write_shard
 
 from conftest import synthetic_positions
 
 CONFIGS = Path(__file__).resolve().parents[1] / "configs"
 TINY = CONFIGS / "tiny.yaml"
+TINY_PANTHEON = CONFIGS / "tiny-pantheon.yaml"
 
 
 def test_default_config_lists_the_built_in_defaults():
@@ -42,6 +45,12 @@ def test_config_refuses_unknown_and_bad_settings():
     with pytest.raises(ConfigError, match="gumbel or classic"):
         parse_config({"selfplay": {"mode": "greedy"}})
     assert parse_config({"training": {"learning_rate": 1}}).training.learning_rate == 1.0
+    with pytest.raises(ConfigError, match="needs encoding_version 2"):
+        parse_config({"expansion": "pantheon"})
+    with pytest.raises(ConfigError, match="expansion is null"):
+        parse_config({"expansion": "agora", "encoding_version": 2})
+    assert parse_config({"expansion": "pantheon", "encoding_version": 2}).expansion == "pantheon"
+    assert parse_config({}).expansion is None
 
 
 def test_a_run_records_its_setup(manifest, tmp_path):
@@ -185,6 +194,60 @@ def test_smoke_run_continues_without_redoing_work(manifest, tiny_run):
                       encoding="utf-8")
     assert main([str(edited), "--generations", "3"]) == 1
     assert len(read_rows(Run(edited, load_config(TINY), manifest))) == 3
+
+
+# --- Pantheon (spec-pantheon P-A8, ticket 11) ------------------------------------------------------------------------
+
+def test_a_pantheon_run_trains_encoding_v2_and_refuses_a_v1_init(manifest, tiny_run, tmp_path):
+    run = create_run(tmp_path / "p", TINY_PANTHEON)
+    assert run.manifest.version == 2 and run.config.expansion == "pantheon"
+    assert json.loads((run.root / "run.json").read_text(encoding="utf-8"))["encoding_version"] == 2
+    assert open_run(run.root).manifest.version == 2
+    config = tmp_path / "v1-init.yaml"
+    config.write_text(TINY_PANTHEON.read_text(encoding="utf-8").replace(
+        "init: null", f"init: {(tiny_run / 'net' / 'latest.pt').as_posix()}"), encoding="utf-8")
+    with pytest.raises(RunError, match="sevenwd-train surgery"):
+        create_run(tmp_path / "p1", config)
+
+
+@pytest.fixture(scope="module")
+def pantheon_run(tiny_run, tmp_path_factory):
+    # The tiny Pantheon Run, warm-started by surgery from the tiny base Run's checkpoint (as a real one would be).
+    from sevenwd.train import main as train_main
+    base = tmp_path_factory.mktemp("pantheon")
+    child = base / "surgery.pt"
+    assert train_main(["surgery", str(tiny_run / "net" / "latest.pt"), "--out", str(child)]) == 0
+    config = base / "tiny-pantheon.yaml"
+    config.write_text(TINY_PANTHEON.read_text(encoding="utf-8").replace("init: null", f"init: {child.as_posix()}"),
+                      encoding="utf-8")
+    root = base / "run"
+    assert main([str(root), "--config", str(config), "--generations", "2"]) == 0
+    return root
+
+
+def test_smoke_two_tiny_pantheon_generations(pantheon_run):
+    v2 = load_manifest(default_manifest_path(2))
+    run = Run(pantheon_run, load_config(pantheon_run / "config.yaml"), v2)
+    rows = read_rows(run)
+    assert [r["generation"] for r in rows] == ["0", "1", "2"]
+    for g in range(3):
+        assert read_metadata(run.net(g))["encoding_version"] == "2"
+    assert load_checkpoint(run.checkpoint, v2)["step"] == int(rows[2]["total_steps"]) > 0
+    for g in (1, 2):
+        header = json.loads((run.selfplay_dir(g) / "games.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert header["encodingVersion"] == 2 and header["expansion"] == "pantheon"
+        records = list(read_records(run.selfplay_dir(g), 2))
+        assert len(records) == 10 and all("expansion=pantheon" in r["log"].splitlines()[1] for r in records)
+        shard = json.loads((run.shard_dir(g) / "shard.json").read_text(encoding="utf-8"))
+        assert shard["encoding_version"] == 2 and int(rows[g]["selfplay_positions"]) == shard["positions"] > 0
+        assert float(rows[g]["loss_total"]) > 0
+    # Every Match is a Pantheon one, on the Pantheon Elo scale (Random = 0 there too).
+    summaries = list((run.root / "matches").glob("*/summary.json"))
+    assert len(summaries) >= 4
+    for summary_path in summaries:
+        header = json.loads((summary_path.parent / "match.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        assert "expansion=pantheon" in header["rules"]
+    assert rows[2]["anchor_score"] != ""
 
 
 # --- the laptop learning check (ticket 25) ------------------------------------------------------------------------------

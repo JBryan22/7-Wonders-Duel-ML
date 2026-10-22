@@ -90,6 +90,8 @@ def play(run: Run, cli: Cli, g: int, opponent: str, pairs: int, sims: int | None
     args = ["match", spec, opponent, "--pairs", str(pairs), "--seed", str(seed), "--out", run.rel(directory)]
     if m.promo:
         args += ["--promo", m.promo]
+    if run.config.expansion:
+        args += ["--expansion", run.config.expansion]
     if m.parallel:
         args += ["--threads", str(m.parallel)]
     cli.run(args, run.root, directory / "log.txt")

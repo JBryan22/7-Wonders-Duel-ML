@@ -1,6 +1,7 @@
 # The spec's starting defaults (docs/spec-v1.md A7, "Starting defaults"), to be revised by the calibration run
 # (ticket 26) and then frozen into the main Run. Every setting is listed; see sevenwd/config.py for what each means.
 encoding_version: 1
+expansion: null            # or pantheon (needs encoding_version 2; spec-pantheon P-A8)
 seed: 0
 generations: null          # keep going until stopped
 init: null                 # or another Run's checkpoint, e.g. runs/warm/net/latest.pt

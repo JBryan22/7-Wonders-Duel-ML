@@ -1,0 +1,53 @@
+# The Pantheon laptop learning check (ticket 11, spec-pantheon P-A8): laptop-gumbel.yaml with every game played with
+# the Pantheon expansion on Encoding v2, warm-started from a surgery copy of a base network. A short CPU-only Run that
+# should show Pantheon Elo rising over its Generations. `init` must name the surgery checkpoint, so a Run uses a copy
+# of this file with it filled in (outside the repo, next to the Run):
+#   uv run sevenwd-train surgery <base Run>/net/gen-NNNN.onnx --out ~/7wd-runs/pantheon-init.pt   # NNNN: its best.json
+#   (copy this file to ~/7wd-runs/laptop-pantheon.yaml and set init: to that .pt)
+#   uv run sevenwd-loop ~/7wd-runs/laptop-pantheon --config ~/7wd-runs/laptop-pantheon.yaml
+#   uv run python -m sevenwd.curve ~/7wd-runs/laptop-pantheon                       # each Generation against Random
+#   uv run python -m sevenwd.curve ~/7wd-runs/laptop-pantheon --opponent heuristic  # ... and the Heuristic (Pantheon 1250)
+# Network size, Self-Play, training and Matches as laptop-gumbel.yaml, so the surgery parent is a laptop-gumbel Run.
+encoding_version: 2
+expansion: pantheon
+seed: 0
+generations: 8
+init: null                 # the surgery checkpoint (see above)
+
+network:
+  width: 128               # the parent's size (surgery keeps it)
+  blocks: 2
+
+selfplay:
+  games: 400
+  simulations: 64
+  mode: gumbel
+  device: cpu
+  threads: 2
+  parallel: 128
+  workers: 2
+
+training:
+  window_positions: 100000
+  reuse: 4.0
+  batch_size: 512
+  learning_rate: 0.001
+  device: cpu
+  checkpoint_minutes: 5
+
+matches:
+  pairs: 50                # 100 games
+  simulations: 64
+  mode: gumbel
+  device: cpu
+  threads: 2
+  parallel: 8
+  anchor: heuristic        # Pantheon Elo 1250: where a learning network should be heading
+  anchor_every: 4
+  generation0_opponent: random
+
+stop:                      # a fixed number of Generations
+  cap_hours: null
+  plateau_generations: null
+  science_min_share: null
+  progress_by: null
