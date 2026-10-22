@@ -16,7 +16,8 @@ network:
   blocks: 4
 
 selfplay:
-  games: 55000             # ~43 min at ~21 games/s: sizes the Generation to ~1 desktop-hour (see above)
+  games: 30000             # Pantheon calibration (2026-10-22): 55,000 games took ~83 min of Self-Play (~11 games/s
+                           # incl. turning them into a shard) and a Generation 6,050-6,330 s; 30,000 sizes it to ~1 h
   simulations: 64          # the spec's default; 32 sims measured no faster (~1,585 vs ~1,620 positions/s: the
                            # search's own overhead dominates), 128 sims halves the games (763 positions/s)
   mode: gumbel
@@ -60,7 +61,8 @@ matches:
   reference_pairs: 100     # 200 games, ~5-6 min every 5th Generation (200 pairs would take ~11 min)
 
 stop:
-  cap_hours: 150           # placeholder: agreed with the owner after the calibration
-  plateau_generations: 20  # placeholder: agreed with the owner after the calibration
+  cap_hours: 20            # owner, 2026-10-22: stop at ~20 desktop-hours (like the main Run), extended only if
+                           # Generations are still gaining clearly then (7wd-train start --ignore-stop, or raise this)
+  plateau_generations: 20  # ~20 Generations: in practice only matters if the cap is extended
   science_min_share: null  # base-game warm-start triggers: off for Pantheon (null here also disables science_from/to)
   progress_by: null

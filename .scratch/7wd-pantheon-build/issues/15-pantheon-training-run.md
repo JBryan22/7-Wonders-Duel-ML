@@ -4,11 +4,11 @@
 
 **Blocked by:** 11, and the base main Run (v1 ticket 28) stopped
 
-**Status:** ready-for-human (needs the Windows desktop)
+**Status:** in progress (the Pantheon Run is training on the desktop, started 2026-10-22)
 
 Spec: `docs/spec-pantheon.md` (P-A8), on top of `docs/spec-v1.md`.
 
-- [ ] Calibration numbers and the agreed cap/plateau in Notes
+- [x] Calibration numbers and the agreed cap/plateau in Notes
 - [ ] The Pantheon "best" network passes the Pantheon Anchor
 
 ## Notes
@@ -52,3 +52,27 @@ best Generation's `.onnx` directly. Nothing in the main Run is changed or needed
 
 Checked on the laptop (ticket 11): surgery from `laptop-gumbel/net/gen-0004.onnx` gives a checkpoint whose weights are
 bit-identical to surgery from that Generation's `.pt`.
+
+### Calibration and start (desktop, 2026-10-22)
+
+- The main Run was **paused** (not stopped) at Generation 15 / 20.2 of 150 desktop-hours, best Generation 11. It
+  resumes later with `7wd-train start --run C:/7wd-runs/main` (that makes it the current Run again).
+- Surgery from `C:/7wd-runs/main/net/gen-0011.onnx` -> `C:/7wd-runs/pantheon-init.pt`: "same outputs as the parent in
+  base-game positions".
+- `training/configs/pantheon-main.yaml`: as step 5, with two corrections to step 5's list: `science_from/to` can't be
+  null (the config check compares them); `science_min_share: null` alone turns that trigger off. `reference: null`.
+- Calibration Run `C:/7wd-runs/pantheon-calibration` (2 Generations of 55,000 games):
+  - Generation 0 (the surgery network, no Pantheon training yet) vs the Pantheon Anchor: **73.2%** (CI 68.7-77.4%),
+    Elo 1666: it already passes the Anchor.
+  - Self-Play ~68 min for 55,000 games (~13.4 games/s) plus ~15-19 min turning the games into a shard (dense
+    temporary file ~30+ GB, compacted to 3.6 GB); 4.66M positions per 55,000 games (~85/game; base ~69).
+  - Training ~255-260 s (~9,100 steps); each 400-game Match ~8-10 min.
+  - A Generation took 6,051 s and 6,330 s; Generation 1 47.2% vs Generation 0, Generation 2 58.5% vs Generation 1
+    and 60.8% vs Generation 0 (new best, Elo 1707).
+  - Disk: 3.6 GB shard + 0.55 GB Game Records per 55,000 games; the 25M-position window is ~19 GB.
+- `selfplay.games: 30000` sizes a Generation to ~1 desktop-hour.
+- **Agreed with the owner:** `cap_hours: 20` (stop at ~20 desktop-hours like the main Run; extend with
+  `start --ignore-stop` only if Generations are still clearly gaining). `plateau_generations: 20` kept (only matters
+  if extended).
+- The Pantheon Run `C:/7wd-runs/pantheon` started 2026-10-22 16:45; it is the current Run (outside the queue), so the
+  Start/Pause/Status shortcuts act on it.
