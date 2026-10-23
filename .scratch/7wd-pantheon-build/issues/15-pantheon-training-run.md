@@ -4,12 +4,12 @@
 
 **Blocked by:** 11, and the base main Run (v1 ticket 28) stopped
 
-**Status:** in progress (the Pantheon Run is training on the desktop, started 2026-10-22)
+**Status:** done
 
 Spec: `docs/spec-pantheon.md` (P-A8), on top of `docs/spec-v1.md`.
 
 - [x] Calibration numbers and the agreed cap/plateau in Notes
-- [ ] The Pantheon "best" network passes the Pantheon Anchor
+- [x] The Pantheon "best" network passes the Pantheon Anchor
 
 ## Notes
 
@@ -76,3 +76,15 @@ bit-identical to surgery from that Generation's `.pt`.
   if extended).
 - The Pantheon Run `C:/7wd-runs/pantheon` started 2026-10-22 16:45; it is the current Run (outside the queue), so the
   Start/Pause/Status shortcuts act on it.
+
+### Result (2026-10-23)
+
+- The owner stopped the Run at the 20-hour cap (paused at 20.0 desktop-hours during Generation 20's Self-Play,
+  11,779/30,000 games; that partial Generation is discarded on any later start).
+- **Best: Generation 17** (`C:/7wd-runs/pantheon/net/gen-0017.onnx`; beat Generation 14 56.5%, CI 51.6-61.3%).
+- Elo (Pantheon scale) 1666 at Generation 0 -> 2152 at Generation 17; Generations 18 and 19 didn't beat it (51.2%,
+  50.3%; 19 vs 18: 48.2%): flat at ~2150-2160, so the owner didn't extend.
+- vs the Pantheon Anchor: 73.2% (Gen 0), 91.8% (Gen 5), 97.3% (Gen 10), **98.5% (Gen 15, CI 96.8-99.3%)**: passes.
+- Generations took ~52 min early, ~70 min late (the training window grew to ~27M positions, Generations 9-19).
+- The base main Run is still paused (Generation 15, 20.2 of 150 desktop-hours, best Generation 11); the Pantheon Run
+  is the current Run until `7wd-train start --run C:/7wd-runs/main` switches back.
