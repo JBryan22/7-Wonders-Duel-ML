@@ -56,7 +56,10 @@ public static class TtsData
         var backs = p.Divinities.Select(d => KeyValuePair.Create(d.Key,
                 PantheonData.Divinities[PantheonData.DivinityIndex(d.Value)].Mythology is { } m ? PantheonData.MythologyDef(m).Id : "gate"))
             .Concat(p.Temples.Select(t => KeyValuePair.Create(t.Key, "temple")));
-        return $"{{ backs = {Table(backs)}, tokens = {Table(p.TokenImages)}, pieces = {Table(p.Pieces)} }}";
+        // The Divinity boards: the only place a Divinity is public before Age II (one taken with the Divine Theater).
+        static string N(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var boards = string.Join(", ", Places.Activated.Values.Select(r => $"{{ x1 = {N(r.X1)}, x2 = {N(r.X2)}, z1 = {N(r.Z1)}, z2 = {N(r.Z2)} }}"));
+        return $"{{ backs = {Table(backs)}, tokens = {Table(p.TokenImages)}, pieces = {Table(p.Pieces)}, boards = {{ {boards} }} }}";
     }
 
     public static TtsNames Names { get; } = new(JsonNode.Parse(Text("names.json"))!);

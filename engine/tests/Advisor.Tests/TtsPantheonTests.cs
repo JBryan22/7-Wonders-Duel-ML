@@ -192,6 +192,35 @@ public sealed class TtsPantheonTests : IDisposable
         Assert.True(checkedNames > 200);
     }
 
+    /// <summary>
+    /// Before Age II no Divinity is public, so one lying face up on the table is a private look (the opponent's draw
+    /// flipped while the owner wears TTS's blindfold): never named. The owner's own hand still is; from Age II face-up
+    /// Divinities are named as usual (the Gate's deck tops). Grand Temples follow the usual rule.
+    /// </summary>
+    [Theory]
+    [InlineData("None", false)]
+    [InlineData("Age1", false)]
+    [InlineData("Age2", true)]
+    [InlineData("Age3", true)]
+    public void A_face_up_Divinity_is_named_only_from_Age_II(string age, bool named)
+    {
+        var white = TablePainter.Hands.Single(h => h.Color == "White");
+        var objects = new List<FakeObject>
+        {
+            new("Card", "up", "Zeus", 0, 1.6, 5, FaceDown: false, ["rotate flip"]),
+            new("Card", "own", "Hades", (white.X1 + white.X2) / 2, 1.6, (white.Z1 + white.Z2) / 2, FaceDown: false, ["rotate flip"]),
+            new("Card", "board", "Isis", 25, 1.6, -49, FaceDown: false, ["rotate flip"]), // White's Divinity board (Divine Theater)
+        };
+        Assert.True(TtsData.Places.Activated[Side.White].Contains(25, -49));
+        var snapshot = TableSnapshot.Parse(new FakeTable(objects, [("White", true)], age, TablePainter.Hands).Snapshot());
+        var up = snapshot.Pieces.Single(p => !p.InHand && p.Back == "greek");
+        Assert.Equal(named ? "Zeus" : null, up.Name);
+        Assert.Equal("Isis", snapshot.Pieces.Single(p => p.Back == "egyptian").Name);
+        var own = snapshot.Pieces.Single(p => p.InHand);
+        Assert.True(own.Own);
+        Assert.Equal("Hades", own.Name);
+    }
+
     // ---------------------------------------------------------------- following Pantheon games from the table
 
     static readonly Ruleset[] PantheonRules =

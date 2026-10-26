@@ -24,6 +24,9 @@
 -- PANTHEON (spec-pantheon P-A9; nothing below changes what a base-game table reports, which has none of these pieces):
 --   * a Divinity card or the Gate reports its back (its Mythology, or "gate") and a Grand Temple "temple": the backs
 --     differ, so this is public; the name follows the rules above;
+--   * before Age II (the mod's current_age "None" or "Age1") a Divinity is named on the table only on a Divinity board
+--     (one taken with the Divine Theater): anywhere else, even face up, it is someone's private look (TTS's blindfold
+--     hides it only from one player's eyes);
 --   * a Divinity in the HOST's hand (the owner's private zone: their own draw, or a deck their Divine Theater looks
 --     through) is named, marked "own"; nothing in any other hand is ever named (the opponent's draws stay hidden);
 --   * Mythology and Offering tokens have no TTS name: one is reported as kind "ptoken", named by its face image (only
@@ -51,6 +54,13 @@ do
 
   local function inLibrary(p)
     for _, r in ipairs(LIBRARY) do
+      if inRect(p, r) then return true end
+    end
+    return false
+  end
+
+  local function onBoard(p)
+    for _, r in ipairs(PANTHEON.boards) do
       if inRect(p, r) then return true end
     end
     return false
@@ -102,6 +112,10 @@ do
       end
     end
 
+    local age = "None"
+    if type(current_age) == "string" then age = current_age end
+    local early = age == "None" or age == "Age1"
+
     local pieces = {}
     for _, o in ipairs(getObjects()) do
       -- Explicit nils: MoonSharp (TTS's Lua) can leave a bare "local x" in a loop holding a value from an earlier pass.
@@ -152,7 +166,12 @@ do
             if hasTag(o, "wonder") then back = "wonder" elseif hasTag(o, "purple") then back = "guild" end
           end
           table.insert(f, '"back":' .. str(back))
-          if public and (not down or inRect(p, DISCARD)) then
+          -- Before Age II a Divinity is public only on a Divinity board (one taken with the Divine Theater); they lie face
+          -- down until Age II's setup turns them up. A Divinity face up anywhere else then is a private look (e.g. the
+          -- opponent's draw, flipped while the owner wears TTS's blindfold, which hides it only from the owner's eyes),
+          -- so it is never named.
+          local private = early and pantheon and back ~= "temple" and not onBoard(p)
+          if public and not private and (not down or inRect(p, DISCARD)) then
             table.insert(f, '"name":' .. str(name))
           elseif pantheon and back ~= "temple" and host ~= nil and inHand[o.getGUID()] == host then
             table.insert(f, '"name":' .. str(name))
@@ -188,9 +207,6 @@ do
       table.insert(players, '{"color":' .. str(pl.color) .. ',"host":' .. tostring(pl.host == true) .. '}')
     end
     table.sort(players)
-
-    local age = "None"
-    if type(current_age) == "string" then age = current_age end
 
     return '{"v":1,"age":' .. str(age) .. ',"players":[' .. table.concat(players, ",") ..
         '],"pieces":[' .. table.concat(pieces, ",") .. ']}'
