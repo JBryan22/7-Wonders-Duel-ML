@@ -68,6 +68,7 @@ internal sealed class FakeTable(IReadOnlyList<FakeObject> objects, IReadOnlyList
             return DynValue.Nil;
         });
         script.Globals["Player"] = PlayerTable(script, tables);
+        script.Globals["Hands"] = HandsTable(script);
 
         var before = script.Globals.Keys.Select(k => k.ToPrintString()).ToHashSet();
         var globals = script.Globals;
@@ -112,8 +113,36 @@ internal sealed class FakeTable(IReadOnlyList<FakeObject> objects, IReadOnlyList
             ReadOnly(script, seat, color);
             player[color] = seat;
         }
+        // The other seat colours exist in TTS but have no hand zone on this table: their getHandObjects() throws a C#
+        // NullReferenceException that pcall can't catch (live check, 2026-10-26). A CLR exception escapes MoonSharp's
+        // pcall the same way.
+        foreach (var color in new[] { "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Teal", "Brown", "Black" })
+        {
+            var seat = new Table(script);
+            seat["getHandObjects"] = DynValue.NewCallback((_, _) =>
+                throw new NullReferenceException($"Object reference not set to an instance of an object ({color} has no hand)"));
+            ReadOnly(script, seat, color);
+            player[color] = seat;
+        }
         ReadOnly(script, player, "Player");
         return DynValue.NewTable(player);
+    }
+
+    /// <summary>TTS's Hands global: getHands() lists the hand zones; a hand zone's getValue() is its colour.</summary>
+    DynValue HandsTable(Script script)
+    {
+        var zones = new[] { "White", "Red" }.Select(color =>
+        {
+            var zone = new Table(script);
+            zone["type"] = "Hand";
+            zone["getValue"] = DynValue.NewCallback((_, _) => DynValue.NewString(color));
+            ReadOnly(script, zone, $"{color} hand");
+            return zone;
+        }).ToList();
+        var t = new Table(script);
+        t["getHands"] = DynValue.NewCallback((_, _) => List(script, zones));
+        ReadOnly(script, t, "Hands");
+        return DynValue.NewTable(t);
     }
 
     static DynValue List(Script script, IReadOnlyList<Table> items)

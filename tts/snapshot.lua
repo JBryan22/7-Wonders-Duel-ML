@@ -44,7 +44,6 @@ do
     { x1 = -14, x2 = -2, z1 = -26, z2 = -22 },
     { x1 = 2, x2 = 14, z1 = -26, z2 = -22 },
   }
-  local HAND_COLORS = { "White", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Teal", "Brown" }
 
   local function inRect(p, r)
     return p.x >= r.x1 and p.x <= r.x2 and p.z >= r.z1 and p.z <= r.z2
@@ -89,11 +88,17 @@ do
     for _, pl in ipairs(Player.getPlayers()) do
       if pl.host == true then host = pl.color end
     end
+    -- Only the hands that exist (the mod has White's and Red's): in real TTS, Player[c].getHandObjects() for a colour
+    -- without a hand zone throws a C# NullReferenceException, which pcall can't catch, and the whole script dies
+    -- (live check, 2026-10-26).
     local inHand = {}
-    for _, color in ipairs(HAND_COLORS) do
-      local ok, objects = pcall(function() return Player[color].getHandObjects() end)
-      if ok and type(objects) == "table" then
-        for _, o in ipairs(objects) do inHand[o.getGUID()] = color end
+    local ok, hands = pcall(function() return Hands.getHands() end)
+    if ok and type(hands) == "table" then
+      for _, h in ipairs(hands) do
+        local color = h.getValue()
+        if type(color) == "string" then
+          for _, o in ipairs(Player[color].getHandObjects() or {}) do inHand[o.getGUID()] = color end
+        end
       end
     end
 
