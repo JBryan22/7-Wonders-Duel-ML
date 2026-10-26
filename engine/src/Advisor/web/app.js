@@ -336,8 +336,9 @@ function legendPanel(pantheon) {
 }
 
 // ------------------------------------------------------------------ Tabletop Simulator (spec A9)
-// While following, the server reads the TTS table about once a second and enters what it shows; the page polls the
-// small /api/tts box and fetches the whole state again when the server's change counter moves.
+// While following, the server reads the TTS table (about once a second, every 10 seconds, or on "Read the table now")
+// and enters what it shows; the page polls the small /api/tts box and fetches the whole state again when the server's
+// change counter moves.
 
 let ttsPoll = null;
 const TTS_POLL_MS = 1000;
@@ -360,6 +361,11 @@ function watchTts() {
 
 const ttsCall = (body) => call('POST', '/api/tts', body);
 
+function ago(iso) {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  return s < 60 ? `${s} s ago` : `${Math.floor(s / 60)} min ago`;
+}
+
 function ttsPanel(t) {
   const panel = h('div', { class: `panel tts tts-is-${t?.status ?? 'off'}`, id: 'tts' }, h('h2', {}, 'Tabletop Simulator'));
   if (!t) return panel;
@@ -369,11 +375,19 @@ function ttsPanel(t) {
     h('label', { class: 'muted', title: 'Auto: the colour you sit at in TTS (you host the game). Choose White or Red to override it.' }, 'You sit ',
       h('select', { onchange: (e) => ttsCall({ color: e.target.value }) },
         [['Auto', t.color === 'Auto' && t.side ? `Auto: ${t.side}` : 'Auto (your TTS seat)'], ['White', 'White'], ['Red', 'Red']]
-          .map(([c, label]) => h('option', { value: c, selected: c === t.color }, label))))));
+          .map(([c, label]) => h('option', { value: c, selected: c === t.color }, label)))),
+    h('label', { class: 'muted', title: 'Each reading makes TTS pause for a moment. Read less often if moving pieces feels sluggish.' }, 'Read the table ',
+      h('select', { onchange: (e) => ttsCall({ pace: e.target.value }) },
+        [['live', 'every second'], ['10s', 'every 10 seconds'], ['click', 'only when I click']]
+          .map(([p, label]) => h('option', { value: p, selected: p === t.pace }, label))))));
   if (!t.following) {
     panel.append(h('div', { class: 'small muted' }, 'Off: enter everything here by hand. Turn it on to have Moves read from the table.'));
     return panel;
   }
+  if (t.pace !== 'live') panel.append(h('div', { class: 'tts-choices' },
+    h('button', { class: t.pace === 'click' ? 'btn' : 'btn ghost', title: 'Read the table now and enter what changed (then advice for your turn)',
+      onclick: () => call('POST', '/api/tts/read') }, 'Read the table now'),
+    h('span', { class: 'small muted' }, t.lastRead ? ` last read ${ago(t.lastRead)}` : ' not read yet')));
   panel.append(h('div', { class: 'small muted' }, t.connected
     ? `Connected · ${t.roundTripMs ?? '?'} ms per reading${t.settled ? '' : ' · something is held or moving'}`
       + `${t.side ? ` · you sit ${t.side}${t.sideDetected ? ' (your TTS seat)' : ''}` : ''}${t.catchingUp ? ' · catching up' : ''}`

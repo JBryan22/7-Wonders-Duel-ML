@@ -109,6 +109,7 @@ public sealed class AdvisorServer : IDisposable
         _tts = new TtsAdapter(tableSource ?? TtsLinkSource.Open, OnSettled, loaded: OnLoaded);
         _ttsPolling = ttsPolling;
         _ttsPrefs = store.LoadTtsPrefs();
+        _tts.Pace = _ttsPrefs.TtsPace;
         try
         {
             _session = store.LoadCurrent();
@@ -279,6 +280,7 @@ public sealed class AdvisorServer : IDisposable
 
         app.MapGet("/api/tts", () => { lock (_lock) return Results.Ok(new TtsResponse(TtsBox(), _changes)); });
         app.MapPost("/api/tts", (TtsRequest r) => Respond(() => SetTts(r), save: false));
+        app.MapPost("/api/tts/read", () => Respond(() => _tts.ReadNow(), save: false));
         app.MapPost("/api/tts/choose", (ChooseRequest r) => Respond(() => Choose(r.Index)));
         app.MapPost("/api/tts/newgame", () => Respond(() => NewGame(_store.LoadSettings())));
         app.MapPost("/api/tts/promo", (PromoRequest r) => Respond(() => EnablePromo(r.Promo)));
@@ -492,6 +494,16 @@ public sealed class AdvisorServer : IDisposable
             prefs = prefs with { Color = color };
         }
         if (r.Follow is { } follow) prefs = prefs with { Follow = follow };
+        if (r.Pace is { } pace)
+        {
+            if (!TtsPrefs.IsPace(pace)) throw new EntryException("Read the table: live, 10s or click");
+            prefs = prefs with { Pace = pace };
+        }
+        if (prefs.Pace != _ttsPrefs.Pace)
+        {
+            _tts.Pace = prefs.TtsPace;
+            _tts.ReadNow(); // read once at the new pace's start (and wake a loop idling until a click)
+        }
         if (prefs != _ttsPrefs)
         {
             _ttsPrefs = prefs;
@@ -658,7 +670,7 @@ public sealed class AdvisorServer : IDisposable
         var detected = _ttsPrefs.Color == TtsPrefs.Auto;
         TtsView View(string status, string? message, IReadOnlyList<TableChain>? chains = null, Reconciliation? r = null,
             Promos promos = Promos.None, string? newGame = null) => new(
-            c.Following, _ttsPrefs.Color, c.Connected, c.Problem, c.Settled, c.RoundTripMs, status, message,
+            c.Following, _ttsPrefs.Color, _ttsPrefs.Pace, c.LastRead, c.Connected, c.Problem, c.Settled, c.RoundTripMs, status, message,
             (chains ?? []).Select((ch, i) => new TtsChoiceView(i, ch.Text, ch.Lines)).ToList(),
             r?.NotOnTable ?? empty, r?.NotInLog ?? empty, r?.Notes ?? empty, _lastAppended,
             _side?.ToString(), detected && _side is not null,
@@ -748,7 +760,7 @@ public sealed record EntryRequest(string? Line, string? Then = null);
 public sealed record RewindRequest(int Count);
 public sealed record AdviceRequest(bool Longer);
 public sealed record AutoRequest(bool On);
-public sealed record TtsRequest(bool? Follow = null, string? Color = null);
+public sealed record TtsRequest(bool? Follow = null, string? Color = null, string? Pace = null);
 public sealed record ChooseRequest(int Index);
 public sealed record PromoRequest(string? Promo);
 
@@ -773,7 +785,7 @@ public sealed record TtsResponse(TtsView Tts, long Changes);
 /// <see cref="NotOnTable"/> / <see cref="NotInLog"/> list the mismatches; <see cref="Notes"/> are the soft checks
 /// (coins, the Conflict Pawn, looting tokens); <see cref="LastAppended"/> is the last chain entered from the table.
 /// </summary>
-public sealed record TtsView(bool Following, string Color, bool Connected, string? Problem, bool Settled, long? RoundTripMs,
+public sealed record TtsView(bool Following, string Color, string Pace, DateTime? LastRead, bool Connected, string? Problem, bool Settled, long? RoundTripMs,
     string Status, string? Message, IReadOnlyList<TtsChoiceView> Choices, IReadOnlyList<string> NotOnTable,
     IReadOnlyList<string> NotInLog, IReadOnlyList<string> Notes, string? LastAppended, string? Side, bool SideDetected,
     IReadOnlyList<TtsPromoView> Promos, string? NewGame, bool CatchingUp);

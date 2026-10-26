@@ -63,6 +63,9 @@ public sealed class FileTableSource(string path) : ITableSource
     public void Dispose() { }
 }
 
+/// <summary>How often the Advisor reads the table: about every second, every 10 seconds, or only on a click.</summary>
+public enum TtsPace { Live, Every10, OnClick }
+
 /// <summary>How the connection to the table is doing, for the Advisor Window.</summary>
 public sealed record TtsConnection(bool Following, bool Connected, string? Problem, bool Settled, long? RoundTripMs, DateTime? LastRead);
 
@@ -81,6 +84,10 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
     readonly SettledTable _settle = new();
     readonly TimeSpan _interval = interval ?? TimeSpan.FromSeconds(1);
     readonly SemaphoreSlim _poll = new(1, 1);
+    // Released by ReadNow: wakes the loop from its wait (a pace's pause, or idling until a click).
+    readonly SemaphoreSlim _wake = new(0, int.MaxValue);
+    // Reads left in the current click's burst (TtsPace.OnClick): read until the table settles, at most this many.
+    int _burst;
     ITableSource? _source;
     DateTime? _loadedAt;
     CancellationTokenSource? _loop;
@@ -92,6 +99,25 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
     }
 
     public bool Following => Connection.Following;
+
+    /// <summary>
+    /// How often the table is read (each reading stalls TTS for a moment, as its External Editor API answers on its
+    /// main thread). While the table is changing it is read every interval (~1 s) until it settles, whatever the pace.
+    /// </summary>
+    public TtsPace Pace { get; set; } = TtsPace.Live;
+
+    /// <summary>The wait between readings of a settled table at <see cref="Pace"/> <see cref="TtsPace.Every10"/>.</summary>
+    public static readonly TimeSpan SlowInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>Reads a click brings at most: enough for the table to settle (the same twice in a row).</summary>
+    public const int ClickReads = 6;
+
+    /// <summary>Reads the table now (the "Read the table now" button): until it settles, then back to the pace.</summary>
+    public void ReadNow()
+    {
+        Interlocked.Exchange(ref _burst, ClickReads);
+        _wake.Release();
+    }
 
     /// <summary>The last snapshot read, settled or not (for the hold after a manual Undo).</summary>
     public TableSnapshot? LastSnapshot { get; private set; }
@@ -126,24 +152,41 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
 
     async Task Loop(CancellationToken stop)
     {
-        while (!stop.IsCancellationRequested)
+        // A click's burst starts with the first reading after following starts, so the box isn't empty until a click.
+        Interlocked.Exchange(ref _burst, ClickReads);
+        try
         {
-            var clock = Stopwatch.StartNew();
-            await PollOnceAsync(stop);
-            var wait = _interval - clock.Elapsed;
-            try
+            while (!stop.IsCancellationRequested)
             {
-                if (wait > TimeSpan.Zero) await Task.Delay(wait, stop);
+                // Waiting for a click: nothing is read, TTS isn't touched.
+                if (Pace == TtsPace.OnClick && Volatile.Read(ref _burst) <= 0) await _wake.WaitAsync(stop);
+                while (_wake.CurrentCount > 0) _wake.Wait(0);
+                var clock = Stopwatch.StartNew();
+                var settledNow = await PollOnceAsync(stop);
+                // A click's burst ends when the table settles (or after ClickReads readings).
+                if (settledNow) Interlocked.Exchange(ref _burst, 0);
+                else Interlocked.Decrement(ref _burst);
+                var pause = Pace switch
+                {
+                    TtsPace.Every10 when settledNow => SlowInterval,
+                    TtsPace.OnClick when Volatile.Read(ref _burst) <= 0 => TimeSpan.Zero,
+                    _ => _interval,
+                };
+                var wait = pause - clock.Elapsed;
+                // ReadNow (or a pace change) cuts the wait short.
+                if (wait > TimeSpan.Zero) await _wake.WaitAsync(wait, stop);
             }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
+        }
+        catch (OperationCanceledException)
+        {
         }
     }
 
-    /// <summary>Reads the table once; a settled snapshot goes to the reconciler. Never throws for TTS trouble.</summary>
-    public async Task PollOnceAsync(CancellationToken cancel = default)
+    /// <summary>
+    /// Reads the table once; a settled snapshot goes to the reconciler. Returns whether the table was settled. Never
+    /// throws for TTS trouble.
+    /// </summary>
+    public async Task<bool> PollOnceAsync(CancellationToken cancel = default)
     {
         await _poll.WaitAsync(cancel);
         try
@@ -151,7 +194,7 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
             ITableSource source;
             lock (_lock)
             {
-                if (!_state.Following) return;
+                if (!_state.Following) return false;
                 try
                 {
                     source = _source ??= open();
@@ -159,7 +202,7 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
                 catch (TtsException e)
                 {
                     _state = _state with { Connected = false, Problem = e.Message };
-                    return;
+                    return false;
                 }
             }
             var clock = Stopwatch.StartNew();
@@ -171,12 +214,12 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
             catch (TtsException e)
             {
                 Update(s => s with { Connected = false, Problem = e.Message, Settled = false });
-                return;
+                return false;
             }
             catch (FormatException e)
             {
                 Update(s => s with { Connected = true, Problem = $"TTS sent something unexpected: {e.Message}", Settled = false });
-                return;
+                return false;
             }
             if (source.LoadedAt is { } at && at != _loadedAt)
             {
@@ -195,9 +238,11 @@ public sealed class TtsAdapter(Func<ITableSource> open, Action<TableSnapshot> se
                 LastRead = DateTime.UtcNow,
             });
             if (ready is not null && Following) settled(ready);
+            return ready is not null;
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested)
         {
+            return false;
         }
         finally
         {

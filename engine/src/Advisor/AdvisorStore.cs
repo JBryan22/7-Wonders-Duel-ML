@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using SevenWondersDuel.Advisor.Tts;
 using SevenWondersDuel.Engine;
 
 namespace SevenWondersDuel.Advisor;
@@ -27,12 +29,17 @@ public sealed record AdvicePrefs(bool Auto = false, int? Simulations = null);
 /// <summary>
 /// The Tabletop Simulator Adapter's switch (follow the table or not) and the owner's TTS seat colour: "Auto" (the
 /// host's seat at the TTS table, spec A9; the owner hosts and usually sits White, on the right), or "White" / "Red" to
-/// override it.
+/// override it. <see cref="Pace"/>: how often the table is read, "live" (about every second), "10s" or "click" (only on
+/// "Read the table now"); each reading stalls TTS for a moment.
 /// </summary>
-public sealed record TtsPrefs(bool Follow = false, string Color = TtsPrefs.Auto)
+public sealed record TtsPrefs(bool Follow = false, string Color = TtsPrefs.Auto, string Pace = TtsPrefs.Live)
 {
     public const string Auto = "Auto";
+    public const string Live = "live";
     public static bool IsColor(string? color) => color is Auto or "White" or "Red";
+    public static bool IsPace(string? pace) => pace is Live or "10s" or "click";
+
+    [JsonIgnore] public TtsPace TtsPace => Pace switch { "10s" => TtsPace.Every10, "click" => TtsPace.OnClick, _ => TtsPace.Live };
 }
 
 /// <summary>
@@ -124,6 +131,7 @@ public sealed class AdvisorStore(string folder)
             var prefs = File.Exists(TtsPrefsPath)
                 ? JsonSerializer.Deserialize<TtsPrefs>(File.ReadAllText(TtsPrefsPath), Json) ?? new()
                 : new();
+            if (!TtsPrefs.IsPace(prefs.Pace)) prefs = prefs with { Pace = TtsPrefs.Live };
             return TtsPrefs.IsColor(prefs.Color) ? prefs : prefs with { Color = TtsPrefs.Auto };
         }
         catch (JsonException)
