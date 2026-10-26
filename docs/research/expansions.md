@@ -54,7 +54,7 @@ BoardGameGeek was not read (it blocks scripts; see §13).
 
 ## 2. Turn changes
 
-**Taking a token.** When a face-down card that holds a token is flipped, the player whose turn caused the flip takes the token **before** anything else ("at the end of your turn … you must first place that token in front of yourself") [PRB p.8].
+**Taking a token.** When a face-down card that holds a token is flipped, the player whose turn caused the flip takes the token **before** anything else ("at the end of your turn … you must first place that token in front of yourself") [PRB p.8]. **Owner ruling 2026-10-26** ([spec-pantheon R11](../spec-pantheon.md)): the Divinity is drawn and placed **before** the uncovered card(s) are flipped (the token lies on top of the face-down card, so it is known without flipping); the Engine and the Advisor follow that order.
 
 - **Mythology token** → a new **Pending Decision for that player**:
   1. draw the top **2** Divinities of that Mythology's deck;

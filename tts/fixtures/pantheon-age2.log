@@ -18,60 +18,63 @@ reveal myth-tokens 1.0 greek 1.2 roman 3.0 greek 3.2 roman 3.4 mesopotamian
 P1 discard workshop
 P2 build lumber-yard
 P1 wonder guard-tower pyramids
+reveal P1 divinities roman neptune mars
+P1 divinity neptune 5
 reveal 3.2 stone-reserve
-reveal P1 divinities roman minerva neptune
-P1 divinity minerva 5
 P2 wonder clay-pool hanging-gardens
 P2 build wood-reserve
-reveal 3.0 clay-pit 3.1 theater
 reveal P2 divinities greek ? ?
 P2 divinity ? 2
+reveal 3.0 quarry 3.1 garrison
+P1 discard baths
+reveal P1 divinities mesopotamian ishtar enki
+P1 divinity enki 4
+reveal 3.3 theater 3.4 scriptorium
+P2 build theater
+P1 build garrison
+P2 discard quarry
 P1 discard stone-reserve
-P2 build baths
-reveal 3.3 stable 3.4 glassworks
-reveal P2 divinities mesopotamian ? ?
-P2 divinity ? 1
-P1 build theater
-P2 discard altar
-P1 discard stable
-P2 discard glassworks
+P2 discard scriptorium
+P1 build altar
+P2 discard palisade
 P1 discard stone-pit
-reveal 1.1 press
-P2 discard clay-pit
-P1 discard palisade
-reveal 1.2 quarry
-reveal P1 divinities roman neptune mars
-P1 divinity neptune 3
-P2 wonder quarry sanctuary
+reveal P1 divinities roman mars minerva
+P1 divinity mars 1
+reveal 1.1 clay-pit 1.2 stable
+P2 wonder stable sanctuary
 P2 build pharmacist
-reveal 1.0 garrison
 reveal P2 divinities greek ? ?
-P2 divinity ? 4
-P1 wonder garrison temple-of-artemis
-P1 discard press
-P2 discard apothecary
-P1 build logging-camp
+P2 divinity ? 3
+reveal 1.0 glassworks
+P1 discard glassworks
+P2 build clay-pit
+P1 discard apothecary
+P2 build logging-camp
 reveal age2 0.0 barracks 0.1 parade-ground 0.2 courthouse 0.3 brickyard 0.4 dispensary 0.5 temple 2.0 horse-breeders 2.1 drying-room 2.2 caravansery 2.3 customs-house 4.0 school 4.1 library
-reveal pantheon 1 ishtar 2 aphrodite 3 neptune 4 hades 5 minerva
+reveal pantheon 1 mars 2 aphrodite 3 zeus 4 enki 5 neptune
 reveal offerings 1.0 offering-2 1.2 offering-4 1.4 offering-3
-P1 start opponent
-P2 activate gate
-reveal gate zeus tanit nisaba anubis mars
-P2 gate zeus
-P2 zeus 0.1
-P1 build school
-reveal 3.0 laboratory
+reveal enki law mysticism
+P2 start opponent
+P1 activate neptune
+P1 neptune-discard P1:2
+P1 neptune-apply P1:5
 P2 discard library
-reveal 3.1 statue 3.2 glass-blower
-P1 activate minerva
-P1 minerva 8
-P2 activate hades
-P2 hades press
-P1 build statue
-P2 discard laboratory
-P1 discard glass-blower
-P2 discard horse-breeders
-reveal 1.0 shelf-quarry
-P1 activate ishtar
-P2 wonder shelf-quarry messe
-P2 messe dispensary
+reveal 3.2 laboratory
+P1 discard laboratory
+P2 discard customs-house
+reveal 1.4 statue
+P1 activate aphrodite
+P2 activate zeus
+P2 offer none
+P2 zeus 0.4
+P1 discard statue
+P2 discard temple
+P1 discard school
+reveal 3.0 glass-blower 3.1 shelf-quarry
+P2 activate gate
+P2 offer none
+reveal gate hades baal ishtar anubis minerva
+P2 gate anubis
+P2 anubis hanging-gardens
+P1 activate mars
+P2 discard glass-blower

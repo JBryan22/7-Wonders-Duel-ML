@@ -21,9 +21,9 @@ reveal myth-tokens 1.0 egyptian 1.2 greek 3.0 phoenician 3.2 phoenician 3.4 gree
 # Age I tokens: 1.0 egyptian, 1.2 greek, 3.0 phoenician, 3.2 phoenician, 3.4 greek: each goes to the player whose turn flips its card.
 P2 discard guard-tower
 P1 discard pharmacist
-reveal 3.0 altar
 reveal P1 divinities phoenician tanit astarte
 P1 divinity tanit 1
+reveal 3.0 altar
 # P1 took the phoenician token (3.0, flipped by P1's discard).
 P2 discard altar
 P1 discard workshop
@@ -31,15 +31,15 @@ reveal 3.1 clay-reserve
 P2 discard clay-reserve
 P1 discard clay-pool
 P2 discard clay-pit
-reveal 3.2 theater
 reveal P2 divinities phoenician astarte baal
 P2 divinity astarte 2
+reveal 3.2 theater
 # P2 took the phoenician token (3.2).
 P1 discard theater
 P2 discard logging-camp
-reveal 1.0 lumber-yard
 reveal P2 divinities egyptian ra anubis
 P2 divinity ra 3
+reveal 1.0 lumber-yard
 # P2 took the egyptian token (1.0).
 P1 discard lumber-yard
 P2 discard palisade
@@ -50,15 +50,15 @@ reveal 1.1 scriptorium
 P1 discard scriptorium
 P2 discard stable
 P1 discard stone-pit
-reveal 3.4 stone-reserve
 reveal P1 divinities greek hades aphrodite
 P1 divinity hades 4
+reveal 3.4 stone-reserve
 # P1 took the greek token (3.4).
 P2 discard stone-reserve
 P1 discard baths
-reveal 1.2 tavern
 reveal P1 divinities greek aphrodite zeus
 P1 divinity aphrodite 5
+reveal 1.2 tavern
 # P1 took the greek token (1.2). End of Age I: 10 discards each, 7 + 20 = 27 coins each.
 P2 discard tavern
 P1 discard press

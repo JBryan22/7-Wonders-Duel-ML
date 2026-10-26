@@ -438,7 +438,7 @@ public sealed class TtsPantheonTests : IDisposable
     {
         var tally = new Tally();
         FollowGames(0, 12, 3, tally);
-        FollowGames(100, 8, 1, tally); // one Move per reading: the table shows every step (the Gate's deck tops while it waits)
+        FollowGames(100, 11, 1, tally); // one Move per reading: the table shows every step (the Gate's deck tops while it waits)
         MoveKind[] pantheonMoves =
         [
             MoveKind.Divinity, MoveKind.Activate, MoveKind.Offer, MoveKind.Enki, MoveKind.Snake, MoveKind.Steal, MoveKind.Hades,
@@ -457,11 +457,12 @@ public sealed class TtsPantheonTests : IDisposable
 
     // ---------------------------------------------------------------- a recorded snapshot, and the server
 
-    /// <summary>The Pantheon game the recorded snapshot comes from: seed 1, the owner P1 at White, 50 Moves in (Age II).</summary>
+    /// <summary>The Pantheon game the recorded snapshot comes from: seed 1, the owner P1 at White, 53 Moves in (Age II; re-recorded
+    /// for owner ruling 2026-10-26, at a point where the 8 Moves before it can be read from one snapshot).</summary>
     static (TrueGame Game, SeatSides Sides, (string, bool)[] Host) RecordedGame()
     {
         var game = new TrueGame(PantheonRules[1], 0, 1);
-        for (var i = 0; i < 50; i++) game.Advance(1);
+        for (var i = 0; i < 53; i++) game.Advance(1);
         return (game, SeatSides.ForOwner(0, Side.White), [("White", true)]);
     }
 

@@ -94,6 +94,13 @@ internal sealed class PantheonModule : ExpansionModule
     static bool AwaitingDraw(GameState s) =>
         s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity && !P(s).HasDraw;
 
+    /// <summary>
+    /// Owner ruling 2026-10-26: the player who takes a Mythology token draws its 2 Divinities and places one before the
+    /// cards the turn uncovered are flipped (the token lies on top of the face-down card, so which token it is shows
+    /// without flipping). Two tokens: both draws and placements come first. Offering tokens need no decision.
+    /// </summary>
+    public override bool HoldsFlips(GameState s) => s.PendingCount > 0 && s.Pending(0).Kind == DecisionKind.PlaceDivinity;
+
     public override bool AwaitingReveal(GameState s) =>
         P(s).Awaiting != 0 || AwaitingDraw(s) || P(s).AwaitingZeusDiscard || P(s).GatePending || P(s).TheaterPending >= 0;
 
@@ -1167,7 +1174,10 @@ internal sealed class PantheonModule : ExpansionModule
     /// <summary>
     /// Taking tokens (spec-pantheon P-A3): a card holding a token that the turn has made accessible gives the token to
     /// the player whose turn it is, before anything else (including play again). A Mythology token queues a
-    /// <c>divinity</c> decision (after its private draw); two tokens queue two, in slot order.
+    /// <c>divinity</c> decision (after its private draw); two tokens queue two, in slot order. Both come before the
+    /// flips of the cards the turn uncovered (<see cref="HoldsFlips"/>, owner ruling 2026-10-26); an Offering token is
+    /// taken here too, so it is also held before the flips. Cards a mid-turn decision already needed face up (a
+    /// Wonder's power, which the base game resolves seeing the uncovered cards) stay face up.
     /// </summary>
     public override void EndOfTurn(GameState s)
     {

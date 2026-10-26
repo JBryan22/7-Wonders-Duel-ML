@@ -44,7 +44,8 @@ public sealed class RandomChanceSource(ulong seed) : IChanceSource
             return new ReturnedReveal(state.Age,
                 Pick(pool.Count, GameState.ReturnedCardCount).Select(pool.ElementAt).ToArray());
         }
-        // An expansion's Reveals (Pantheon's setup and draws) come once the flips are revealed.
+        // An expansion's Reveals (Pantheon's setup and draws) come once the flips are revealed, or while an expansion
+        // decision holds them (Pantheon: a Mythology token's draw comes before the flips, owner ruling 2026-10-26).
         if (state.SlotsToReveal == 0 && state.Module is { } module && module.AwaitingReveal(state))
             return module.NextReveal(state, _rng);
 

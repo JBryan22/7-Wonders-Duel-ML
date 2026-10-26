@@ -41,6 +41,13 @@ internal abstract class ExpansionModule
     /// </summary>
     public virtual void Setup(GameState s, int age) { }
 
+    /// <summary>
+    /// True while a decision of this expansion must be made before the cards the turn uncovered are flipped (Pantheon:
+    /// a Mythology token's Divinity is placed first, owner ruling 2026-10-26). <see cref="GameState.SlotsToReveal"/> is
+    /// then empty and those cards stay face down until it returns false.
+    /// </summary>
+    public virtual bool HoldsFlips(GameState s) => false;
+
     /// <summary>True while the game waits for one of this expansion's Reveals (asked after the base game's own).</summary>
     public virtual bool AwaitingReveal(GameState s) => false;
 

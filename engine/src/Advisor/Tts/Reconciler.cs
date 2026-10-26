@@ -255,9 +255,36 @@ public static class Reconciler
             }
             if (moves >= _options.MaxMoves) return;
             var player = s.PlayerToDecide;
+            var tried = false;
             foreach (var move in s.LegalMoves())
                 if (Plausible(s, player, move))
+                {
+                    tried = true;
                     Try(s, chain, new MoveEntry(player, move), moves + 1);
+                }
+            if (!tried && FlippedBeforePlacement(s) is { } why)
+            {
+                var (missing, extra) = Diff(s);
+                Blocked.Add(([.. chain], why, missing.Count + extra.Count));
+            }
+        }
+
+        /// <summary>
+        /// Pantheon, owner ruling 2026-10-26: a Mythology token's Divinity is placed before the cards the turn uncovered
+        /// are flipped. When the table already shows such a card face up but no Divinity placed yet, the Advisor waits
+        /// for the placement (it then reads both) rather than calling it a Desync. Null otherwise.
+        /// </summary>
+        string? FlippedBeforePlacement(GameState s)
+        {
+            if (!s.FlipsHeld || s.Pending(0).Kind != DecisionKind.PlaceDivinity) return null;
+            var view = View(s.Age);
+            var flipped = Enumerable.Range(0, GameState.SlotCount).Any(slot => s.IsOccupied(slot) && s.IsAccessible(slot)
+                && s.SlotCard(slot) < 0 && view.OnSlot(slot).Any(x => CardIndex(x.Slug) >= 0));
+            if (!flipped) return null;
+            var placer = s.PlayerToDecide;
+            return placer == _owner
+                ? "Place your Divinity on the Pantheon board: the Mythology token's Divinity is placed before the uncovered cards are flipped. The Advisor reads both once it is placed."
+                : $"Waiting for P{placer + 1} to place their Divinity on the Pantheon board (it comes before the uncovered cards are flipped). The Advisor reads both once it is placed.";
         }
 
         void Try(GameState s, List<LogEntry> chain, LogEntry entry, int moves)
@@ -678,7 +705,10 @@ public static class Reconciler
                 case MoveKind.Zeus:
                     return move.Wonder == s.Age && !view.OnSlot(move.Slot).Any();
                 case MoveKind.Anubis:
-                    return view.At(Place.Wonder).Any(x => WonderIndex(x.Slug) == move.Wonder && !view.WonderBuilt(x.Side!.Value, x.Row));
+                    // The Wonder shows unbuilt, or the card it was built with lies on the discard pile (a later Move in
+                    // the chain built the Wonder again, with a card the table hides under it).
+                    return view.At(Place.Wonder).Any(x => WonderIndex(x.Slug) == move.Wonder && !view.WonderBuilt(x.Side!.Value, x.Row))
+                        || view.At(Place.Discard).Any(x => CardIndex(x.Slug) == s.WonderCard(move.Wonder));
                 case MoveKind.Isis:
                     return view.At(Place.Wonder, side).Any(x => WonderIndex(x.Slug) == move.Wonder && view.WonderBuilt(side, x.Row))
                         && !view.At(Place.Discard).Any(x => CardIndex(x.Slug) == move.Card);

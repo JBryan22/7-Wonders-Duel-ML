@@ -371,8 +371,21 @@ public sealed class GameState
     /// <summary>The cards a hidden slot could turn out to be: unseen Guilds behind a Guild back, else unseen cards of the Age.</summary>
     public CardSet UnseenPoolFor(int slot) => _slots[slot] == HiddenGuild ? UnseenGuilds : UnseenPool(Age);
 
-    /// <summary>Slots that should show their card (face up, or accessible) but whose identity is not yet known.</summary>
-    public uint SlotsToReveal
+    /// <summary>
+    /// Slots that should show their card (face up, or accessible) but whose identity is not yet known, and whose flip
+    /// is due now: empty while <see cref="FlipsHeld"/>.
+    /// </summary>
+    public uint SlotsToReveal => _module is not null && _module.HoldsFlips(this) ? 0 : UncoveredFaceDown;
+
+    /// <summary>
+    /// True while an expansion decision comes before the flips of the cards the turn uncovered (Pantheon: a Mythology
+    /// token's draw and <c>divinity</c> placement, owner ruling 2026-10-26): those slots are face down and accessible,
+    /// and <see cref="SlotsToReveal"/> stays empty until the decision is made. Never true in a base game.
+    /// </summary>
+    public bool FlipsHeld => _module is not null && _module.HoldsFlips(this) && UncoveredFaceDown != 0;
+
+    /// <summary>The face-down slots due a flip (face up by the layout, or accessible), whether or not it is held.</summary>
+    uint UncoveredFaceDown
     {
         get
         {
@@ -1028,6 +1041,8 @@ public sealed class GameState
                 ? "An Age's opening Reveal must come before any card is taken"
                 : "The Age's opening Reveal must name its age");
         if (r.Cards.Length == 0) throw new InvalidOperationException("Reveal names no card");
+        if (FlipsHeld)
+            throw new InvalidOperationException("The Mythology token's Divinity is placed before the uncovered cards are revealed");
 
         var needed = SlotsToReveal;
         var named = CardSet.Empty;

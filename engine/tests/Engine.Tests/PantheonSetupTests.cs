@@ -171,10 +171,16 @@ public class PantheonSetupTests
         Assert.Equal(new PendingDecision(DecisionKind.PlaceDivinity, 1, (int)Mythology.Egyptian), s.Pending(0));
         Assert.Equal(new PendingDecision(DecisionKind.TakeCard, 0), s.Pending(1));
 
-        // The flip is revealed first, then the private draw.
+        // Owner ruling 2026-10-26: the private draw and the placement come before the uncovered card is flipped.
+        Assert.Equal(StepKind.Reveal, s.Step);
+        Assert.True(s.FlipsHeld);
+        Assert.Equal(0u, s.SlotsToReveal);
+        Assert.True(s.IsAccessible(9));
+        Assert.Equal(GameState.Hidden, s.SlotCard(9));
+        var early = Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)MoveLog.ParseEntry("reveal 3.0 stable", s)));
+        Assert.Contains("before the uncovered cards are revealed", early.Message);
+        Assert.IsType<DivinityDrawReveal>(new RandomChanceSource(3).Next(s));
         var draw = MoveLog.ParseEntry("reveal P2 divinities egyptian anubis isis", s);
-        Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)draw));
-        Do(game, "reveal 3.0 stable");
         Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)MoveLog.ParseEntry("reveal P1 divinities egyptian anubis isis", s)));
         Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)MoveLog.ParseEntry("reveal P2 divinities greek zeus hades", s)));
         Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)MoveLog.ParseEntry("reveal P2 divinities egyptian anubis mars", s)));
@@ -200,6 +206,75 @@ public class PantheonSetupTests
         Assert.Equal(new PendingDecision(DecisionKind.TakeCard, 0), s.Pending(0));
         Assert.False(s.IsLegal(Move.PlaceDivinity(D("anubis"), 0)));
         Assert.Equal("P2 divinity isis 4", game.Log[^1].ToString());
+
+        // Only now is the uncovered card flipped, before P1's turn.
+        Assert.False(s.FlipsHeld);
+        Assert.Equal(StepKind.Reveal, s.Step);
+        Assert.Equal(1u << 9, s.SlotsToReveal);
+        Do(game, "reveal 3.0 stable");
+        Assert.Equal(StepKind.Decision, s.Step);
+        Assert.Equal(0, s.PlayerToDecide);
+    }
+
+    [Theory]
+    [InlineData("reveal P2 divinities egyptian anubis isis", "P2 divinity isis 4")]
+    [InlineData("reveal P2 divinities egyptian ? ?", "P2 divinity ? 4")]
+    public void An_old_order_log_loads_with_the_flip_moved_after_the_placement(string draw, string place)
+    {
+        // Logs written before the owner ruling of 2026-10-26 flipped first ("reveal 3.0 stable"), then drew and placed.
+        string[] head = ["7wd-log v1", Rules, "reveal first P1", Tokens, .. Setup.Draft(0), Opening, MythTokens,
+            "P1 discard apothecary", "P2 discard baths"];
+        var n = head.Length - 2; // entries before the flip
+        var old = MoveLog.Parse(string.Join('\n', [.. head, "reveal 3.0 stable", draw, place, "# a comment", "P1 discard stable"]), out var order);
+        var now = MoveLog.Parse(string.Join('\n', [.. head, draw, place, "reveal 3.0 stable", "P1 discard stable"]), out var same);
+        Assert.Equal(now.WriteLog(), old.WriteLog());
+        Assert.True(old.State.SameAs(now.State));
+        Assert.Equal([n + 1, n + 2, n, n + 3], order.Skip(n).ToArray());
+        Assert.Equal(Enumerable.Range(0, n + 4), same);
+
+        // A log that ends between the old flip and the placement drops the flip: it is due again after the placement.
+        var cut = MoveLog.Parse(string.Join('\n', [.. head, "reveal 3.0 stable", draw]), out var cutOrder);
+        Assert.Equal(n + 1, cut.Log.Count);
+        Assert.Equal([n + 1], cutOrder.Skip(n).ToArray());
+        Assert.Equal(StepKind.Decision, cut.State.Step);
+        Assert.True(cut.State.FlipsHeld);
+
+        // A wrong flip still names its own line.
+        var e = Assert.Throws<FormatException>(() => MoveLog.Parse(string.Join('\n', [.. head, "reveal 3.0 apothecary", draw, place])));
+        Assert.Contains($"line {head.Length + 1} ", e.Message);
+    }
+
+    [Fact]
+    public void Random_games_place_every_token_divinity_before_the_flips_of_its_turn()
+    {
+        // Owner ruling 2026-10-26: in every random game, no flip comes between a token's draw and its placement, and a
+        // turn's flips never come before its draws.
+        var draws = 0;
+        for (ulong seed = 0; seed < 40; seed++)
+        {
+            var game = new Game(Ruleset.Parse(Rules));
+            var chance = new RandomChanceSource(seed);
+            var rng = new Rng(seed + 1000);
+            while (!game.State.IsOver)
+            {
+                if (game.State.Step == StepKind.Reveal) game.Apply(chance.Next(game.State));
+                else
+                {
+                    var moves = game.State.LegalMoves();
+                    game.Apply(moves[rng.Next(moves.Count)]);
+                }
+            }
+            var log = game.Log;
+            for (var i = 1; i < log.Count; i++)
+            {
+                if (log[i] is not DivinityDrawReveal) continue;
+                draws++;
+                Assert.IsNotType<SlotReveal>(log[i - 1]);
+                Assert.IsType<MoveEntry>(log[i + 1]);
+                Assert.Equal(MoveKind.Divinity, ((MoveEntry)log[i + 1]).Move.Kind);
+            }
+        }
+        Assert.True(draws > 100);
     }
 
     [Fact]
@@ -210,7 +285,7 @@ public class PantheonSetupTests
         var s = game.State;
         Assert.Equal(new PendingDecision(DecisionKind.PlaceDivinity, 0, (int)Mythology.Egyptian), s.Pending(0));
         Assert.Equal(new PendingDecision(DecisionKind.TakeCard, 0), s.Pending(1));
-        Do(game, "reveal 3.0 stable 3.1 garrison", "reveal P1 divinities egyptian ra anubis", "P1 divinity ra 1");
+        Do(game, "reveal P1 divinities egyptian ra anubis", "P1 divinity ra 1", "reveal 3.0 stable 3.1 garrison");
         Assert.Equal(0, s.PlayerToDecide);
         Assert.Equal(DecisionKind.TakeCard, s.Pending(0).Kind);
         Assert.Equal(1, s.Pantheon!.MythologyTokens(0, Mythology.Egyptian));
@@ -232,8 +307,10 @@ public class PantheonSetupTests
         Assert.Equal(new PendingDecision(DecisionKind.PlaceDivinity, 0, (int)Mythology.Greek), s.Pending(1));
         Assert.Equal(new PendingDecision(DecisionKind.TakeCard, 1), s.Pending(2));
 
-        Do(game, "reveal 3.0 stable 3.1 garrison", "reveal P1 divinities greek zeus hades", "P1 divinity zeus 2");
+        // Both draws and placements come before the flips (owner ruling 2026-10-26).
+        Do(game, "reveal P1 divinities greek zeus hades", "P1 divinity zeus 2");
         Assert.Equal(StepKind.Reveal, s.Step);
+        Assert.True(s.FlipsHeld);
         Assert.Equal(D("hades"), p.DeckCard(Mythology.Greek, 0));
         // The second draw takes Hades (the known top) first, then the last unseen card.
         var wrong = Assert.Throws<InvalidOperationException>(() => s.Apply((Reveal)MoveLog.ParseEntry("reveal P1 divinities greek aphrodite hades", s)));
@@ -247,6 +324,8 @@ public class PantheonSetupTests
         Do(game, "P1 divinity aphrodite 6");
         Assert.Equal(1, p.DeckSize(Mythology.Greek));
         Assert.Equal(D("hades"), p.DeckCard(Mythology.Greek, 0));
+        Assert.False(s.FlipsHeld);
+        Do(game, "reveal 3.0 stable 3.1 garrison");
         Assert.Equal(1, s.PlayerToDecide);
         Assert.Equal(DecisionKind.TakeCard, s.Pending(0).Kind);
     }
@@ -259,13 +338,13 @@ public class PantheonSetupTests
         p.SlotTokens[2] = (sbyte)Mythology.Egyptian;
         p.SlotTokens[9] = (sbyte)Mythology.Greek;
         // P2 flips 3.0 (Greek), then P1 flips 3.4 (Greek): P1's draw starts with the card P2 put back.
-        Do(game, "P1 discard apothecary", "P2 discard baths", "reveal 3.0 stable",
-            "reveal P2 divinities greek aphrodite zeus", "P2 divinity zeus 5",
-            "P1 discard glassworks", "P2 discard logging-camp", "reveal 3.1 garrison", "P1 discard stone-reserve", "reveal 3.4 workshop");
+        Do(game, "P1 discard apothecary", "P2 discard baths",
+            "reveal P2 divinities greek aphrodite zeus", "P2 divinity zeus 5", "reveal 3.0 stable",
+            "P1 discard glassworks", "P2 discard logging-camp", "reveal 3.1 garrison", "P1 discard stone-reserve");
         Assert.Equal(1, p.MythologyTokens(0, Mythology.Greek));
         Assert.Equal(1, p.MythologyTokens(1, Mythology.Greek));
         Assert.Equal(StepKind.Reveal, game.State.Step);
-        Do(game, "reveal P1 divinities greek aphrodite hades", "P1 divinity hades 1");
+        Do(game, "reveal P1 divinities greek aphrodite hades", "P1 divinity hades 1", "reveal 3.4 workshop");
         Assert.Equal(D("aphrodite"), p.DeckCard(Mythology.Greek, 0));
         Assert.Equal(1, p.DeckKnownBy(Mythology.Greek, 0));
     }
@@ -358,11 +437,14 @@ public class PantheonSetupTests
         var s = game.State;
         var p = s.Pantheon!;
         var slot = Enumerable.Range(0, 20).First(i => p.SlotToken(i) >= PantheonState.OfferingToken
-            && s.Layout.Slots[i].CoveredBy.Count(c => s.IsOccupied(c)) == 1);
+            && s.Layout.Slots[i].CoveredBy.Count(c => s.IsOccupied(c)) == 1
+            && s.Layout.Slots[i].CoveredBy.Any(c => s.IsAccessible(c)));
         var offering = p.SlotToken(slot) - PantheonState.OfferingToken;
         var cover = s.Layout.Slots[slot].CoveredBy.Single(s.IsOccupied);
         var player = s.PlayerToDecide;
         game.Apply(Move.Discard(s.SlotCard(cover)));
+        // Held before the uncovered card is flipped, as a Mythology token is.
+        Assert.NotEqual(0u, s.SlotsToReveal & 1u << slot);
         Assert.Equal(1 << offering, p.OfferingTokens(player) & 1 << offering);
         Assert.Equal(PantheonState.NoToken, p.SlotToken(slot));
         Assert.NotEqual(DecisionKind.PlaceDivinity, s.Pending(0).Kind);

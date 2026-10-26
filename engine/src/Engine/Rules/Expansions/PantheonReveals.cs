@@ -16,7 +16,9 @@ public sealed record MythologyTokensReveal((int Slot, Mythology Mythology)[] Tok
 /// Pantheon: the top 2 cards of a Mythology deck, drawn by the player who just took that Mythology's token
 /// ("reveal P1 divinities greek zeus hades"), top card first. Cards on top of the deck that are already known (a card
 /// put back by an earlier draw) are drawn first; the rest come from the deck's unseen cards. Private: only
-/// <see cref="Player"/> sees it (spec-pantheon P-A3). The <c>divinity</c> decision follows.
+/// <see cref="Player"/> sees it (spec-pantheon P-A3). The <c>divinity</c> decision follows. Both come before the flips
+/// of the cards the turn uncovered (owner ruling 2026-10-26): "P1 build lumber-yard", "reveal P1 divinities greek zeus
+/// hades", "P1 divinity zeus 4", then "reveal 3.2 quarry".
 /// <para>
 /// A <see cref="Redacted"/> draw ("reveal P2 divinities greek ? ?", every card <see cref="PantheonState.Hidden"/>) is
 /// how a log kept by the opponent records it (the Advisor, spec-pantheon P-A5): the placement that follows is then

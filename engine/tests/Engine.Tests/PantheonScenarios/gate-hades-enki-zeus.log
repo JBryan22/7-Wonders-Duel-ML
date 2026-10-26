@@ -20,23 +20,23 @@ reveal age1 0.0 garrison 0.1 apothecary 2.0 stone-pit 2.1 palisade 2.2 clay-pool
 reveal myth-tokens 1.0 greek 1.2 egyptian 3.0 phoenician 3.2 greek 3.4 mesopotamian
 P2 discard quarry
 P1 discard clay-reserve
-reveal 3.0 glassworks
 reveal P1 divinities phoenician tanit baal
 P1 divinity tanit 1
+reveal 3.0 glassworks
 P2 discard glassworks
 P1 discard wood-reserve
 reveal 3.1 baths
 P2 discard baths
 P1 discard stone-pit
 P2 discard press
-reveal 3.2 workshop
 reveal P2 divinities greek hades zeus
 P2 divinity hades 2
+reveal 3.2 workshop
 P1 discard workshop
 P2 discard palisade
-reveal 1.0 altar
 reveal P2 divinities greek zeus aphrodite
 P2 divinity zeus 3
+reveal 1.0 altar
 P1 discard altar
 P2 discard tavern
 reveal 3.3 theater
@@ -46,14 +46,14 @@ reveal 1.1 guard-tower
 P1 discard guard-tower
 P2 discard garrison
 P1 discard logging-camp
-reveal 3.4 scriptorium
 reveal P1 divinities mesopotamian enki nisaba
 P1 divinity enki 4
+reveal 3.4 scriptorium
 P2 discard scriptorium
 P1 discard clay-pit
-reveal 1.2 lumber-yard
 reveal P1 divinities egyptian ra isis
 P1 divinity ra 5
+reveal 1.2 lumber-yard
 P2 discard lumber-yard
 P1 discard apothecary
 # End of Age I: 10 discards each, 27 coins each.

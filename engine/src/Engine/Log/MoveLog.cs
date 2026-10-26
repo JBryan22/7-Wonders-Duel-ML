@@ -117,11 +117,48 @@ public static class MoveLog
     };
 
     /// <summary>Parses a Move Log and replays it, checking every entry. Errors name the offending line.</summary>
-    public static Game Parse(string text)
+    public static Game Parse(string text) => Parse(text, out _);
+
+    /// <summary>
+    /// <see cref="Parse(string)"/>, also giving, for each entry of the returned game's log, its index among the
+    /// entries of <paramref name="text"/> (they differ only for an upgraded old-order Pantheon log).
+    /// <para>
+    /// <b>Old-order Pantheon logs</b> (written before the owner ruling of 2026-10-26) flipped the cards a turn uncovered
+    /// before the Mythology token's draw and placement ("reveal 3.2 quarry", "reveal P2 divinities greek ? ?",
+    /// "P2 divinity ? 4"). Now the placement comes first, so a flip that arrives while the placement is pending is
+    /// held and applied as soon as the placement is made: the game's log is in the new order. A held flip still
+    /// pending when the log ends (the placement was never entered) is dropped; it is due again after the placement.
+    /// A log in the new order is never changed.
+    /// </para>
+    /// </summary>
+    public static Game Parse(string text, out IReadOnlyList<int> order)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
         Game? game = null;
         var sawVersion = false;
+        var entryOrder = new List<int>();
+        var held = new List<(int Line, string Text, LogEntry Entry, int Index)>();
+        var entries = 0;
+
+        // Applies the flips held behind a Divinity placement once it is made.
+        void ApplyHeld()
+        {
+            if (game is null || held.Count == 0 || game.State.FlipsHeld) return;
+            foreach (var (at, heldLine, entry, index) in held)
+            {
+                try
+                {
+                    game.Apply(entry);
+                }
+                catch (Exception e) when (e is FormatException or InvalidOperationException or KeyNotFoundException or ArgumentException)
+                {
+                    throw new FormatException($"Move Log line {at + 1} ('{heldLine}'): {e.Message}", e);
+                }
+                entryOrder.Add(index);
+            }
+            held.Clear();
+        }
+
         for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
@@ -134,7 +171,18 @@ public static class MoveLog
                     sawVersion = true;
                 }
                 else if (game is null) game = new Game(Ruleset.Parse(line));
-                else game.Apply(ParseEntry(line, game.State));
+                else
+                {
+                    ApplyHeld();
+                    var entry = ParseEntry(line, game.State);
+                    if (entry is SlotReveal { Opening: false } && game.State.FlipsHeld) held.Add((i, line, entry, entries));
+                    else
+                    {
+                        game.Apply(entry);
+                        entryOrder.Add(entries);
+                    }
+                    entries++;
+                }
             }
             catch (NotSupportedException e)
             {
@@ -145,6 +193,8 @@ public static class MoveLog
                 throw new FormatException($"Move Log line {i + 1} ('{line}'): {e.Message}", e);
             }
         }
+        ApplyHeld();
+        order = entryOrder;
         return game ?? throw new FormatException("Move Log has no rules header");
     }
 

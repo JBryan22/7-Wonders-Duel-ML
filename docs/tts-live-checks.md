@@ -98,7 +98,9 @@ DIFFERENT (it compares with the practice save; that's expected) and lists every 
     the table) into **your hand**. Expected: `reveal P1 divinities <mythology> <card> <card>` appears by itself. Then put
     one **face down** on an empty space of the Pantheon board and the other back **face down on top of its deck**.
     Expected: `P1 divinity <card> <space>` (if both cards left your hand at once, the Advisor offers two buttons: click
-    the card you placed).
+    the card you placed). **Only then flip the uncovered card(s)** (owner ruling 2026-10-26: the Divinity is placed before
+    the uncovered cards are revealed); expected: `reveal <slot> <card>` after the placement. If you flip first, the Advisor
+    waits for the placement ("Place your Divinity on the Pantheon board …") and then reads both.
 22. **The opponent's draw.** Do the same for Red, but drag Red's 2 cards into **Red's hand** (the hand area on the left;
     you can do this from your seat). Expected: the log says `reveal P2 divinities <mythology> ? ?`, and after you place one
     face down, `P2 divinity ? <space>`: the Advisor never names Red's cards. Run `tts-check` while the 2 cards are in

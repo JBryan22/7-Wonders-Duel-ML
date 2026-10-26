@@ -100,9 +100,12 @@ public sealed class AdvisorSession
                 var other => throw new FormatException($"Unknown advisor seat '{other}'"),
             };
         }
-        var game = MoveLog.Parse(text);
+        // An old-order Pantheon log (flips before a Mythology token's Divinity placement) comes back in the new order
+        // (owner ruling 2026-10-26); the AI's secrets follow their lines to their new places.
+        var game = MoveLog.Parse(text, out var order);
         var session = new AdvisorSession(game.Rules, seat, game, ai);
-        foreach (var (index, line) in secrets) session._secrets[index] = line;
+        for (var at = 0; at < order.Count; at++)
+            if (secrets.TryGetValue(order[at], out var line)) session._secrets[at] = line;
         session.Replay([.. game.Log]);
         session.Deal();
         return session;
@@ -360,6 +363,12 @@ public sealed class AdvisorSession
                 return $"P{m.Player + 1} places a Divinity face down: you see only the space ('P{m.Player + 1} divinity ? <space>')";
             case MoveEntry { Move.Kind: MoveKind.TheaterOrder } m when m.Player != Seat && m.Move.Divinity != PantheonState.Hidden:
                 return $"P{m.Player + 1}'s restack is private: it stays '?'";
+            case SlotReveal { Opening: false } when s.FlipsHeld:
+                // Owner ruling 2026-10-26: the token's Divinity is drawn and placed before the uncovered cards are flipped.
+                var placer = s.PlayerToDecide;
+                return placer == Seat
+                    ? "Place your Divinity first: the uncovered cards are flipped after the Mythology token's Divinity is placed"
+                    : $"P{placer + 1} places their Divinity first ('P{placer + 1} divinity ? <space>'): the uncovered cards are flipped after it";
             case SlotReveal r when r.Age == s.Age:
                 var named = new HashSet<int>();
                 foreach (var (slot, card) in r.Cards)

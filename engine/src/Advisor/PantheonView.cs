@@ -291,9 +291,11 @@ public static class PantheonText
         var pan = s.Pantheon!;
         return d.Kind switch
         {
-            DecisionKind.PlaceDivinity => View("divinity", pan.DrawHidden
+            // Owner ruling 2026-10-26: the placement comes before the uncovered cards are flipped.
+            DecisionKind.PlaceDivinity => View("divinity", (pan.DrawHidden
                 ? $"{who} places one of the {MythologyName((Mythology)d.Wonder)} Divinities they drew face down: on which space?"
-                : $"{who} places a drawn Divinity face down on an empty Pantheon space (the other goes back on top of the deck)"),
+                : $"{who} places a drawn Divinity face down on an empty Pantheon space (the other goes back on top of the deck)")
+                + (s.FlipsHeld ? " Do this before flipping the uncovered cards." : "")),
             DecisionKind.Offer => View("offer", $"Activating {DivinityName(d.Wonder)} costs {PantheonState.ActivationCost(s, d.Player, d.Wonder)} coins: which Offering tokens does {who} spend?"),
             DecisionKind.Enki => View("enki", $"Enki: {who} keeps one of the 2 Progress tokens (the other goes back to the box)"),
             DecisionKind.Snake => View("snake", $"Nisaba: {who} puts the Snake on one of {other}'s green cards"),

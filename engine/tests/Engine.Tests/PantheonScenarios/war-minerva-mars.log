@@ -22,21 +22,21 @@ P1 build palisade
 # P1 pays 2: 5 coins. Pawn 1 toward P2.
 P2 discard scriptorium
 P1 discard stone-pit
-reveal 3.0 theater 3.1 workshop
 reveal P1 divinities roman mars minerva
 P1 divinity mars 1
+reveal 3.0 theater 3.1 workshop
 P2 discard theater
 P1 discard workshop
 P2 discard clay-pool
 P1 discard glassworks
-reveal 3.2 clay-reserve
 reveal P1 divinities roman minerva neptune
 P1 divinity minerva 2
+reveal 3.2 clay-reserve
 P2 discard clay-reserve
 P1 discard lumber-yard
-reveal 1.0 stone-reserve
 reveal P1 divinities mesopotamian ishtar enki
 P1 divinity ishtar 3
+reveal 1.0 stone-reserve
 P2 discard stone-reserve
 P1 discard pharmacist
 reveal 3.3 altar
@@ -46,14 +46,14 @@ reveal 1.1 press
 P2 discard press
 P1 discard quarry
 P2 discard baths
-reveal 3.4 wood-reserve
 reveal P2 divinities phoenician astarte tanit
 P2 divinity astarte 4
+reveal 3.4 wood-reserve
 P1 discard wood-reserve
 P2 discard stable
-reveal 1.2 apothecary
 reveal P2 divinities egyptian ra isis
 P2 divinity ra 5
+reveal 1.2 apothecary
 P1 discard apothecary
 P2 discard guard-tower
 # End of Age I: P1 1 build + 9 discards = 7 - 2 + 18 = 23; P2 10 discards = 27. Pawn 1 toward P2.
