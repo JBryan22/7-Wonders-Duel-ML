@@ -3,8 +3,8 @@ using System.Diagnostics;
 namespace SevenWondersDuel.Advisor.Tts;
 
 /// <summary>
-/// Settled-table detection (spec A9, ADR 0004): a snapshot is reconciled only when nobody holds an object, nothing
-/// moves, and it is identical to the snapshot before it.
+/// Settled-table detection (spec A9, ADR 0004): a snapshot is reconciled only when nobody holds an object and it is
+/// identical to the snapshot before it (positions to 0.01 units), so nothing moved in between.
 /// </summary>
 public sealed class SettledTable
 {

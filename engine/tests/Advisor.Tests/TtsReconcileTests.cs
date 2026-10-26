@@ -387,7 +387,11 @@ public sealed class TtsReconcileTests
         Assert.False(heldSnapshot.StillNow);
         Assert.Null(settle.Offer(heldSnapshot));
         Assert.Null(settle.Offer(heldSnapshot));
-        Assert.Null(settle.Offer(TablePainter.Snapshot(moving, session.State)));
+        // A piece TTS calls "not resting" but that stays put (live table, 2026-10-26: cards in the mod's auto-sorting
+        // layout zones) settles like any other: two identical readings.
+        var notResting = TablePainter.Snapshot(moving, session.State);
+        Assert.Null(settle.Offer(notResting));
+        Assert.Same(notResting, settle.Offer(notResting));
         Assert.Null(settle.Offer(still));
         Assert.Null(settle.Offer(TablePainter.Snapshot(moved, session.State)));
         Assert.Null(settle.Offer(still));

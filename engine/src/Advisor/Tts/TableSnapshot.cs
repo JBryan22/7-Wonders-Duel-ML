@@ -57,8 +57,12 @@ public sealed class TableSnapshot
     /// <summary>1..3 from <see cref="ModAge"/>, or null before Age I is dealt.</summary>
     public int? Age => ModAge is ['A', 'g', 'e', var d] && d is >= '1' and <= '3' ? d - '0' : null;
 
-    /// <summary>Nobody holds anything and nothing is moving (one of the conditions for a settled table, ADR 0004).</summary>
-    public bool StillNow => !Pieces.Any(p => p.Held || p.Moving);
+    /// <summary>
+    /// Nobody holds anything (one of the conditions for a settled table, ADR 0004). TTS's "not resting" flag is not
+    /// used: on the live table cards in the mod's auto-sorting layout zones stay "not resting" for good while lying
+    /// perfectly still (2026-10-26), and two identical snapshots in a row already show nothing moved.
+    /// </summary>
+    public bool StillNow => !Pieces.Any(p => p.Held);
 
     /// <summary>The host's seat colour, if the host is seated.</summary>
     public string? HostColor => Players.FirstOrDefault(p => p.Host)?.Color;
